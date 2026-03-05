@@ -1,0 +1,148 @@
+#![allow(dead_code)]
+
+use reqwest::blocking::multipart::{Form, Part};
+
+use super::TranscriptionResult;
+use super::provider::STTProvider;
+
+pub struct GroqProvider {
+    api_key: String,
+    client: reqwest::blocking::Client,
+    model: String,
+}
+
+impl GroqProvider {
+    pub fn new(api_key: String) -> anyhow::Result<Self> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?;
+
+        Ok(Self {
+            api_key,
+            client,
+            model: "whisper-large-v3-turbo".to_string(),
+        })
+    }
+}
+
+impl STTProvider for GroqProvider {
+    fn transcribe_blocking(&self, audio: &[f32]) -> anyhow::Result<TranscriptionResult> {
+        // Convert f32 samples to i16 for WAV
+        let samples_i16: Vec<i16> = audio
+            .iter()
+            .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .collect();
+
+        // Create WAV file in memory
+        let wav_data = create_wav(&samples_i16, 16000, 1)?;
+
+        let form = Form::new()
+            .part("file", Part::bytes(wav_data)
+                .file_name("audio.wav")
+                .mime_str("audio/wav")?)
+            .text("model", self.model.clone())
+            .text("language", "auto")
+            .text("response_format", "verbose_json");
+
+        let response = self.client
+            .post("https://api.groq.com/openai/v1/audio/transcriptions")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .multipart(form)
+            .send()?;
+
+        if !response.status().is_success() {
+            let error_text = response.text()?;
+            return Err(anyhow::anyhow!("Groq API error: {}", error_text));
+        }
+
+        let result: GroqResponse = response.json()?;
+
+        Ok(TranscriptionResult {
+            text: result.text,
+            confidence: result.segments.first().map(|s| s.avg_logprob as f32).unwrap_or(0.9),
+            language: result.language.unwrap_or_else(|| "unknown".to_string()),
+        })
+    }
+
+    fn requires_internet(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "Groq (whisper-large-v3-turbo)"
+    }
+}
+
+pub async fn validate_key(api_key: &str) -> anyhow::Result<bool> {
+    log::info!("Validating Groq API key...");
+    
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    
+    let response = client
+        .get("https://api.groq.com/openai/v1/models")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await?;
+
+    let status = response.status();
+    log::info!("Groq API response status: {}", status);
+    
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        log::error!("Groq API key validation failed: {} - {}", status, error_text);
+        return Err(anyhow::anyhow!("API returned {}: {}", status, error_text));
+    }
+    
+    log::info!("Groq API key validation successful");
+    Ok(true)
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GroqResponse {
+    text: String,
+    language: Option<String>,
+    segments: Vec<GroqSegment>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GroqSegment {
+    #[serde(rename = "avg_logprob")]
+    avg_logprob: f64,
+}
+
+fn create_wav(samples: &[i16], sample_rate: u32, channels: u16) -> anyhow::Result<Vec<u8>> {
+    use std::io::Write;
+
+    let data_len = samples.len() * 2;
+    let file_len = 36 + data_len;
+
+    let mut wav = Vec::with_capacity(44 + data_len);
+
+    // RIFF header
+    wav.write_all(b"RIFF")?;
+    wav.write_all(&(file_len as u32).to_le_bytes())?;
+    wav.write_all(b"WAVE")?;
+
+    // fmt chunk
+    wav.write_all(b"fmt ")?;
+    wav.write_all(&16u32.to_le_bytes())?; // chunk size
+    wav.write_all(&1u16.to_le_bytes())?; // format (PCM)
+    wav.write_all(&channels.to_le_bytes())?;
+    wav.write_all(&sample_rate.to_le_bytes())?;
+    wav.write_all(&(sample_rate * channels as u32 * 2).to_le_bytes())?; // byte rate
+    wav.write_all(&(channels * 2).to_le_bytes())?; // block align
+    wav.write_all(&16u16.to_le_bytes())?; // bits per sample
+
+    // data chunk
+    wav.write_all(b"data")?;
+    wav.write_all(&(data_len as u32).to_le_bytes())?;
+
+    // Write samples
+    for &sample in samples {
+        wav.write_all(&sample.to_le_bytes())?;
+    }
+
+    Ok(wav)
+}

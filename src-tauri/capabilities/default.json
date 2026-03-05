@@ -1,0 +1,13 @@
+[
+  {
+    "identifier": "default",
+    "description": "Default permissions for Kalam Voice",
+    "windows": ["main"],
+    "permissions": [
+      "core:default",
+      "notification:default",
+      "updater:default",
+      "shell:default"
+    ]
+  }
+]
