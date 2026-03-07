@@ -11,34 +11,34 @@ pub struct AudioDevice {
 pub fn list_devices() -> anyhow::Result<Vec<AudioDevice>> {
     let host = cpal::default_host();
 
-    // Get the default device name if available
     let default_device = host.default_input_device();
     let default_name = default_device.as_ref().and_then(|d| d.name().ok());
 
-    // Enumerate all input devices
+    // Collect so we get all devices (iterator consumption / platform quirks)
+    let input_devices: Vec<cpal::Device> = host.input_devices()?.collect();
+    log::info!("Enumerated {} input device(s)", input_devices.len());
+
     let mut devices = Vec::new();
-    let input_devices = host.input_devices()?;
+    for (index, device) in input_devices.into_iter().enumerate() {
+        let name = device
+            .name()
+            .unwrap_or_else(|_| format!("Input device {}", index + 1));
+        let is_default = default_name
+            .as_ref()
+            .map_or(false, |default| default.trim() == name.trim());
+        let id = if is_default {
+            "default".to_string()
+        } else {
+            format!("device_{}", index)
+        };
 
-    for (index, device) in input_devices.enumerate() {
-        if let Ok(name) = device.name() {
-            let is_default = default_name
-                .as_ref()
-                .map_or(false, |default| default == &name);
-            let id = if is_default {
-                "default".to_string()
-            } else {
-                format!("device_{}", index)
-            };
-
-            devices.push(AudioDevice {
-                id,
-                name,
-                is_default,
-            });
-        }
+        devices.push(AudioDevice {
+            id,
+            name,
+            is_default,
+        });
     }
 
-    // If no devices found, add the default as fallback
     if devices.is_empty() {
         if let Some(_default) = default_device {
             devices.push(AudioDevice {
@@ -53,6 +53,7 @@ pub fn list_devices() -> anyhow::Result<Vec<AudioDevice>> {
 }
 
 // Helper function to get a specific device by ID
+#[allow(dead_code)]
 pub fn get_device_by_id(device_id: &str) -> anyhow::Result<cpal::Device> {
     let host = cpal::default_host();
 
@@ -75,6 +76,7 @@ pub fn get_device_by_id(device_id: &str) -> anyhow::Result<cpal::Device> {
 }
 
 // Helper function to get a device by name
+#[allow(dead_code)]
 pub fn get_device_by_name(device_name: &str) -> anyhow::Result<cpal::Device> {
     let host = cpal::default_host();
 

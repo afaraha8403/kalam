@@ -4,6 +4,8 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Manager};
 
+pub const TRAY_ID: &str = "main";
+
 pub struct TrayManager;
 
 impl TrayManager {
@@ -36,8 +38,9 @@ impl TrayManager {
             ],
         )?;
 
-        TrayIconBuilder::new()
+        TrayIconBuilder::with_id(TRAY_ID)
             .icon(app.default_window_icon().unwrap().clone())
+            .tooltip("Kalam Voice - Ready")
             .menu(&menu)
             .on_menu_event(|app, event| match event.id.as_ref() {
                 "settings" => {
@@ -56,7 +59,12 @@ impl TrayManager {
                     }
                 }
                 "check_updates" => {
-                    // Trigger update check
+                    let app_handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = crate::run_update_check(&app_handle).await {
+                            log::warn!("Update check failed: {}", e);
+                        }
+                    });
                 }
                 "about" => {
                     // Show about dialog
@@ -78,11 +86,20 @@ impl TrayManager {
         Ok(())
     }
 
-    pub fn set_recording_state(app: &AppHandle, recording: bool) -> anyhow::Result<()> {
-        // Update tray icon based on recording state
-        // In production, switch between different icon files
-        let _ = recording;
-        let _ = app;
+    /// Update tray tooltip (and optionally icon) based on audio state.
+    pub fn set_tray_state(app: &AppHandle, state: crate::audio::AudioState) -> anyhow::Result<()> {
+        let tray = app
+            .tray_by_id(TRAY_ID)
+            .ok_or_else(|| anyhow::anyhow!("Tray not found"))?;
+
+        let (tooltip, _icon_path): (&str, Option<&str>) = match state {
+            crate::audio::AudioState::Idle => ("Kalam Voice - Ready", None),
+            crate::audio::AudioState::Recording => ("Kalam Voice - Recording...", None),
+            crate::audio::AudioState::Processing => ("Kalam Voice - Processing...", None),
+        };
+
+        tray.set_tooltip(Some(tooltip))?;
+        // When icons/tray-recording.png and icons/tray-processing.png exist, set_icon here
         Ok(())
     }
 }

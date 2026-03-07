@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default permissions for Kalam Voice","local":true,"windows":["main"],"permissions":["core:default","notification:default","updater:default","shell:default"]}}
+{"default":{"identifier":"default","description":"Default permissions for Kalam Voice","local":true,"windows":["main","overlay"],"permissions":["core:default","core:event:default","notification:default","updater:default","shell:default"]}}
