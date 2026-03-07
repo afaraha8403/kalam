@@ -1062,6 +1062,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
             emit_overlay_event(&app_handle, OverlayEvent::Success);
             let _ = crate::tray::TrayManager::set_tray_state(&app_handle, AudioState::Idle);
 
+            // Emit Collapsed after a brief delay so success state is visible
             let app_for_overlay = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
