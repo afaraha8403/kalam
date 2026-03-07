@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
   import { initTelemetry } from './lib/telemetry'
+  import { sidebarDictationStore, displayHotkey } from './lib/sidebarDictation'
   import Settings from './pages/Settings.svelte'
   import History from './pages/History.svelte'
   import Snippets from './pages/Snippets.svelte'
@@ -35,6 +36,8 @@
       const config = (await invoke('get_settings')) as AppConfig
       isFirstRun = !config.onboarding_complete
       initTelemetry(config.privacy?.telemetry_enabled ?? false)
+      const platform = (await invoke('get_platform')) as string
+      sidebarDictationStore.updateFromConfig(config, platform)
     } catch {
       isFirstRun = true
     }
@@ -43,17 +46,29 @@
   function navigate(page: string) {
     currentPage = page
   }
+
+  async function handleOnboardingComplete() {
+    isFirstRun = false
+    try {
+      const config = (await invoke('get_settings')) as AppConfig
+      const platform = (await invoke('get_platform')) as string
+      sidebarDictationStore.updateFromConfig(config, platform)
+    } catch {
+      // keep store as-is
+    }
+  }
 </script>
 
 {#if isOverlay}
   <Overlay />
 {:else if isFirstRun}
-  <Onboarding on:complete={() => isFirstRun = false} />
+  <Onboarding on:complete={handleOnboardingComplete} />
 {:else}
   <main class="app">
     <nav class="sidebar">
       <div class="logo">
-        <h1>Kalam Voice</h1>
+        <img src="/logo/kalam-logo-icon.svg" alt="Kalam" class="logo-icon" />
+        <h1>Kalam</h1>
       </div>
       <ul class="nav-links">
         <li class:active={currentPage === 'settings'}>
@@ -67,7 +82,10 @@
         </li>
       </ul>
       <div class="footer">
-        <p>Press <kbd>Ctrl+Win</kbd> to dictate</p>
+        <p>Press <kbd>{$sidebarDictationStore ? displayHotkey($sidebarDictationStore.hotkey, $sidebarDictationStore.platform) : 'Ctrl+Win'}</kbd> to dictate</p>
+        {#if $sidebarDictationStore && $sidebarDictationStore.languages.length >= 2 && $sidebarDictationStore.languageToggleHotkey}
+          <p>Press <kbd>{displayHotkey($sidebarDictationStore.languageToggleHotkey, $sidebarDictationStore.platform)}</kbd> to switch language</p>
+        {/if}
       </div>
     </nav>
 
@@ -91,30 +109,54 @@
   }
 
   :global(body) {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    background: #1a1a1a;
-    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background: var(--bg-dark);
+    color: var(--text-primary);
   }
 
   .app {
     display: flex;
+    min-height: 100vh;
     height: 100vh;
+    background: var(--bg-dark);
   }
 
   .sidebar {
     width: 240px;
-    background: #252525;
-    border-right: 1px solid #333;
+    background: var(--bg-dark);
+    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    padding: 20px;
+    padding: 24px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 32px;
+    padding-bottom: 20px;
+  }
+
+  .logo-icon {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
   }
 
   .logo h1 {
     font-size: 20px;
-    font-weight: 600;
-    color: #4fc1ff;
-    margin-bottom: 30px;
+    font-weight: 700;
+    color: var(--navy-deep);
+    margin: 0;
+    letter-spacing: -0.5px;
+  }
+
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 40px 48px;
+    background: var(--bg-content);
   }
 
   .nav-links {
@@ -123,50 +165,53 @@
   }
 
   .nav-links li {
-    margin-bottom: 8px;
+    margin-bottom: 4px;
   }
 
   .nav-links button {
     width: 100%;
-    padding: 12px 16px;
+    padding: 10px 14px;
     background: transparent;
     border: none;
     border-radius: 8px;
-    color: #b0b0b0;
+    color: var(--text-secondary);
     font-size: 14px;
+    font-weight: 500;
     text-align: left;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s ease;
   }
 
-  .nav-links li.active button,
   .nav-links button:hover {
-    background: #333;
-    color: #fff;
+    background: var(--bg-input);
+    color: var(--text-primary);
   }
 
   .nav-links li.active button {
-    background: #4fc1ff;
-    color: #1a1a1a;
+    background: var(--primary-alpha);
+    color: var(--primary-dark);
+    font-weight: 600;
   }
 
   .footer {
     padding-top: 20px;
-    border-top: 1px solid #333;
     font-size: 12px;
-    color: #666;
+    color: var(--text-muted);
+  }
+
+  .footer p + p {
+    margin-top: 12px;
   }
 
   .footer kbd {
-    background: #333;
-    padding: 2px 6px;
+    background: var(--bg-content);
+    padding: 3px 6px;
     border-radius: 4px;
     font-family: monospace;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
   }
 
-  .content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 30px;
-  }
 </style>

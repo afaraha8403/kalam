@@ -17,6 +17,9 @@ use tauri::{Emitter, Manager};
 use tokio::sync::{Mutex, oneshot};
 use tauri_plugin_updater::UpdaterExt;
 
+/// App icon for window and taskbar (used in setup so dev and production show the same icon).
+const WINDOW_ICON: tauri::image::Image<'static> = tauri::include_image!("icons/32x32.png");
+
 use crate::audio::vad::VADConfig;
 use crate::audio::{AudioState, play_sound};
 use crate::config::STTConfig;
@@ -132,6 +135,13 @@ pub fn run() {
                 config.get_all().start_in_focus
             };
             
+            // Set app icon on main window (window title bar + taskbar on Windows)
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(e) = window.set_icon(WINDOW_ICON.clone()) {
+                    log::warn!("Failed to set main window icon: {}", e);
+                }
+            }
+
             // Handle window visibility based on config
             if let Some(window) = app.get_webview_window("main") {
                 if start_in_focus {
@@ -152,6 +162,20 @@ pub fn run() {
             
             // Manage state
             app.manage(state);
+
+            // Apply initial overlay position
+            if let Err(e) = update_overlay_position(&app.handle()) {
+                log::warn!("Failed to set initial overlay position: {}", e);
+            }
+
+            // Track cursor to keep overlay on the correct monitor
+            let cursor_tracking_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    let _ = update_overlay_position(&cursor_tracking_handle);
+                }
+            });
 
             // Setup system tray
             TrayManager::setup(app)?;
@@ -323,7 +347,7 @@ pub fn run() {
                 start_listener(registrations);
             }
 
-            log::info!("Kalam Voice initialized successfully");
+            log::info!("Kalam initialized successfully");
             
             // Show overlay in collapsed state on startup
             if let Err(e) = show_overlay(&app.handle()) {
@@ -339,6 +363,7 @@ pub fn run() {
             open_system_permission_page,
             get_settings,
             save_settings,
+            skip_onboarding_with_defaults,
             get_audio_devices,
             test_microphone_start,
             test_microphone_level,
@@ -487,6 +512,32 @@ fn open_system_permission_page(permission: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn skip_onboarding_with_defaults(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut default_config = AppConfig::default();
+    default_config.onboarding_complete = true;
+
+    if let Err(e) = state.audio_capture.lock().await.set_device("") {
+        log::error!("Failed to set default audio device: {}", e);
+        return Err(format!("Failed to set audio device: {}", e));
+    }
+
+    let mut config = state.config.lock().await;
+    match config.save(default_config.clone()) {
+        Ok(_) => {
+            app_log::reconfigure(config.get_all().logging.clone());
+            drop(config);
+            let _ = state.app_handle.emit("settings_updated", default_config);
+            let _ = update_overlay_position(&state.app_handle);
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("skip_onboarding_with_defaults failed: {}", e);
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
 async fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppConfig, String> {
     let config = state.config.lock().await;
     let cfg = config.get_all();
@@ -540,9 +591,16 @@ async fn save_settings(
     };
     
     let mut config = state.config.lock().await;
-    match config.save(config_to_save) {
+    match config.save(config_to_save.clone()) {
         Ok(_) => {
             app_log::reconfigure(config.get_all().logging.clone());
+            let _ = state.app_handle.emit("settings_updated", config_to_save);
+            
+            // Drop the lock before calling update_overlay_position
+            // to avoid blocking the async runtime
+            drop(config);
+            let _ = update_overlay_position(&state.app_handle);
+            
             log::info!("=== SAVE_SETTINGS SUCCESS ===");
             Ok(())
         }
@@ -718,8 +776,8 @@ async fn check_api_key(provider: String, api_key: String) -> Result<bool, String
 
 const OVERLAY_LABEL: &str = "overlay";
 const OVERLAY_WIDTH: i32 = 300;
-const OVERLAY_HEIGHT: i32 = 80;
-const OVERLAY_BOTTOM_MARGIN: i32 = 16;
+const OVERLAY_HEIGHT: i32 = 120;
+const OVERLAY_BOTTOM_MARGIN: i32 = 24;
 
 #[derive(serde::Serialize, Clone)]
 #[serde(tag = "kind")]
@@ -729,6 +787,7 @@ enum OverlayEvent {
     ShortPress,
     Recording { level: f32 },
     Processing,
+    #[allow(dead_code)] // Reserved for future "transcription succeeded" UI
     Success,
     Error { message: String },
 }
@@ -738,19 +797,137 @@ fn emit_overlay_event(app: &tauri::AppHandle, event: OverlayEvent) {
     let _ = app.emit_to(OVERLAY_LABEL, "overlay-state", event);
 }
 
-/// Show the overlay window at bottom-center of primary monitor without stealing focus.
-fn show_overlay(app: &tauri::AppHandle) -> anyhow::Result<()> {
+fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
     let overlay = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| anyhow::anyhow!("Overlay window not found"))?;
     let win = overlay.as_ref().window();
 
-    if let Ok(Some(monitor)) = win.primary_monitor() {
+    let state = app.state::<AppState>();
+    let (position, offset_x, offset_y) = {
+        // Use try_lock to avoid blocking the async runtime
+        if let Ok(cfg) = state.config.try_lock() {
+            let all = cfg.get_all();
+            (
+                all.overlay_position.clone(),
+                all.overlay_offset_x,
+                all.overlay_offset_y,
+            )
+        } else {
+            // Fallback if we can't lock immediately
+            (crate::config::OverlayPosition::default(), 0, 0)
+        }
+    };
+
+    // Get absolute cursor position using the OS API, then find the matching monitor
+    let cursor_screen_pos: Option<(i32, i32)> = {
+        #[cfg(windows)]
+        {
+            let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+            let ok = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) };
+            if ok != 0 { Some((pt.x, pt.y)) } else { None }
+        }
+        #[cfg(not(windows))]
+        { None }
+    };
+
+    let target_monitor = cursor_screen_pos
+        .and_then(|(cx, cy)| {
+            win.available_monitors().ok()?.into_iter().find(|m| {
+                let pos = m.position();
+                let size = m.size();
+                cx >= pos.x
+                    && cx < pos.x + size.width as i32
+                    && cy >= pos.y
+                    && cy < pos.y + size.height as i32
+            })
+        })
+        .or_else(|| win.primary_monitor().ok().flatten());
+
+    if let Some(monitor) = target_monitor {
         let wa = monitor.work_area();
-        let x = wa.position.x + (wa.size.width as i32 - OVERLAY_WIDTH) / 2;
-        let y = wa.position.y + (wa.size.height as i32 - OVERLAY_HEIGHT) - OVERLAY_BOTTOM_MARGIN;
-        overlay.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))?;
+        let scale_factor = monitor.scale_factor();
+        
+        // We must calculate the physical size based on our known logical size.
+        // If we use win.outer_size() while the window is hidden, it may return 0,
+        // causing the window to be placed completely off-screen or behind the taskbar.
+        let physical_width = (OVERLAY_WIDTH as f64 * scale_factor).round() as i32;
+        let physical_height = (OVERLAY_HEIGHT as f64 * scale_factor).round() as i32;
+        let physical_margin = (OVERLAY_BOTTOM_MARGIN as f64 * scale_factor).round() as i32;
+        let physical_offset_x = (offset_x as f64 * scale_factor).round() as i32;
+        let physical_offset_y = (offset_y as f64 * scale_factor).round() as i32;
+        
+        let mut x = wa.position.x;
+        let mut y = wa.position.y;
+        
+        use crate::config::OverlayPosition::*;
+        match position {
+            BottomCenter => {
+                x += (wa.size.width as i32 - physical_width) / 2;
+                y += wa.size.height as i32 - physical_height - physical_margin;
+            }
+            BottomLeft => {
+                x += physical_margin;
+                y += wa.size.height as i32 - physical_height - physical_margin;
+            }
+            BottomRight => {
+                x += wa.size.width as i32 - physical_width - physical_margin;
+                y += wa.size.height as i32 - physical_height - physical_margin;
+            }
+            TopCenter => {
+                x += (wa.size.width as i32 - physical_width) / 2;
+                y += physical_margin;
+            }
+            TopLeft => {
+                x += physical_margin;
+                y += physical_margin;
+            }
+            TopRight => {
+                x += wa.size.width as i32 - physical_width - physical_margin;
+                y += physical_margin;
+            }
+            CenterLeft => {
+                x += physical_margin;
+                y += (wa.size.height as i32 - physical_height) / 2;
+            }
+            CenterRight => {
+                x += wa.size.width as i32 - physical_width - physical_margin;
+                y += (wa.size.height as i32 - physical_height) / 2;
+            }
+            Center => {
+                x += (wa.size.width as i32 - physical_width) / 2;
+                y += (wa.size.height as i32 - physical_height) / 2;
+            }
+        }
+        
+        x += physical_offset_x;
+        y += physical_offset_y;
+
+        let new_pos = tauri::PhysicalPosition { x, y };
+        let mut should_update = true;
+        
+        if let Ok(current_pos) = overlay.outer_position() {
+            // Allow a small 1px variance due to rounding
+            if (current_pos.x - new_pos.x).abs() <= 1 && (current_pos.y - new_pos.y).abs() <= 1 {
+                should_update = false;
+            }
+        }
+
+        if should_update {
+            let _ = overlay.set_position(tauri::Position::Physical(new_pos));
+            let _ = overlay.set_always_on_top(true); // Re-assert to ensure it stays above taskbar
+        }
     }
+    Ok(())
+}
+
+/// Show the overlay window at the configured position without stealing focus.
+fn show_overlay(app: &tauri::AppHandle) -> anyhow::Result<()> {
+    let _ = update_overlay_position(app);
+    let overlay = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| anyhow::anyhow!("Overlay window not found"))?;
+    let win = overlay.as_ref().window();
 
     #[cfg(windows)]
     let prev_hwnd = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
@@ -792,6 +969,10 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     
     if matches!(*audio_state, AudioState::Idle) {
         log::info!("Starting dictation...");
+        
+        // Ensure overlay is positioned on the monitor where the cursor is right now
+        let _ = update_overlay_position(&state.app_handle);
+        
         emit_overlay_event(&state.app_handle, OverlayEvent::Listening);
 
         #[cfg(windows)]
@@ -1059,13 +1240,12 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
 
             let mut audio_state = audio_state_ref.lock().await;
             *audio_state = AudioState::Idle;
-            emit_overlay_event(&app_handle, OverlayEvent::Success);
             let _ = crate::tray::TrayManager::set_tray_state(&app_handle, AudioState::Idle);
 
-            // Emit Collapsed after a brief delay so success state is visible
+            // No Success UI: go straight to Collapsed after brief delay
             let app_for_overlay = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
                 emit_overlay_event(&app_for_overlay, OverlayEvent::Collapsed);
             });
         });

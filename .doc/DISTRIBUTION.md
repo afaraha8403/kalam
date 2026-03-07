@@ -1,6 +1,6 @@
 # Distribution Strategy Document
 
-**Kalam Voice - Open Source Voice Dictation**  
+**Kalam - Open Source Voice Dictation**  
 **Version:** 1.0  
 **Date:** March 4, 2026  
 **Status:** Planning Phase
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-This document outlines the complete distribution strategy for Kalam Voice, an open-source, cross-platform voice dictation application. The strategy emphasizes zero-cost infrastructure, multi-channel distribution, and seamless user experience from discovery through updates.
+This document outlines the complete distribution strategy for Kalam, an open-source, cross-platform voice dictation application. The strategy emphasizes zero-cost infrastructure, multi-channel distribution, and seamless user experience from discovery through updates.
 
 ---
 
@@ -86,7 +86,7 @@ This document outlines the complete distribution strategy for Kalam Voice, an op
 ### 2.4 Installation Flow
 
 ```
-User discovers Kalam Voice
+User discovers Kalam
          ↓
 Downloads from GitHub Releases or website
          ↓

@@ -255,8 +255,8 @@
     justify-content: space-between;
     min-height: 48px;
     padding: 10px 14px;
-    background: #333;
-    border: 2px solid #444;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
     border-radius: 10px;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -264,15 +264,16 @@
   }
 
   .capture-area:hover {
-    border-color: #555;
-    background: #3a3a3a;
+    border-color: var(--border-visible);
+    background: var(--bg-input);
   }
 
   .capture-area.capturing {
-    border-color: #4fc1ff;
-    background: #252525;
+    border-color: var(--primary);
+    background: var(--white);
+    box-shadow: 0 0 0 3px var(--primary-alpha);
     cursor: default;
-    animation: pulse 2s infinite;
+    animation: none;
   }
 
   @keyframes pulse {
@@ -285,7 +286,7 @@
   }
 
   .placeholder {
-    color: #777;
+    color: var(--text-muted);
     font-size: 14px;
     flex: 1;
   }
@@ -303,29 +304,29 @@
     align-items: center;
     justify-content: center;
     padding: 6px 12px;
-    background: linear-gradient(145deg, #3a3a3a, #2d2d2d);
-    border: 1px solid #4a4a4a;
+    background: var(--bg-content);
+    border: 1px solid var(--border-visible);
     border-radius: 6px;
     font-size: 13px;
     font-weight: 600;
-    color: #e0e0e0;
+    color: var(--text-primary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    box-shadow: 0 2px 0 #1a1a1a, 0 3px 4px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 0 var(--border), 0 1px 2px rgba(0, 0, 0, 0.05);
     min-width: 36px;
     height: 32px;
     transition: all 0.15s ease;
   }
 
   .key-pill.modifier {
-    background: linear-gradient(145deg, #4fc1ff, #3ba8e6);
-    border-color: #5fd1ff;
-    color: #1a1a1a;
-    box-shadow: 0 2px 0 #2a7ab0, 0 3px 4px rgba(0, 0, 0, 0.2);
+    background: var(--primary-alpha);
+    border-color: var(--primary);
+    color: var(--primary-dark);
+    box-shadow: none;
   }
 
   .plus {
-    color: #666;
+    color: var(--text-muted);
     font-size: 14px;
     font-weight: 500;
     margin: 0 2px;
@@ -342,7 +343,7 @@
     background: transparent;
     border: none;
     border-radius: 6px;
-    color: #888;
+    color: var(--text-muted);
     cursor: pointer;
     transition: all 0.2s;
     margin-left: 8px;
@@ -350,18 +351,18 @@
 
   .clear-btn:hover {
     background: rgba(244, 67, 54, 0.15);
-    color: #f44336;
+    color: var(--error);
   }
 
   .edit-btn:hover,
   .cancel-btn:hover {
     background: rgba(79, 193, 255, 0.15);
-    color: #4fc1ff;
+    color: var(--primary);
   }
 
   .hint {
     font-size: 12px;
-    color: #4fc1ff;
+    color: var(--primary);
     margin-top: 2px;
   }
 </style>

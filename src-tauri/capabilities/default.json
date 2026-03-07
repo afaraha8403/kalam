@@ -1,7 +1,7 @@
 [
   {
     "identifier": "default",
-    "description": "Default permissions for Kalam Voice",
+    "description": "Default permissions for Kalam",
     "windows": ["main", "overlay"],
     "permissions": [
       "core:default",

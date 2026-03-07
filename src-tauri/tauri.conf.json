@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Kalam Voice",
+  "productName": "Kalam",
   "version": "0.1.0",
   "identifier": "com.kalam.voice",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Kalam Voice",
+        "title": "Kalam",
         "width": 900,
         "height": 700,
         "resizable": true,
@@ -28,7 +28,7 @@
         "label": "overlay",
         "title": "Kalam Overlay",
         "width": 300,
-        "height": 80,
+        "height": 120,
         "resizable": false,
         "transparent": true,
         "decorations": false,
@@ -55,10 +55,10 @@
     ],
     "resources": ["sounds/**/*"],
     "externalBin": [],
-    "copyright": "Copyright (c) 2026 Kalam Voice",
+    "copyright": "Copyright (c) 2026 Kalam",
     "category": "Productivity",
-    "shortDescription": "Open-source voice dictation",
-    "longDescription": "Kalam Voice is an open-source, cross-platform voice dictation application that transforms spoken language into polished text across all applications.",
+    "shortDescription": "Open-source voice dictation — free alternative to Whisperflow",
+    "longDescription": "Kalam is an open-source, cross-platform voice dictation application that transforms spoken language into polished text across all applications. A free, privacy-friendly alternative to Whisperflow.",
     "macOS": {
       "frameworks": [],
       "minimumSystemVersion": "11.0",

@@ -1,14 +1,14 @@
 # Speech-to-Text (STT) Provider Research & Integration Guide
 
 **Date:** March 4, 2026  
-**Purpose:** Comprehensive guide for Kalam Voice STT providers - Cloud APIs & Local Models  
+**Purpose:** Comprehensive guide for Kalam STT providers - Cloud APIs & Local Models  
 **Target:** Support multiple providers with unified interface
 
 ---
 
 ## Executive Summary
 
-This document provides a complete overview of Speech-to-Text options for Kalam Voice, including:
+This document provides a complete overview of Speech-to-Text options for Kalam, including:
 - **Cloud APIs** (Groq, OpenAI, Google, Azure, AssemblyAI, Deepgram, AWS)
 - **Local/Self-hosted Models** (Whisper variants, Qwen, Wav2Vec 2.0, NeMo)
 - **Hybrid Approaches** (Cloud + Local fallback)
@@ -714,7 +714,7 @@ impl ProviderSelector {
 ### 4.3 Recommended Default Configuration
 
 ```yaml
-# Default settings for Kalam Voice
+# Default settings for Kalam
 stt:
   # Primary cloud provider
   default_cloud: "groq"
@@ -948,7 +948,7 @@ stt_provider:
 **Primary Architecture:**
 ```
 ┌─────────────────────────────────────────┐
-│           Kalam Voice App               │
+│           Kalam App                     │
 ├─────────────────────────────────────────┤
 │  UI Layer (React)                       │
 ├─────────────────────────────────────────┤

@@ -29,7 +29,7 @@ pub fn known_models() -> Vec<ModelManifest> {
 }
 
 pub fn model_dir() -> anyhow::Result<PathBuf> {
-    let dir = directories::ProjectDirs::from("com", "Kalam", "Kalam Voice")
+    let dir = directories::ProjectDirs::from("com", "Kalam", "Kalam")
         .ok_or_else(|| anyhow::anyhow!("No project dir"))?
         .data_local_dir()
         .join("models");

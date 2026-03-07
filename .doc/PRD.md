@@ -1,4 +1,4 @@
-# Kalam Voice — Final Product Requirements Document
+# Kalam — Final Product Requirements Document
 
 **Version:** 2.0 (Final)
 **Date:** March 4, 2026
@@ -37,7 +37,7 @@
 
 ## 1. Executive Summary
 
-**Kalam Voice** is an open-source, cross-platform voice dictation application that operates as a lightweight, always-available system tray daemon. It transforms spoken language into polished text across all applications on Windows, macOS, and Linux.
+**Kalam** is an open-source, cross-platform voice dictation application that operates as a lightweight, always-available system tray daemon. It transforms spoken language into polished text across all applications on Windows, macOS, and Linux.
 
 **What it does:** The user presses a global hotkey (e.g., `Ctrl + Win` / `Ctrl + Cmd`), speaks into their microphone, and the transcribed text is instantly injected into whatever application is currently focused — a text editor, browser, chat app, terminal, IDE, or any other text field.
 
@@ -468,7 +468,7 @@ The `tauri.conf.json` must include:
 
 ```jsonc
 {
-  "productName": "Kalam Voice",
+  "productName": "Kalam",
   "version": "0.1.0",
   "identifier": "com.kalam.voice",
   "build": {
@@ -973,7 +973,7 @@ The system tray is the ONLY persistent UI element. There is no main application 
 
 ```
 ┌───────────────────────┐
-│ Kalam Voice           │
+│ Kalam                 │
 ├───────────────────────┤
 │ ● Cloud Mode   ▸     │  → Groq (active), OpenAI, Local
 │ ○ Local Mode         │
@@ -1619,7 +1619,7 @@ pub fn detect_display_server() -> DisplayServer {
 
 ## 17. Accessibility Requirements
 
-Kalam Voice MUST be accessible to users with disabilities. This is both a moral imperative (Persona: Accessibility Alex) and a competitive differentiator.
+Kalam MUST be accessible to users with disabilities. This is both a moral imperative (Persona: Accessibility Alex) and a competitive differentiator.
 
 **WCAG 2.1 AA Compliance:**
 - All UI elements must be keyboard-navigable
@@ -1694,7 +1694,7 @@ Collected metrics:
 
 ### 19.1 Feature Comparison
 
-| Feature | Wispr Flow | Apple Dictation | Windows Speech | **Kalam Voice** |
+| Feature | Wispr Flow | Apple Dictation | Windows Speech | **Kalam** |
 |---|---|---|---|---|
 | Price | $15/month | Free (Apple only) | Free (Windows only) | **Free / BYOK** |
 | Open Source | No | No | No | **Yes** |
@@ -2052,4 +2052,4 @@ windows-sys = { version = "0.52", features = ["Win32_UI_Input_KeyboardAndMouse"]
 
 ---
 
-*This is the final, consolidated PRD for Kalam Voice. It supersedes all previous documents in `.doc/`. All technical decisions have been validated through research. This document should be the single source of truth for development.*
+*This is the final, consolidated PRD for Kalam. It supersedes all previous documents in `.doc/`. All technical decisions have been validated through research. This document should be the single source of truth for development.*

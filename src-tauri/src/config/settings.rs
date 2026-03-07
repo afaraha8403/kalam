@@ -29,6 +29,47 @@ pub struct AppConfig {
     pub min_hold_ms: u64,
     #[serde(default)]
     pub onboarding_complete: bool,
+    #[serde(default)]
+    pub waveform_style: WaveformStyle,
+    #[serde(default)]
+    pub overlay_position: OverlayPosition,
+    #[serde(default)]
+    pub overlay_offset_x: i32,
+    #[serde(default)]
+    pub overlay_offset_y: i32,
+    #[serde(default)]
+    pub overlay_expand_direction: ExpandDirection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub enum OverlayPosition {
+    #[default]
+    BottomCenter,
+    BottomLeft,
+    BottomRight,
+    TopCenter,
+    TopLeft,
+    TopRight,
+    CenterLeft,
+    CenterRight,
+    Center,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub enum ExpandDirection {
+    #[default]
+    Up,
+    Down,
+    Center,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub enum WaveformStyle {
+    #[default]
+    Line,
+    Symmetric,
+    Heartbeat,
+    Snake,
 }
 
 fn default_hotkey() -> String {
@@ -70,6 +111,11 @@ impl Default for AppConfig {
             start_in_focus: true,
             min_hold_ms: default_min_hold_ms(),
             onboarding_complete: false,
+            waveform_style: WaveformStyle::default(),
+            overlay_position: OverlayPosition::default(),
+            overlay_offset_x: 0,
+            overlay_offset_y: 0,
+            overlay_expand_direction: ExpandDirection::default(),
         }
     }
 }

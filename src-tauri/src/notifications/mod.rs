@@ -11,19 +11,19 @@ impl NotificationManager {
     }
 
     pub fn info(&self, message: &str) -> anyhow::Result<()> {
-        self.show("Kalam Voice", message)
+        self.show("Kalam", message)
     }
 
     pub fn success(&self, message: &str) -> anyhow::Result<()> {
-        self.show("Kalam Voice", message)
+        self.show("Kalam", message)
     }
 
     pub fn warning(&self, message: &str) -> anyhow::Result<()> {
-        self.show("Kalam Voice - Warning", message)
+        self.show("Kalam - Warning", message)
     }
 
     pub fn error(&self, message: &str) -> anyhow::Result<()> {
-        self.show("Kalam Voice - Error", message)
+        self.show("Kalam - Error", message)
     }
 
     fn show(&self, title: &str, body: &str) -> anyhow::Result<()> {

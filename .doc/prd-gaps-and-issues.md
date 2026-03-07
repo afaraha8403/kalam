@@ -3,7 +3,7 @@
 **Date:** March 3, 2026  
 **Related Document:** `prd-proposal.md` (Version 1.0)
 
-After reviewing the Product Requirements Document (PRD) for Kalam Voice, the following gaps, potential issues, and open questions have been identified. Addressing these will ensure a more robust technical specification and smoother development phases.
+After reviewing the Product Requirements Document (PRD) for Kalam, the following gaps, potential issues, and open questions have been identified. Addressing these will ensure a more robust technical specification and smoother development phases.
 
 ---
 
@@ -36,7 +36,7 @@ After reviewing the Product Requirements Document (PRD) for Kalam Voice, the fol
 ## 2. Technical & Architectural Issues
 
 ### 2.1 API Key Management & Funding
-- **Issue:** Section 10.3 targets "Cloud API costs per user/month <$1", implying Kalam Voice hosts the Groq API key. However, if adoption targets (50k+ active users) are met, this scales to $50k/month, while donation targets are only $5k/month.
+- **Issue:** Section 10.3 targets "Cloud API costs per user/month <$1", implying Kalam hosts the Groq API key. However, if adoption targets (50k+ active users) are met, this scales to $50k/month, while donation targets are only $5k/month.
 - **Recommendation:** Explicitly define a "Bring Your Own Key" (BYOK) architecture for power users, or clarify the funding model for the default cloud service.
 
 ### 2.2 Auto-Punctuation in Local Mode

@@ -25,6 +25,8 @@
   let platform: 'windows' | 'darwin' | 'linux' = 'windows'
   let demoTranscription = ''
   let unlistenDictation: (() => void) | null = null
+  let skipInProgress = false
+  let skipError = ''
 
   onMount(() => {
     const setup = async () => {
@@ -207,6 +209,30 @@
       console.error('Onboarding save failed:', e)
     }
   }
+
+  async function handleSkipClick(e: MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (skipInProgress) return
+    skipError = ''
+    skipInProgress = true
+    try {
+      const core = await import('@tauri-apps/api/core')
+      const invokeFn = core?.invoke
+      if (typeof invokeFn !== 'function') {
+        skipError = 'App is not ready. Try again in a moment.'
+        return
+      }
+      await invokeFn('skip_onboarding_with_defaults')
+      dispatch('complete')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('Skip onboarding failed:', err)
+      skipError = msg
+    } finally {
+      skipInProgress = false
+    }
+  }
 </script>
 
 <div class="onboarding">
@@ -218,7 +244,7 @@
 
   {#if step === 1}
     <div class="step">
-      <h1>Welcome to Kalam Voice</h1>
+      <h1>Welcome to Kalam</h1>
       <p class="subtitle">Speak your thoughts freely — fast, private, and accessible anywhere.</p>
       
       <div class="features">
@@ -424,7 +450,7 @@
       
       <div class="demo">
         <p>Press <kbd>{hotkey || 'Ctrl+Win'}</kbd> and say:</p>
-        <blockquote>"Hello, this is a test of Kalam Voice!"</blockquote>
+        <blockquote>"Hello, this is a test of Kalam!"</blockquote>
         <textarea placeholder="Your text will appear here when you dictate..." readonly value={demoTranscription}></textarea>
       </div>
     </div>
@@ -441,13 +467,27 @@
       <button class="btn-primary" on:click={finish}>Get Started</button>
     {/if}
   </div>
+
+  <div class="skip-footer" role="region" aria-label="Skip onboarding">
+    <button
+      type="button"
+      class="btn-skip"
+      disabled={skipInProgress}
+      on:click={handleSkipClick}
+    >
+      {skipInProgress ? 'Skipping…' : 'Skip onboarding'}
+    </button>
+    {#if skipError}
+      <p class="skip-error" role="alert">{skipError}</p>
+    {/if}
+  </div>
 </div>
 
 <style>
   .onboarding {
     position: fixed;
     inset: 0;
-    background: #1a1a1a;
+    background: var(--bg-dark);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -465,12 +505,12 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #333;
+    background: var(--bg-input);
     transition: background 0.3s;
   }
 
   .dot.active {
-    background: #4fc1ff;
+    background: var(--primary);
   }
 
   .step {
@@ -485,7 +525,7 @@
 
   .subtitle {
     font-size: 18px;
-    color: #666;
+    color: var(--text-muted);
     margin-bottom: 40px;
   }
 
@@ -513,7 +553,7 @@
 
   .feature p {
     font-size: 14px;
-    color: #666;
+    color: var(--text-muted);
   }
 
   .permissions {
@@ -529,7 +569,9 @@
     gap: 12px;
     text-align: left;
     padding: 20px;
-    background: #252525;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
     border-radius: 12px;
   }
 
@@ -553,14 +595,14 @@
 
   .permission-path {
     font-size: 13px;
-    color: #888;
+    color: var(--text-muted);
     margin-top: 4px;
   }
 
   .btn-link {
     background: none;
     border: none;
-    color: #4fc1ff;
+    color: var(--primary);
     cursor: pointer;
     font-size: 14px;
     padding: 4px 0;
@@ -569,7 +611,7 @@
   }
 
   .btn-link:hover {
-    color: #7ad4ff;
+    color: var(--primary-light);
   }
 
   .btn-small {
@@ -584,7 +626,7 @@
 
   .mic-empty {
     font-size: 13px;
-    color: #e67e22;
+    color: var(--warning);
     margin: 8px 0 0;
   }
 
@@ -599,7 +641,7 @@
   .mic-level-wrap {
     width: 200px;
     height: 8px;
-    background: #333;
+    background: var(--bg-input);
     border-radius: 4px;
     overflow: hidden;
     margin: 0 auto 8px;
@@ -607,14 +649,14 @@
 
   .mic-level {
     height: 100%;
-    background: #4fc1ff;
+    background: var(--primary);
     border-radius: 4px;
     transition: width 0.1s;
   }
 
   .mic-hint {
     font-size: 13px;
-    color: #666;
+    color: var(--text-muted);
     margin: 0;
   }
 
@@ -627,19 +669,21 @@
   .mode-card {
     width: 240px;
     padding: 24px;
-    background: #252525;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 12px;
     text-align: left;
     position: relative;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   }
 
   .mode-card.recommended {
-    border: 2px solid #4fc1ff;
+    border: 2px solid var(--primary);
   }
 
   .mode-card.selected {
-    border: 2px solid #4caf50;
-    box-shadow: 0 0 0 1px #4caf50;
+    border: 2px solid var(--success);
+    box-shadow: 0 0 0 1px var(--success);
   }
 
   .badge {
@@ -647,8 +691,8 @@
     top: -10px;
     left: 50%;
     transform: translateX(-50%);
-    background: #4fc1ff;
-    color: #1a1a1a;
+    background: var(--primary);
+    color: var(--white);
     padding: 4px 12px;
     border-radius: 20px;
     font-size: 12px;
@@ -660,7 +704,7 @@
   }
 
   .mode-card p {
-    color: #666;
+    color: var(--text-muted);
     font-size: 14px;
     margin-bottom: 16px;
   }
@@ -672,35 +716,37 @@
 
   .mode-card li {
     padding: 4px 0;
-    color: #999;
+    color: var(--text-secondary);
     font-size: 14px;
   }
 
   .mode-card li::before {
     content: "✓ ";
-    color: #4caf50;
+    color: var(--success);
   }
 
   .mode-card input {
     width: 100%;
     padding: 10px;
-    background: #333;
-    border: 1px solid #444;
+    background: var(--bg-input);
+    border: 1px solid var(--border-visible);
     border-radius: 6px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     margin-bottom: 8px;
   }
 
   .mode-card a {
-    color: #4fc1ff;
+    color: var(--primary);
     font-size: 12px;
     text-decoration: none;
   }
 
   .hotkey-config {
-    background: #252525;
+    background: var(--bg-card);
     padding: 40px;
     border-radius: 12px;
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   }
 
   .hotkey-config .form-group {
@@ -712,16 +758,16 @@
     font-size: 14px;
     font-weight: 500;
     margin-bottom: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
   }
 
   .hotkey-config .form-group select {
     width: 100%;
     padding: 12px 16px;
-    background: #333;
-    border: 1px solid #444;
+    background: var(--bg-input);
+    border: 1px solid var(--border-visible);
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 14px;
   }
 
@@ -735,20 +781,20 @@
     justify-content: space-between;
     gap: 8px;
     padding: 8px 12px;
-    background: #333;
+    background: var(--bg-input);
     border-radius: 8px;
     margin-bottom: 6px;
   }
 
   .language-multiselect .lang-badge {
     font-size: 14px;
-    color: #e0e0e0;
+    color: var(--text-primary);
   }
 
   .language-multiselect .default-tag {
     display: inline-block;
-    background: #4fc1ff;
-    color: #1a1a1a;
+    background: var(--primary);
+    color: var(--white);
     font-size: 10px;
     font-weight: 600;
     padding: 2px 6px;
@@ -762,9 +808,9 @@
   }
 
   .language-multiselect .btn-icon {
-    background: #444;
+    background: var(--border);
     border: none;
-    color: #e0e0e0;
+    color: var(--text-primary);
     width: 28px;
     height: 28px;
     border-radius: 6px;
@@ -774,11 +820,11 @@
   }
 
   .language-multiselect .btn-icon:hover {
-    background: #555;
+    background: var(--border-subtle);
   }
 
   .language-multiselect .btn-icon.remove {
-    color: #e74c3c;
+    color: var(--error);
   }
 
   .language-multiselect .add-language select {
@@ -794,7 +840,7 @@
   }
 
   .hotkey-display kbd {
-    background: #333;
+    background: var(--bg-input);
     padding: 12px 20px;
     border-radius: 8px;
     font-family: monospace;
@@ -818,7 +864,7 @@
   .demo blockquote {
     font-size: 20px;
     font-style: italic;
-    color: #999;
+    color: var(--text-secondary);
     margin: 20px 0;
   }
 
@@ -826,10 +872,10 @@
     width: 100%;
     height: 100px;
     padding: 16px;
-    background: #252525;
-    border: 1px solid #333;
+    background: var(--bg-card);
+    border: 1px solid var(--bg-input);
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     resize: none;
   }
 
@@ -841,10 +887,10 @@
 
   .btn-primary {
     padding: 14px 32px;
-    background: #4fc1ff;
+    background: var(--primary);
     border: none;
     border-radius: 8px;
-    color: #1a1a1a;
+    color: var(--white);
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
@@ -853,10 +899,46 @@
   .btn-secondary {
     padding: 14px 32px;
     background: transparent;
-    border: 1px solid #444;
+    border: 1px solid var(--border-visible);
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 16px;
     cursor: pointer;
+  }
+
+  .skip-footer {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    pointer-events: auto;
+  }
+
+  .btn-skip {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 8px 12px;
+  }
+
+  .btn-skip:hover {
+    color: var(--text-secondary);
+  }
+
+  .btn-skip:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+
+  .skip-error {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--error, #c53030);
+    max-width: 320px;
+    text-align: center;
   }
 </style>

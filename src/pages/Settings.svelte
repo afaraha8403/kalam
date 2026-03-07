@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { initTelemetry, optOut } from '../lib/telemetry'
+  import { sidebarDictationStore } from '../lib/sidebarDictation'
   import { LANGUAGE_OPTIONS, languageLabel, getSupportedLanguagesForProvider, isLanguageSupportedByProvider } from '../lib/languages'
   import type { AppConfig, AudioDevice } from '../types'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
@@ -23,8 +24,9 @@
   let initialLoadDone = false
   let saveDebounceId: ReturnType<typeof setTimeout> | null = null
 
-  const tabs = [
+    const tabs = [
     { id: 'general', label: 'General' },
+    { id: 'overlay', label: 'Overlay' },
     { id: 'audio', label: 'Audio' },
     { id: 'stt', label: 'STT Provider' },
     { id: 'formatting', label: 'Formatting' },
@@ -35,13 +37,15 @@
   onMount(async () => {
     try {
       // Load settings and audio devices in parallel
-      const [settings, devices] = await Promise.all([
+      const [settings, devices, platform] = await Promise.all([
         invoke('get_settings') as Promise<AppConfig>,
-        invoke('get_audio_devices') as Promise<AudioDevice[]>
+        invoke('get_audio_devices') as Promise<AudioDevice[]>,
+        invoke('get_platform') as Promise<string>,
       ])
       
       config = settings
       audioDevices = devices
+      sidebarDictationStore.updateFromConfig(settings, platform)
       // Normalize so UI never sees missing or invalid shape
       if (config) {
         if (config.audio_device == null || config.audio_device === 'default' || config.audio_device === '') {
@@ -53,6 +57,11 @@
         if (!Array.isArray(config.languages) || config.languages.length === 0) {
           config.languages = ['en']
         }
+        if (!config.waveform_style) config.waveform_style = 'Line'
+        if (!config.overlay_position) config.overlay_position = 'BottomCenter'
+        if (config.overlay_offset_x == null) config.overlay_offset_x = 0
+        if (config.overlay_offset_y == null) config.overlay_offset_y = 0
+        if (!config.overlay_expand_direction) config.overlay_expand_direction = 'Up'
       }
       
       // Check if API key is already configured
@@ -101,6 +110,8 @@
     saveError = null
     try {
       await invoke('save_settings', { newConfig: config })
+      const platform = (await invoke('get_platform')) as string
+      sidebarDictationStore.updateFromConfig(config, platform)
       if (config.privacy.telemetry_enabled) {
         initTelemetry(true)
       } else {
@@ -380,6 +391,73 @@
             </label>
             <p class="hint">If disabled, app starts minimized to tray and plays a sound</p>
           </div>
+
+        </section>
+
+      {:else if activeTab === 'overlay'}
+        <section>
+          <h3>Overlay Appearance</h3>
+          
+          <div class="form-group">
+            <label for="waveform-style">Waveform Style</label>
+            <select id="waveform-style" bind:value={config.waveform_style} on:change={scheduleSave}>
+              <option value="Line">Line (Default)</option>
+              <option value="Symmetric">Symmetric Wave</option>
+              <option value="Heartbeat">Heartbeat</option>
+              <option value="Snake">Snake</option>
+            </select>
+            <p class="hint">Choose how your voice is visualized in the overlay pill.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="overlay-expand-direction">Expand Direction</label>
+            <select id="overlay-expand-direction" bind:value={config.overlay_expand_direction} on:change={scheduleSave}>
+              <option value="Up">Upwards (Default)</option>
+              <option value="Down">Downwards</option>
+              <option value="Center">Center</option>
+            </select>
+            <p class="hint">Which direction the pill expands when you start dictating.</p>
+          </div>
+
+          <h3>Overlay Position</h3>
+
+          <div class="form-group">
+            <label for="overlay-position">Screen Position</label>
+            <select id="overlay-position" bind:value={config.overlay_position} on:change={scheduleSave}>
+              <option value="BottomCenter">Bottom Center (Default)</option>
+              <option value="BottomLeft">Bottom Left</option>
+              <option value="BottomRight">Bottom Right</option>
+              <option value="TopCenter">Top Center</option>
+              <option value="TopLeft">Top Left</option>
+              <option value="TopRight">Top Right</option>
+              <option value="CenterLeft">Center Left</option>
+              <option value="CenterRight">Center Right</option>
+              <option value="Center">Center</option>
+            </select>
+            <p class="hint">Where the pill appears on your primary monitor.</p>
+          </div>
+
+          <div class="form-group row-group">
+            <div class="sub-setting">
+              <label for="overlay-offset-x">X Offset (px)</label>
+              <input
+                id="overlay-offset-x"
+                type="number"
+                bind:value={config.overlay_offset_x}
+                on:input={scheduleSave}
+              />
+            </div>
+            <div class="sub-setting">
+              <label for="overlay-offset-y">Y Offset (px)</label>
+              <input
+                id="overlay-offset-y"
+                type="number"
+                bind:value={config.overlay_offset_y}
+                on:input={scheduleSave}
+              />
+            </div>
+          </div>
+          <p class="hint">Fine-tune the position by adding horizontal (X) or vertical (Y) pixel offsets.</p>
         </section>
 
       {:else if activeTab === 'audio'}
@@ -716,7 +794,8 @@
 
 <style>
   .settings {
-    max-width: 800px;
+    max-width: 900px;
+    padding: 8px;
   }
 
   header {
@@ -735,7 +814,7 @@
     display: flex;
     gap: 8px;
     margin-bottom: 30px;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--border-visible);
     padding-bottom: 16px;
   }
 
@@ -744,37 +823,54 @@
     background: transparent;
     border: none;
     border-radius: 8px;
-    color: #999;
+    color: var(--text-secondary);
     font-size: 14px;
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .tab:hover {
-    background: #333;
-    color: #fff;
+    background: var(--bg-input);
+    color: var(--text-primary);
   }
 
   .tab.active {
-    background: #4fc1ff;
-    color: #1a1a1a;
+    background: var(--primary-alpha);
+    color: var(--primary-dark);
+    font-weight: 600;
   }
 
   section {
-    background: #252525;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 12px;
     padding: 24px;
     margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   }
 
   section h3 {
-    font-size: 18px;
+    font-size: 16px;
+    font-weight: 600;
     margin-bottom: 20px;
-    color: #4fc1ff;
+    color: var(--navy-deep);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
   }
 
   .form-group {
     margin-bottom: 20px;
+  }
+
+  .form-group.row-group {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+  
+  .form-group.row-group .sub-setting {
+    flex: 1;
+    margin-top: 0;
   }
 
   .form-group:last-child {
@@ -787,7 +883,7 @@
     font-size: 14px;
     font-weight: 500;
     margin-bottom: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
   }
 
   .form-group.checkbox label {
@@ -802,42 +898,42 @@
   select {
     width: 100%;
     padding: 12px 16px;
-    background: #333;
-    border: 1px solid #444;
+    background: var(--bg-input);
+    border: 1px solid var(--border-visible);
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 14px;
   }
 
   input:focus,
   select:focus {
     outline: none;
-    border-color: #4fc1ff;
+    border-color: var(--primary);
   }
 
   .save-error {
     margin: 0 0 16px;
     padding: 12px 16px;
     background: rgba(255, 80, 80, 0.15);
-    border: 1px solid #e05555;
+    border: 1px solid var(--error);
     border-radius: 8px;
-    color: #ff9999;
+    color: var(--error);
     font-size: 14px;
   }
 
   .hint {
     font-size: 12px;
-    color: #666;
+    color: var(--text-muted);
     margin-top: 6px;
   }
 
   .hint a {
-    color: #4fc1ff;
+    color: var(--primary);
     text-decoration: none;
   }
 
   .hint.warning {
-    color: #ff9800;
+    color: var(--warning);
   }
 
   .input-group {
@@ -859,20 +955,20 @@
     justify-content: space-between;
     gap: 8px;
     padding: 8px 12px;
-    background: #333;
+    background: var(--bg-input);
     border-radius: 8px;
     margin-bottom: 6px;
   }
 
   .language-multiselect .lang-badge {
     font-size: 14px;
-    color: #e0e0e0;
+    color: var(--text-primary);
   }
 
   .language-multiselect .default-tag {
     display: inline-block;
-    background: #4fc1ff;
-    color: #1a1a1a;
+    background: var(--primary);
+    color: var(--navy-deep);
     font-size: 10px;
     font-weight: 600;
     padding: 2px 6px;
@@ -886,9 +982,9 @@
   }
 
   .language-multiselect .btn-icon {
-    background: #444;
+    background: var(--border);
     border: none;
-    color: #e0e0e0;
+    color: var(--text-primary);
     width: 28px;
     height: 28px;
     border-radius: 6px;
@@ -898,11 +994,11 @@
   }
 
   .language-multiselect .btn-icon:hover {
-    background: #555;
+    background: var(--border-subtle);
   }
 
   .language-multiselect .btn-icon.remove {
-    color: #e74c3c;
+    color: var(--error);
   }
 
   .language-multiselect .lang-row.unsupported {
@@ -910,12 +1006,12 @@
   }
 
   .language-multiselect .lang-row.unsupported .lang-badge {
-    color: #888;
+    color: var(--text-muted);
   }
 
   .language-multiselect .unsupported-icon {
     margin-left: 6px;
-    color: #ff9800;
+    color: var(--warning);
     font-size: 12px;
     vertical-align: middle;
   }
@@ -931,26 +1027,26 @@
   }
 
   .validation.success {
-    color: #4caf50;
+    color: var(--success);
   }
 
   .validation.error {
-    color: #f44336;
+    color: var(--error);
   }
 
   .btn-primary {
     padding: 10px 20px;
-    background: #4fc1ff;
+    background: var(--primary);
     border: none;
     border-radius: 8px;
-    color: #1a1a1a;
+    color: var(--navy-deep);
     font-weight: 500;
     cursor: pointer;
     transition: background 0.2s;
   }
 
   .btn-primary:hover {
-    background: #3ba8e6;
+    background: var(--primary-dark);
   }
 
   .btn-primary:disabled {
@@ -960,26 +1056,26 @@
 
   .save-status {
     font-size: 13px;
-    color: #999;
+    color: var(--text-secondary);
   }
 
   .save-status.error {
-    color: #e74c3c;
+    color: var(--error);
   }
 
   .btn-secondary {
     padding: 10px 20px;
-    background: #333;
-    border: 1px solid #444;
+    background: var(--bg-input);
+    border: 1px solid var(--border-visible);
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 14px;
     cursor: pointer;
     transition: all 0.2s;
   }
 
   .btn-secondary:hover {
-    background: #444;
+    background: var(--border);
   }
 
   .btn-secondary:disabled {
@@ -988,7 +1084,7 @@
   }
 
   .btn-secondary.btn-link {
-    color: #4fc1ff;
+    color: var(--primary);
     border-color: transparent;
     background: transparent;
     text-decoration: underline;
@@ -1004,14 +1100,14 @@
 
   .mic-level {
     height: 8px;
-    background: #333;
+    background: var(--bg-input);
     border-radius: 4px;
     overflow: hidden;
   }
 
   .mic-bar {
     height: 100%;
-    background: linear-gradient(90deg, #4caf50, #8bc34a);
+    background: linear-gradient(90deg, var(--success), var(--primary-light));
     border-radius: 4px;
     transition: width 0.1s ease-out;
     min-width: 2px;
@@ -1019,7 +1115,7 @@
 
   .mic-status {
     font-size: 12px;
-    color: #999;
+    color: var(--text-secondary);
     margin-top: 4px;
     display: block;
   }
@@ -1027,7 +1123,7 @@
   .btn-refresh {
     background: transparent;
     border: none;
-    color: #4fc1ff;
+    color: var(--primary);
     cursor: pointer;
     font-size: 14px;
     margin-left: 8px;
@@ -1037,7 +1133,7 @@
   }
 
   .btn-refresh:hover {
-    background: #333;
+    background: var(--bg-input);
   }
 
   .model-list {
@@ -1051,7 +1147,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 16px;
-    background: #333;
+    background: var(--bg-input);
     border-radius: 8px;
   }
 
@@ -1063,27 +1159,27 @@
 
   .model-info span {
     font-size: 12px;
-    color: #999;
+    color: var(--text-secondary);
   }
 
   .danger-zone {
     margin-top: 30px;
     padding: 20px;
-    border: 1px solid #f44336;
+    border: 1px solid var(--error);
     border-radius: 8px;
   }
 
   .danger-zone h4 {
-    color: #f44336;
+    color: var(--error);
     margin-bottom: 16px;
   }
 
   .btn-danger {
     padding: 10px 20px;
     background: transparent;
-    border: 1px solid #f44336;
+    border: 1px solid var(--error);
     border-radius: 8px;
-    color: #f44336;
+    color: var(--error);
     font-size: 14px;
     cursor: pointer;
     margin-right: 10px;
@@ -1091,8 +1187,8 @@
   }
 
   .btn-danger:hover {
-    background: #f44336;
-    color: #fff;
+    background: var(--error);
+    color: var(--white);
   }
   
   .badge {
@@ -1104,22 +1200,22 @@
   }
   
   .badge.configured {
-    background: #4caf50;
-    color: #fff;
+    background: var(--success);
+    color: var(--white);
   }
   
   .input-group .btn-danger {
     margin-left: 8px;
-    border-color: #f44336;
-    color: #f44336;
+    border-color: var(--error);
+    color: var(--error);
   }
   
   .input-group .btn-danger:hover {
-    background: #f44336;
-    color: #fff;
+    background: var(--error);
+    color: var(--white);
   }
   
   .hint.warning {
-    color: #ff9800;
+    color: var(--warning);
   }
 </style>

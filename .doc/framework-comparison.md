@@ -1,14 +1,14 @@
 # Framework Comparison: Tauri vs Electron vs Bun+Electron
 
 **Date:** March 4, 2026  
-**Purpose:** Determine the optimal framework for Kalam Voice - a system-level voice dictation application  
+**Purpose:** Determine the optimal framework for Kalam - a system-level voice dictation application  
 **Decision:** **TAURI v2** (detailed reasoning below)
 
 ---
 
 ## Executive Summary
 
-After extensive research comparing **Tauri v2**, **Electron**, and **Bun+Electron** for building Kalam Voice (a system-level voice dictation app), **Tauri v2 is the clear winner** for this specific use case.
+After extensive research comparing **Tauri v2**, **Electron**, and **Bun+Electron** for building Kalam (a system-level voice dictation app), **Tauri v2 is the clear winner** for this specific use case.
 
 **Primary Reasons:**
 1. **25x smaller bundle size** (15MB vs 400MB) - Critical for "lightweight, always-available" design
@@ -40,7 +40,7 @@ After extensive research comparing **Tauri v2**, **Electron**, and **Bun+Electro
 
 ---
 
-## 2. Why Tauri is Best for Kalam Voice
+## 2. Why Tauri is Best for Kalam
 
 ### 2.1 Bundle Size & Resource Usage (Critical Factor)
 
@@ -66,7 +66,7 @@ Electron: Chromium (~120MB) + Node.js (~30MB) + App Code = 150MB+
 
 ### 2.2 System-Level Features (Deal-Breaker)
 
-Kalam Voice requires deep OS integration:
+Kalam requires deep OS integration:
 
 | Feature | Tauri | Electron | Bun+Electron |
 |---------|-------|----------|--------------|
@@ -317,7 +317,7 @@ npm start  # Electron launch
 
 ---
 
-## 6. Specific Kalam Voice Requirements
+## 6. Specific Kalam Requirements
 
 ### 6.1 Must-Have Features (P0)
 
@@ -342,7 +342,7 @@ npm start  # Electron launch
 
 ### 6.3 Architecture Fit
 
-**Kalam Voice needs:**
+**Kalam needs:**
 1. **Audio Pipeline:** Capture → VAD → Transcription → Text Injection
 2. **Background Service:** System tray, global hotkeys, always running
 3. **Settings UI:** React-based configuration panel
@@ -425,7 +425,7 @@ npm start  # Electron launch
 - ✅ You're building a system tray/background app
 - ✅ Performance matters
 
-**For Kalam Voice:**
+**For Kalam:**
 - **ALL** requirements match Tauri's strengths
 - **NO** requirement is better suited to Electron
 - **Critical PRD requirements** (bundle size, memory) only achievable with Tauri
@@ -439,7 +439,7 @@ npm start  # Electron launch
 - Bundle size doesn't matter
 - You need maximum ecosystem compatibility
 
-**NOT applicable to Kalam Voice.**
+**NOT applicable to Kalam.**
 
 ### 8.3 When to Consider Bun
 
@@ -515,7 +515,7 @@ pnpm tauri add sql
 
 ## 10. Conclusion
 
-**For Kalam Voice specifically:**
+**For Kalam specifically:**
 
 | Framework | Score | Reason |
 |-----------|-------|--------|

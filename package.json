@@ -1,8 +1,29 @@
 {
-  "name": "kalam-voice",
+  "name": "kalam",
   "version": "0.1.0",
-  "description": "Open-source, cross-platform voice dictation app",
+  "description": "Kalam (كلام) — open-source voice dictation for Windows, macOS & Linux. Free, privacy-friendly alternative to Whisperflow. Speaks into any app.",
   "type": "module",
+  "keywords": [
+    "voice-dictation",
+    "speech-to-text",
+    "stt",
+    "whisperflow-alternative",
+    "open-source",
+    "privacy",
+    "cross-platform",
+    "tauri",
+    "dictation",
+    "accessibility"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kalam-voice/kalam.git"
+  },
+  "homepage": "https://github.com/kalam-voice/kalam#readme",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/kalam-voice/kalam/issues"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

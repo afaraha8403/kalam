@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { invoke } from '@tauri-apps/api/core'
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+  import { listen } from '@tauri-apps/api/event'
+  import type { AppConfig, WaveformStyle, ExpandDirection } from '../types'
 
   const KINDS = ['Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error'] as const
   type OverlayEvent =
@@ -15,6 +18,8 @@
   let state: OverlayEvent = { kind: 'Collapsed' }
   let prevLevel = 0
   let smoothLevel = 0
+  let waveformStyle: WaveformStyle = 'Line'
+  let expandDirection: ExpandDirection = 'Up'
 
   function isValidPayload(p: unknown): p is OverlayEvent {
     if (!p || typeof p !== 'object') return false
@@ -28,35 +33,124 @@
   }
 
   $: rawLevel = state.kind === 'Recording' ? Number(state.level) || 0 : 0
-  $: {
-    const r = Math.min(1, Math.max(0, rawLevel))
-    smoothLevel = r > prevLevel ? r * 0.6 + prevLevel * 0.4 : r * 0.3 + prevLevel * 0.7
-    prevLevel = smoothLevel
-  }
 
   $: isExpanded = state.kind !== 'Collapsed'
 
-  // Rolling history of mic levels for the live wave (last N samples)
-  const WAVE_POINTS = 52
+  // Rolling history of mic levels for the live wave
+  const WAVE_POINTS = 100
   let levelHistory: number[] = []
+  let currentLevel = 0
+  let snakeOffset = 0
+  let animationFrameId: number | null = null
 
-  $: if (state.kind === 'Recording') {
-    levelHistory = [...levelHistory, smoothLevel].slice(-WAVE_POINTS)
-  } else if (state.kind !== 'Recording' && levelHistory.length > 0) {
-    levelHistory = []
+  function animateWave() {
+    if (state.kind !== 'Recording') {
+      levelHistory = []
+      snakeOffset = 0
+      currentLevel = 0
+      animationFrameId = null
+      return
+    }
+
+    const r = Math.min(1, Math.max(0, rawLevel))
+    const gain = Math.sqrt(r) * 1.4 // boost low levels
+    const targetLevel = Math.min(1, gain)
+
+    // Smooth interpolation (runs at ~60fps)
+    if (targetLevel > currentLevel) {
+      currentLevel += (targetLevel - currentLevel) * 0.25 // Fast attack
+    } else {
+      currentLevel += (targetLevel - currentLevel) * 0.08 // Smooth decay
+    }
+
+    levelHistory = [...levelHistory, currentLevel].slice(-WAVE_POINTS)
+    snakeOffset += 0.15
+
+    animationFrameId = requestAnimationFrame(animateWave)
   }
 
-  // Build SVG polyline points: x 0..WAVE_POINTS-1, y = center - level * amplitude
+  $: if (state.kind === 'Recording' && !animationFrameId) {
+    animationFrameId = requestAnimationFrame(animateWave)
+  } else if (state.kind !== 'Recording' && animationFrameId) {
+    cancelAnimationFrame(animationFrameId)
+    animationFrameId = null
+    levelHistory = []
+    snakeOffset = 0
+    currentLevel = 0
+  }
+
+  // Build SVG polyline points based on the selected style
   $: wavePoints = (() => {
     const centerY = 12
-    const amplitude = 10
     const pad = Math.max(0, WAVE_POINTS - levelHistory.length)
     const padded = [...Array(pad).fill(0), ...levelHistory].slice(-WAVE_POINTS)
-    return padded.map((l, i) => `${i},${centerY - l * amplitude}`).join(' ')
+    
+    if (waveformStyle === 'Symmetric') {
+      // Mirrored line: expands up and down
+      const amplitude = 10
+      const topHalf = padded.map((l, i) => `${i},${centerY - l * amplitude}`).join(' ')
+      const bottomHalf = padded.slice().reverse().map((l, i) => `${WAVE_POINTS - 1 - i},${centerY + l * amplitude}`).join(' ')
+      return `${topHalf} ${bottomHalf}`
+    } else if (waveformStyle === 'Heartbeat') {
+      // EKG style: sharp peaks up and down
+      const amplitude = 20
+      return padded.map((l, i) => {
+        // Alternate up and down based on index to create jagged peaks
+        const direction = i % 2 === 0 ? 1 : -1
+        const y = centerY + (l * amplitude * direction)
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
+    } else if (waveformStyle === 'Snake') {
+      // Sine wave that grows in amplitude
+      const amplitude = 18
+      const frequency = 0.2 // Adjusted for 100 points
+      return padded.map((l, i) => {
+        // Offset by time to make it slither
+        const phase = (i * frequency) - snakeOffset
+        const y = centerY + Math.sin(phase) * (l * amplitude)
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
+    } else {
+      // Default Line: single line that moves up
+      const amplitude = 18
+      const minY = 1
+      const maxY = 23
+      return padded
+        .map((l, i) => {
+          const y = centerY - l * amplitude
+          return `${i},${Math.max(minY, Math.min(maxY, y))}`
+        })
+        .join(' ')
+    }
   })()
 
   onMount(() => {
     let unlisten: (() => void) | null = null
+    let unlistenSettings: (() => void) | null = null
+
+    // Load initial settings
+    invoke('get_settings').then((config) => {
+      const cfg = config as AppConfig
+      if (cfg.waveform_style) {
+        waveformStyle = cfg.waveform_style
+      }
+      if (cfg.overlay_expand_direction) {
+        expandDirection = cfg.overlay_expand_direction
+      }
+    }).catch(console.error)
+
+    // Listen for settings updates
+    listen<AppConfig>('settings_updated', (e) => {
+      if (e.payload?.waveform_style) {
+        waveformStyle = e.payload.waveform_style
+      }
+      if (e.payload?.overlay_expand_direction) {
+        expandDirection = e.payload.overlay_expand_direction
+      }
+    }).then((fn) => {
+      unlistenSettings = fn
+    })
+
     getCurrentWebviewWindow().listen<OverlayEvent>('overlay-state', (e) => {
       const p = e?.payload
       if (isValidPayload(p)) state = p
@@ -65,11 +159,12 @@
     })
     return () => {
       unlisten?.()
+      unlistenSettings?.()
     }
   })
 </script>
 
-<div class="blip-root">
+<div class="blip-root" class:expand-up={expandDirection === 'Up'} class:expand-down={expandDirection === 'Down'} class:expand-center={expandDirection === 'Center'}>
   <div
     class="blip"
     class:collapsed={!isExpanded}
@@ -93,7 +188,7 @@
       </div>
     {:else if state.kind === 'Recording'}
       <div class="content waveform">
-        <svg class="wave-svg" viewBox="0 0 52 24" preserveAspectRatio="none">
+        <svg class="wave-svg" viewBox="0 0 {WAVE_POINTS} 24" preserveAspectRatio="none">
           <defs>
             <linearGradient id="wave-grad" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stop-color="#4fc1ff" stop-opacity="0.4" />
@@ -110,9 +205,10 @@
           </defs>
           <polyline
             class="wave-line"
+            class:filled={waveformStyle === 'Symmetric'}
             points={wavePoints}
-            fill="none"
-            stroke="url(#wave-grad)"
+            fill={waveformStyle === 'Symmetric' ? "url(#wave-grad)" : "none"}
+            stroke={waveformStyle === 'Symmetric' ? "none" : "url(#wave-grad)"}
             stroke-width="1.5"
             stroke-linecap="round"
             stroke-linejoin="round"
@@ -150,17 +246,34 @@
     background: transparent !important;
     border: none !important;
     outline: none !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
   }
 
   /* Pill’s parent: full overlay area, transparent, centers the pill at bottom */
   .blip-root {
-    width: 100%;
-    height: 100%;
+    width: 100vw;
+    height: 100vh;
     display: flex;
-    align-items: flex-end;
     justify-content: center;
-    padding-bottom: 8px;
     background: transparent;
+  }
+
+  .blip-root.expand-up {
+    align-items: flex-end;
+    padding-bottom: 24px;
+  }
+
+  .blip-root.expand-down {
+    align-items: flex-start;
+    padding-top: 24px;
+  }
+
+  .blip-root.expand-center {
+    align-items: center;
   }
 
   /* The pill (blue in your screenshot): animates width/height, contains wave/dots/error */
@@ -169,7 +282,8 @@
     align-items: center;
     justify-content: center;
     border-radius: 100px;
-    background: #0a0a0c;
+    background: #0a0a0c !important;
+    border: 1px solid rgba(255, 255, 255, 0.1);
     box-sizing: border-box;
     will-change: width, height, opacity;
     transition:
@@ -198,7 +312,7 @@
     height: 48px;
     min-height: 48px;
     opacity: 1;
-    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
   }
 
   .blip.recording {
@@ -246,14 +360,14 @@
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-size: 13px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.8);
+    color: rgba(255, 255, 255, 0.8) !important;
     letter-spacing: 0.02em;
     white-space: nowrap;
   }
 
   .hint .label {
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.55);
+    color: rgba(255, 255, 255, 0.55) !important;
   }
 
   /* ── Live wave: single continuous line driven by mic level ── */

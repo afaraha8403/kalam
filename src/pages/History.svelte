@@ -166,7 +166,7 @@
     position: absolute;
     top: 100%;
     right: 0;
-    background: #333;
+    background: var(--bg-input);
     border-radius: 8px;
     padding: 8px 0;
     margin-top: 8px;
@@ -185,21 +185,21 @@
     padding: 10px 16px;
     background: transparent;
     border: none;
-    color: #e0e0e0;
+    color: var(--text-primary);
     text-align: left;
     cursor: pointer;
   }
 
   .dropdown-menu button:hover {
-    background: #444;
+    background: var(--border);
   }
 
   .btn-secondary {
     padding: 10px 20px;
-    background: #333;
-    border: 1px solid #444;
+    background: var(--bg-input);
+    border: 1px solid var(--border-visible);
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 14px;
     cursor: pointer;
   }
@@ -207,9 +207,9 @@
   .btn-danger {
     padding: 10px 20px;
     background: transparent;
-    border: 1px solid #f44336;
+    border: 1px solid var(--error);
     border-radius: 8px;
-    color: #f44336;
+    color: var(--error);
     font-size: 14px;
     cursor: pointer;
   }
@@ -221,28 +221,28 @@
   .search input {
     width: 100%;
     padding: 12px 16px;
-    background: #252525;
-    border: 1px solid #333;
+    background: var(--bg-input);
+    border: 1px solid var(--border-visible);
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 14px;
   }
 
   .search input:focus {
     outline: none;
-    border-color: #4fc1ff;
+    border-color: var(--primary);
   }
 
   .loading,
   .empty {
     text-align: center;
     padding: 60px 20px;
-    color: #666;
+    color: var(--text-muted);
   }
 
   .empty .hint {
     margin-top: 8px;
-    color: #4fc1ff;
+    color: var(--primary);
   }
 
   .entries {
@@ -252,9 +252,11 @@
   }
 
   .entry {
-    background: #252525;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 12px;
     padding: 20px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   }
 
   .entry-header {
@@ -265,20 +267,20 @@
   }
 
   .date {
-    color: #999;
+    color: var(--text-secondary);
   }
 
   .mode {
-    background: #4fc1ff;
-    color: #1a1a1a;
+    background: var(--primary);
+    color: var(--white);
     padding: 2px 8px;
     border-radius: 4px;
     font-weight: 500;
   }
 
   .language {
-    background: #333;
-    color: #999;
+    background: var(--bg-input);
+    color: var(--text-secondary);
     padding: 2px 8px;
     border-radius: 4px;
   }
@@ -286,7 +288,7 @@
   .text {
     font-size: 15px;
     line-height: 1.6;
-    color: #e0e0e0;
+    color: var(--text-primary);
     margin-bottom: 12px;
   }
 
@@ -298,15 +300,15 @@
   .entry-actions button {
     padding: 6px 12px;
     background: transparent;
-    border: 1px solid #444;
+    border: 1px solid var(--border-visible);
     border-radius: 6px;
-    color: #999;
+    color: var(--text-secondary);
     font-size: 12px;
     cursor: pointer;
   }
 
   .entry-actions button:hover {
-    border-color: #4fc1ff;
-    color: #4fc1ff;
+    border-color: var(--primary);
+    color: var(--primary);
   }
 </style>

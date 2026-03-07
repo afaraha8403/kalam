@@ -51,7 +51,7 @@ pub fn silero_model_path() -> Option<std::path::PathBuf> {
             return Some(p);
         }
     }
-    if let Some(dir) = directories::ProjectDirs::from("com", "Kalam", "Kalam Voice") {
+    if let Some(dir) = directories::ProjectDirs::from("com", "Kalam", "Kalam") {
         let path = dir.data_local_dir().join("silero_vad.onnx");
         if path.exists() {
             return Some(path);

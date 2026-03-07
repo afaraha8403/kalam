@@ -160,20 +160,22 @@
   }
 
   .subtitle {
-    color: #666;
+    color: var(--text-muted);
   }
 
   .add-form {
-    background: #252525;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 12px;
     padding: 24px;
     margin-bottom: 30px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   }
 
   .add-form h3 {
     font-size: 16px;
     margin-bottom: 20px;
-    color: #4fc1ff;
+    color: var(--navy-deep);
   }
 
   .form-row {
@@ -195,22 +197,22 @@
     font-size: 14px;
     font-weight: 500;
     margin-bottom: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
   }
 
   input {
     width: 100%;
     padding: 12px 16px;
-    background: #333;
-    border: 1px solid #444;
+    background: var(--bg-input);
+    border: 1px solid var(--border-visible);
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 14px;
   }
 
   input:focus {
     outline: none;
-    border-color: #4fc1ff;
+    border-color: var(--primary);
   }
 
   .form-actions {
@@ -220,10 +222,10 @@
 
   .btn-primary {
     padding: 10px 20px;
-    background: #4fc1ff;
+    background: var(--primary);
     border: none;
     border-radius: 8px;
-    color: #1a1a1a;
+    color: var(--white);
     font-weight: 500;
     cursor: pointer;
   }
@@ -231,9 +233,9 @@
   .btn-secondary {
     padding: 10px 20px;
     background: transparent;
-    border: 1px solid #444;
+    border: 1px solid var(--border-visible);
     border-radius: 8px;
-    color: #e0e0e0;
+    color: var(--text-primary);
     cursor: pointer;
   }
 
@@ -241,12 +243,12 @@
   .empty {
     text-align: center;
     padding: 60px 20px;
-    color: #666;
+    color: var(--text-muted);
   }
 
   .empty .hint {
     margin-top: 8px;
-    color: #999;
+    color: var(--text-secondary);
   }
 
   .snippet-list {
@@ -260,8 +262,10 @@
     justify-content: space-between;
     align-items: center;
     padding: 16px 20px;
-    background: #252525;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
   }
 
   .snippet-content {
@@ -272,8 +276,9 @@
   }
 
   .trigger {
-    background: #4fc1ff;
-    color: #1a1a1a;
+    background: var(--primary-alpha);
+    color: var(--primary-dark);
+    border: 1px solid var(--primary);
     padding: 4px 10px;
     border-radius: 6px;
     font-family: monospace;
@@ -282,11 +287,11 @@
   }
 
   .arrow {
-    color: #666;
+    color: var(--text-muted);
   }
 
   .expansion {
-    color: #e0e0e0;
+    color: var(--text-primary);
     font-size: 14px;
   }
 
@@ -298,15 +303,15 @@
   .snippet-actions button {
     padding: 6px 12px;
     background: transparent;
-    border: 1px solid #444;
+    border: 1px solid var(--border-visible);
     border-radius: 6px;
-    color: #999;
+    color: var(--text-secondary);
     font-size: 12px;
     cursor: pointer;
   }
 
   .snippet-actions button:hover {
-    border-color: #4fc1ff;
-    color: #4fc1ff;
+    border-color: var(--primary);
+    color: var(--primary);
   }
 </style>

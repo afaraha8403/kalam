@@ -4,6 +4,9 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Manager};
 
+/// Larger icon for system tray (64x64) so it scales sharply on HiDPI.
+const TRAY_ICON: tauri::image::Image<'static> = tauri::include_image!("icons/64x64.png");
+
 pub const TRAY_ID: &str = "main";
 
 pub struct TrayManager;
@@ -38,10 +41,12 @@ impl TrayManager {
             ],
         )?;
 
+        let app_handle = app.handle().clone();
         TrayIconBuilder::with_id(TRAY_ID)
-            .icon(app.default_window_icon().unwrap().clone())
-            .tooltip("Kalam Voice - Ready")
+            .icon(TRAY_ICON.clone())
+            .tooltip("Kalam - Ready")
             .menu(&menu)
+            .show_menu_on_left_click(false)
             .on_menu_event(|app, event| match event.id.as_ref() {
                 "settings" => {
                     if let Err(e) = show_window(app, "settings") {
@@ -74,10 +79,12 @@ impl TrayManager {
                 }
                 _ => {}
             })
-            .on_tray_icon_event(|_tray, event| {
+            .on_tray_icon_event(move |_tray, event| {
                 if let TrayIconEvent::Click { button, .. } = event {
                     if button == tauri::tray::MouseButton::Left {
-                        // Start recording on left click
+                        if let Err(e) = show_window(&app_handle, "main") {
+                            log::error!("Failed to show main window: {}", e);
+                        }
                     }
                 }
             })
@@ -93,9 +100,9 @@ impl TrayManager {
             .ok_or_else(|| anyhow::anyhow!("Tray not found"))?;
 
         let (tooltip, _icon_path): (&str, Option<&str>) = match state {
-            crate::audio::AudioState::Idle => ("Kalam Voice - Ready", None),
-            crate::audio::AudioState::Recording => ("Kalam Voice - Recording...", None),
-            crate::audio::AudioState::Processing => ("Kalam Voice - Processing...", None),
+            crate::audio::AudioState::Idle => ("Kalam - Ready", None),
+            crate::audio::AudioState::Recording => ("Kalam - Recording...", None),
+            crate::audio::AudioState::Processing => ("Kalam - Processing...", None),
         };
 
         tray.set_tooltip(Some(tooltip))?;

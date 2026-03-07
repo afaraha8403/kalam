@@ -6,6 +6,10 @@ export interface LoggingConfig {
   max_records: number
 }
 
+export type WaveformStyle = 'Line' | 'Symmetric' | 'Heartbeat' | 'Snake'
+export type OverlayPosition = 'BottomCenter' | 'BottomLeft' | 'BottomRight' | 'TopCenter' | 'TopLeft' | 'TopRight' | 'CenterLeft' | 'CenterRight' | 'Center'
+export type ExpandDirection = 'Up' | 'Down' | 'Center'
+
 export interface AppConfig {
   hotkey: string
   recording_mode: 'Hold' | 'Toggle'
@@ -23,6 +27,11 @@ export interface AppConfig {
   start_in_focus: boolean
   min_hold_ms: number
   onboarding_complete?: boolean
+  waveform_style?: WaveformStyle
+  overlay_position?: OverlayPosition
+  overlay_offset_x?: number
+  overlay_offset_y?: number
+  overlay_expand_direction?: ExpandDirection
 }
 
 export interface STTConfig {
