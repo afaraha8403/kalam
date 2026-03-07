@@ -24,7 +24,9 @@ export const LANGUAGE_OPTIONS: { code: string; label: string }[] = [
 /** Language codes supported by each STT provider. Groq (Whisper) supports 99+; SenseVoice supports 5. */
 export const SUPPORTED_LANGUAGES_BY_PROVIDER: Record<string, string[]> = {
   groq: LANGUAGE_OPTIONS.map((o) => o.code),
+  openai: LANGUAGE_OPTIONS.map((o) => o.code),
   sensevoice: ['en', 'zh', 'ja', 'ko', 'yue'],
+  whisper_base: LANGUAGE_OPTIONS.map((o) => o.code),
 }
 
 export function languageLabel(code: string): string {

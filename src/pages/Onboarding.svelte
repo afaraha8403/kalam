@@ -727,12 +727,27 @@
 
   .mode-card input {
     width: 100%;
-    padding: 10px;
+    padding: 12px 16px;
     background: var(--bg-input);
-    border: 1px solid var(--border-visible);
-    border-radius: 6px;
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 500;
     margin-bottom: 8px;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-inner);
+  }
+
+  .mode-card input:focus {
+    outline: none;
+    background: var(--bg-card);
+    border-color: var(--primary);
+    box-shadow: 0 4px 12px var(--primary-alpha);
+  }
+
+  .mode-card input:hover {
+    background: var(--bg-input-hover);
   }
 
   .mode-card a {
@@ -762,13 +777,34 @@
   }
 
   .hotkey-config .form-group select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    background-size: 16px;
     width: 100%;
     padding: 12px 16px;
-    background: var(--bg-input);
-    border: 1px solid var(--border-visible);
-    border-radius: 8px;
+    padding-right: 48px;
+    background-color: var(--bg-input);
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: 15px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-inner);
+  }
+
+  .hotkey-config .form-group select:focus {
+    outline: none;
+    background-color: var(--bg-card);
+    border-color: var(--primary);
+    box-shadow: 0 4px 12px var(--primary-alpha);
+  }
+
+  .hotkey-config .form-group select:hover {
+    background-color: var(--bg-input-hover);
   }
 
   .language-multiselect .selected-languages {
@@ -829,6 +865,33 @@
 
   .language-multiselect .add-language select {
     width: 100%;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    background-size: 16px;
+    padding-right: 48px;
+    padding: 12px 16px;
+    background-color: var(--bg-input);
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-inner);
+  }
+
+  .language-multiselect .add-language select:focus {
+    outline: none;
+    background-color: var(--bg-card);
+    border-color: var(--primary);
+    box-shadow: 0 4px 12px var(--primary-alpha);
+  }
+
+  .language-multiselect .add-language select:hover {
+    background-color: var(--bg-input-hover);
   }
 
   .hotkey-display {
@@ -857,8 +920,55 @@
   .mode-select label {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     cursor: pointer;
+    font-weight: 500;
+    color: var(--text-primary);
+    user-select: none;
+  }
+
+  .mode-select input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    background: var(--bg-input);
+    border: 2px solid var(--border-visible);
+    border-radius: 50%;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-inner);
+    flex-shrink: 0;
+  }
+
+  .mode-select input[type="radio"]:hover {
+    border-color: var(--primary);
+    background: var(--bg-card);
+  }
+
+  .mode-select input[type="radio"]:checked {
+    background: var(--primary);
+    border-color: var(--primary);
+    box-shadow: 0 2px 8px var(--primary-alpha);
+  }
+
+  .mode-select input[type="radio"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 5px;
+    width: 6px;
+    height: 6px;
+    background: var(--white);
+    border-radius: 50%;
+    animation: radio-pop 0.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  }
+
+  @keyframes radio-pop {
+    0% { transform: scale(0); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
   }
 
   .demo blockquote {
@@ -872,11 +982,22 @@
     width: 100%;
     height: 100px;
     padding: 16px;
-    background: var(--bg-card);
-    border: 1px solid var(--bg-input);
-    border-radius: 8px;
+    background: var(--bg-input);
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 500;
     resize: none;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-inner);
+  }
+
+  .demo textarea:focus {
+    outline: none;
+    background: var(--bg-card);
+    border-color: var(--primary);
+    box-shadow: 0 4px 12px var(--primary-alpha);
   }
 
   .actions {

@@ -1,7 +1,7 @@
 {
   "name": "kalam",
   "version": "0.1.0",
-  "description": "Kalam (كلام) — open-source voice dictation for Windows, macOS & Linux. Free, privacy-friendly alternative to Whisperflow. Speaks into any app.",
+  "description": "Kalam — open-source voice dictation for Windows, macOS & Linux. Free, privacy-friendly alternative to Whisperflow. Speaks into any app.",
   "type": "module",
   "keywords": [
     "voice-dictation",
@@ -35,6 +35,7 @@
     "kill": "node scripts/kill-project.js"
   },
   "dependencies": {
+    "@iconify/svelte": "^3.1.6",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-global-shortcut": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.0.0",

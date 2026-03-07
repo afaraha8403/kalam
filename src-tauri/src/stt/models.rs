@@ -8,6 +8,9 @@ use tauri::Emitter;
 const SENSEVOICE_URL: &str =
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2";
 const SENSEVOICE_SIZE_MB: u64 = 200;
+const WHISPER_BASE_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
+const WHISPER_BASE_SIZE_MB: u64 = 142;
 
 #[derive(Debug, Clone)]
 pub struct ModelManifest {
@@ -19,13 +22,22 @@ pub struct ModelManifest {
 }
 
 pub fn known_models() -> Vec<ModelManifest> {
-    vec![ModelManifest {
-        id: "sensevoice",
-        url: SENSEVOICE_URL,
-        expected_sha256: None,
-        filename: "sherpa-onnx-sensevoice.tar.bz2",
-        size_mb: SENSEVOICE_SIZE_MB,
-    }]
+    vec![
+        ModelManifest {
+            id: "sensevoice",
+            url: SENSEVOICE_URL,
+            expected_sha256: None,
+            filename: "sherpa-onnx-sensevoice.tar.bz2",
+            size_mb: SENSEVOICE_SIZE_MB,
+        },
+        ModelManifest {
+            id: "whisper_base",
+            url: WHISPER_BASE_URL,
+            expected_sha256: None,
+            filename: "ggml-whisper-base.bin",
+            size_mb: WHISPER_BASE_SIZE_MB,
+        },
+    ]
 }
 
 pub fn model_dir() -> anyhow::Result<PathBuf> {

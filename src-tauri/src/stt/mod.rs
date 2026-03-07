@@ -1,9 +1,11 @@
 #![allow(dead_code)]
 
 pub mod groq;
+pub mod openai;
 pub mod models;
 pub mod provider;
 pub mod sensevoice;
+pub mod lifecycle;
 
 use crate::audio::vad::{VADConfig, VADProcessor};
 use crate::stt::provider::STTProvider;
@@ -80,25 +82,10 @@ pub fn transcribe_chunked(
     })
 }
 
-pub async fn get_model_status() -> anyhow::Result<serde_json::Value> {
-    use serde_json::json;
-    let mut out = serde_json::Map::new();
-    for m in models::known_models() {
-        out.insert(
-            m.id.to_string(),
-            json!({
-                "installed": models::is_installed(m.id),
-                "size_mb": m.size_mb,
-                "download_progress": serde_json::Value::Null
-            }),
-        );
-    }
-    Ok(serde_json::Value::Object(out))
-}
-
 pub async fn validate_api_key(provider: &str, api_key: &str) -> anyhow::Result<bool> {
     match provider {
         "groq" => groq::validate_key(api_key).await,
+        "openai" => openai::validate_key(api_key).await,
         _ => Ok(false),
     }
 }

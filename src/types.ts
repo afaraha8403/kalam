@@ -6,7 +6,7 @@ export interface LoggingConfig {
   max_records: number
 }
 
-export type WaveformStyle = 'Line' | 'Symmetric' | 'Heartbeat' | 'Snake'
+export type WaveformStyle = 'Line' | 'Symmetric' | 'Heartbeat' | 'Snake' | 'DoubleHelix' | 'Liquid' | 'Glitch' | 'Bars' | 'CenterSplit'
 export type OverlayPosition = 'BottomCenter' | 'BottomLeft' | 'BottomRight' | 'TopCenter' | 'TopLeft' | 'TopRight' | 'CenterLeft' | 'CenterRight' | 'Center'
 export type ExpandDirection = 'Up' | 'Down' | 'Center'
 

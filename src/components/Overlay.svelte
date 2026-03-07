@@ -18,8 +18,9 @@
   let state: OverlayEvent = { kind: 'Collapsed' }
   let prevLevel = 0
   let smoothLevel = 0
-  let waveformStyle: WaveformStyle = 'Line'
+  let waveformStyle: WaveformStyle = 'Heartbeat'
   let expandDirection: ExpandDirection = 'Up'
+  let hotkeyStr = ''
 
   function isValidPayload(p: unknown): p is OverlayEvent {
     if (!p || typeof p !== 'object') return false
@@ -79,49 +80,89 @@
     currentLevel = 0
   }
 
-  // Build SVG polyline points based on the selected style
-  $: wavePoints = (() => {
+  // Build SVG points/data based on the selected style
+  $: waveData = (() => {
     const centerY = 12
     const pad = Math.max(0, WAVE_POINTS - levelHistory.length)
     const padded = [...Array(pad).fill(0), ...levelHistory].slice(-WAVE_POINTS)
     
+    let points = ''
+    let points2 = ''
+    let bars: {x: number, y: number, w: number, h: number}[] = []
+
     if (waveformStyle === 'Symmetric') {
-      // Mirrored line: expands up and down
       const amplitude = 10
       const topHalf = padded.map((l, i) => `${i},${centerY - l * amplitude}`).join(' ')
       const bottomHalf = padded.slice().reverse().map((l, i) => `${WAVE_POINTS - 1 - i},${centerY + l * amplitude}`).join(' ')
-      return `${topHalf} ${bottomHalf}`
+      points = `${topHalf} ${bottomHalf}`
     } else if (waveformStyle === 'Heartbeat') {
-      // EKG style: sharp peaks up and down
       const amplitude = 20
-      return padded.map((l, i) => {
-        // Alternate up and down based on index to create jagged peaks
+      points = padded.map((l, i) => {
         const direction = i % 2 === 0 ? 1 : -1
         const y = centerY + (l * amplitude * direction)
         return `${i},${Math.max(1, Math.min(23, y))}`
       }).join(' ')
     } else if (waveformStyle === 'Snake') {
-      // Sine wave that grows in amplitude
       const amplitude = 18
-      const frequency = 0.2 // Adjusted for 100 points
-      return padded.map((l, i) => {
-        // Offset by time to make it slither
+      const frequency = 0.2
+      points = padded.map((l, i) => {
         const phase = (i * frequency) - snakeOffset
         const y = centerY + Math.sin(phase) * (l * amplitude)
         return `${i},${Math.max(1, Math.min(23, y))}`
       }).join(' ')
-    } else {
-      // Default Line: single line that moves up
+    } else if (waveformStyle === 'DoubleHelix') {
+      const amplitude = 15
+      const frequency = 0.15
+      points = padded.map((l, i) => {
+        const phase = (i * frequency) - snakeOffset
+        const y = centerY + Math.sin(phase) * (l * amplitude)
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
+      points2 = padded.map((l, i) => {
+        const phase = (i * frequency) - snakeOffset + Math.PI
+        const y = centerY + Math.sin(phase) * (l * amplitude)
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
+    } else if (waveformStyle === 'Liquid') {
+      const amplitude = 15
+      const frequency = 0.05
+      const topEdge = padded.map((l, i) => {
+        const wave = Math.sin(i * frequency - snakeOffset * 0.5) * 3
+        const y = centerY + 8 - l * amplitude + wave
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
+      points = `0,24 ${topEdge} ${WAVE_POINTS - 1},24`
+    } else if (waveformStyle === 'Glitch') {
+      const amplitude = 20
+      points = padded.map((l, i) => {
+        const jump = Math.sin(i * 12.9898 + Math.floor(snakeOffset * 2)) * 43758.5453 % 1 > 0 ? 1 : -1
+        const y = centerY + jump * l * amplitude
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
+    } else if (waveformStyle === 'CenterSplit') {
       const amplitude = 18
-      const minY = 1
-      const maxY = 23
-      return padded
-        .map((l, i) => {
-          const y = centerY - l * amplitude
-          return `${i},${Math.max(minY, Math.min(maxY, y))}`
-        })
-        .join(' ')
+      const half = Math.floor(WAVE_POINTS / 2)
+      const reversed = [...padded].reverse()
+      const leftHalf = reversed.slice(0, half).map((l, i) => `${50 - i},${Math.max(1, Math.min(23, centerY - l * amplitude))}`)
+      const rightHalf = reversed.slice(0, half).map((l, i) => `${50 + i},${Math.max(1, Math.min(23, centerY - l * amplitude))}`)
+      points = [...leftHalf.reverse(), ...rightHalf].join(' ')
+    } else if (waveformStyle === 'Bars') {
+      const numBars = 20
+      for(let i=0; i<numBars; i++) {
+        const chunk = padded.slice(i * 5, (i+1) * 5)
+        const avg = chunk.reduce((a,b)=>a+b,0)/5
+        const h = Math.max(2, avg * 20)
+        bars.push({ x: i * 5 + 1, y: 24 - h, w: 3, h: h })
+      }
+    } else {
+      const amplitude = 18
+      points = padded.map((l, i) => {
+        const y = centerY - l * amplitude
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
     }
+
+    return { points, points2, bars }
   })()
 
   onMount(() => {
@@ -137,6 +178,9 @@
       if (cfg.overlay_expand_direction) {
         expandDirection = cfg.overlay_expand_direction
       }
+      if (cfg.hotkey) {
+        hotkeyStr = cfg.hotkey
+      }
     }).catch(console.error)
 
     // Listen for settings updates
@@ -146,6 +190,9 @@
       }
       if (e.payload?.overlay_expand_direction) {
         expandDirection = e.payload.overlay_expand_direction
+      }
+      if (e.payload?.hotkey) {
+        hotkeyStr = e.payload.hotkey
       }
     }).then((fn) => {
       unlistenSettings = fn
@@ -176,7 +223,10 @@
     data-tauri-drag-region
   >
     {#if state.kind === 'Collapsed'}
-      <!-- idle: just the pill shape itself -->
+      <!-- idle: just the pill shape itself, but with hover text -->
+      <div class="hover-hint">
+        <span class="label">Hold <span class="hotkey-highlight">{hotkeyStr}</span> to start dictating</span>
+      </div>
     {:else if state.kind === 'Listening'}
       <div class="content listening">
         <div class="listen-dot" />
@@ -203,17 +253,28 @@
               </feMerge>
             </filter>
           </defs>
-          <polyline
-            class="wave-line"
-            class:filled={waveformStyle === 'Symmetric'}
-            points={wavePoints}
-            fill={waveformStyle === 'Symmetric' ? "url(#wave-grad)" : "none"}
-            stroke={waveformStyle === 'Symmetric' ? "none" : "url(#wave-grad)"}
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            filter="url(#wave-glow)"
-          />
+          {#if waveformStyle === 'DoubleHelix'}
+            <polyline class="wave-line" points={waveData.points} fill="none" stroke="url(#wave-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" />
+            <polyline class="wave-line" points={waveData.points2} fill="none" stroke="url(#wave-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" opacity="0.5" />
+          {:else if waveformStyle === 'Liquid'}
+            <polygon class="wave-line" points={waveData.points} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="0.8" />
+          {:else if waveformStyle === 'Bars'}
+            {#each waveData.bars as bar}
+              <rect x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill="url(#wave-grad)" rx="1.5" filter="url(#wave-glow)" />
+            {/each}
+          {:else}
+            <polyline
+              class="wave-line"
+              class:filled={waveformStyle === 'Symmetric'}
+              points={waveData.points}
+              fill={waveformStyle === 'Symmetric' ? "url(#wave-grad)" : "none"}
+              stroke={waveformStyle === 'Symmetric' ? "none" : "url(#wave-grad)"}
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              filter="url(#wave-glow)"
+            />
+          {/if}
         </svg>
       </div>
     {:else if state.kind === 'Processing'}
@@ -299,11 +360,25 @@
   .blip.collapsed {
     width: 48px;
     min-width: 48px;
-    height: 5px;
-    min-height: 5px;
+    height: 10px;
+    min-height: 10px;
     opacity: 0.7;
     box-shadow: 0 0 6px rgba(79, 193, 255, 0.15);
     animation: idle-breathe 3s ease-in-out infinite;
+    border: 1px solid rgba(255, 255, 255, 0.6) !important;
+    cursor: default;
+    transition:
+      width 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+      height 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+      box-shadow 0.2s ease,
+      opacity 0.2s ease;
+  }
+
+  .blip.collapsed:hover {
+    width: 250px;
+    height: 36px;
+    opacity: 1;
+    animation: none;
   }
 
   .blip.expanded {
@@ -368,6 +443,26 @@
   .hint .label {
     font-size: 12px;
     color: rgba(255, 255, 255, 0.55) !important;
+  }
+
+  .hover-hint {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+  }
+
+  .blip.collapsed:hover .hover-hint {
+    opacity: 1;
+    transition-delay: 0.05s;
+  }
+
+  .hotkey-highlight {
+    color: #4fc1ff;
+    font-weight: 600;
+    padding: 0 4px;
   }
 
   /* ── Live wave: single continuous line driven by mic level ── */

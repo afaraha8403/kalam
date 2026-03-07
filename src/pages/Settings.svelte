@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { initTelemetry, optOut } from '../lib/telemetry'
   import { sidebarDictationStore } from '../lib/sidebarDictation'
-  import { LANGUAGE_OPTIONS, languageLabel, getSupportedLanguagesForProvider, isLanguageSupportedByProvider } from '../lib/languages'
+  import { LANGUAGE_OPTIONS, languageLabel, isLanguageSupportedByProvider } from '../lib/languages'
   import type { AppConfig, AudioDevice } from '../types'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
 
@@ -25,25 +25,38 @@
   let saveDebounceId: ReturnType<typeof setTimeout> | null = null
   let resetting = false
   let resetError: string | null = null
+  type ModelRequirement = { can_run: boolean; reason: string | null }
+  type ModelStatusEntry = {
+    installed: boolean
+    size_mb: number
+    status: 'NotInstalled' | 'Stopped' | 'Starting' | 'Running' | 'Error'
+    error?: string | null
+  }
 
-    const tabs = [
+  let hardwareReqs: Record<string, ModelRequirement> = {}
+  let modelStatuses: Record<string, ModelStatusEntry> = {}
+  let statusPollInterval: ReturnType<typeof setInterval> | null = null
+
+  const tabs = [
     { id: 'general', label: 'General' },
-    { id: 'overlay', label: 'Overlay' },
-    { id: 'audio', label: 'Audio' },
-    { id: 'stt', label: 'STT Provider' },
-    { id: 'formatting', label: 'Formatting' },
+    { id: 'dictation', label: 'Audio & Dictation' },
     { id: 'privacy', label: 'Privacy' },
-    { id: 'logging', label: 'Logging' },
+    { id: 'advanced', label: 'Advanced' },
   ]
 
   onMount(async () => {
     try {
       // Load settings and audio devices in parallel
-      const [settings, devices, platform] = await Promise.all([
+      const [settings, devices, platform, sensevoiceReqs, whisperReqs] = await Promise.all([
         invoke('get_settings') as Promise<AppConfig>,
         invoke('get_audio_devices') as Promise<AudioDevice[]>,
         invoke('get_platform') as Promise<string>,
+        invoke('check_model_requirements', { modelId: 'sensevoice' }),
+        invoke('check_model_requirements', { modelId: 'whisper_base' }),
       ])
+      
+      hardwareReqs['sensevoice'] = sensevoiceReqs as ModelRequirement
+      hardwareReqs['whisper_base'] = whisperReqs as ModelRequirement
       
       config = settings
       audioDevices = devices
@@ -59,7 +72,10 @@
         if (!Array.isArray(config.languages) || config.languages.length === 0) {
           config.languages = ['en']
         }
-        if (!config.waveform_style) config.waveform_style = 'Line'
+        if (!config.stt_config.local_model) {
+          config.stt_config.local_model = 'sensevoice'
+        }
+        if (!config.waveform_style) config.waveform_style = 'Heartbeat'
         if (!config.overlay_position) config.overlay_position = 'BottomCenter'
         if (config.overlay_offset_x == null) config.overlay_offset_x = 0
         if (config.overlay_offset_y == null) config.overlay_offset_y = 0
@@ -71,6 +87,9 @@
       // Don't populate the input with the actual key for security
       apiKeyInput = ''
       
+      await refreshModelStatuses()
+      statusPollInterval = setInterval(refreshModelStatuses, 2000)
+      
       console.log('Loaded audio devices:', devices)
     } catch (e) {
       console.error('Failed to load settings:', e)
@@ -78,6 +97,64 @@
       initialLoadDone = true
     }
   })
+
+  onDestroy(() => {
+    if (statusPollInterval) clearInterval(statusPollInterval)
+  })
+
+  async function refreshModelStatuses() {
+    try {
+      modelStatuses = await invoke('get_model_status') as Record<string, ModelStatusEntry>
+    } catch (e) {
+      console.error('Failed to get model statuses:', e)
+    }
+  }
+
+  async function startModel(modelId: string) {
+    try {
+      await invoke('start_local_model', { modelId })
+      await refreshModelStatuses()
+    } catch (e) {
+      console.error('Failed to start model:', e)
+    }
+  }
+
+  async function stopModel(modelId: string) {
+    try {
+      await invoke('stop_local_model', { modelId })
+      await refreshModelStatuses()
+    } catch (e) {
+      console.error('Failed to stop model:', e)
+    }
+  }
+
+  async function restartModel(modelId: string) {
+    try {
+      await invoke('restart_local_model', { modelId })
+      await refreshModelStatuses()
+    } catch (e) {
+      console.error('Failed to restart model:', e)
+    }
+  }
+
+  async function deleteModel(modelId: string) {
+    if (!confirm('Are you sure you want to delete this model? You will need to download it again.')) return
+    try {
+      await invoke('delete_local_model', { modelId })
+      await refreshModelStatuses()
+    } catch (e) {
+      console.error('Failed to delete model:', e)
+    }
+  }
+
+  async function downloadModel(modelId: string) {
+    try {
+      await invoke('download_model', { modelType: modelId })
+      await refreshModelStatuses()
+    } catch (e) {
+      console.error('Failed to download model:', e)
+    }
+  }
 
   function scheduleSave() {
     if (!initialLoadDone || !config) return
@@ -322,7 +399,11 @@
   }
 
   $: langProviderKey = config
-    ? (config.stt_config.mode === 'Local' ? 'sensevoice' : (config.stt_config.provider || 'groq'))
+    ? (
+        config.stt_config.mode === 'Local'
+          ? (config.stt_config.local_model || 'sensevoice')
+          : (config.stt_config.provider || 'groq')
+      )
     : 'groq'
 </script>
 
@@ -358,7 +439,7 @@
     <div class="tab-content">
       {#if activeTab === 'general'}
         <section>
-          <h3>Hotkey</h3>
+          <h3>Hotkey & Recording</h3>
           <div class="form-group">
             <label for="hotkey">Activation Hotkey</label>
             <HotkeyCapture 
@@ -393,7 +474,10 @@
               <p class="hint">Press hotkey once to start, press again to stop</p>
             {/if}
           </div>
+        </section>
 
+        <section>
+          <h3>Startup</h3>
           <div class="form-group checkbox">
             <label>
               <input type="checkbox" bind:checked={config.auto_start} on:change={scheduleSave} />
@@ -408,20 +492,23 @@
             </label>
             <p class="hint">If disabled, app starts minimized to tray and plays a sound</p>
           </div>
-
         </section>
 
-      {:else if activeTab === 'overlay'}
         <section>
           <h3>Overlay Appearance</h3>
           
           <div class="form-group">
             <label for="waveform-style">Waveform Style</label>
             <select id="waveform-style" bind:value={config.waveform_style} on:change={scheduleSave}>
-              <option value="Line">Line (Default)</option>
+              <option value="Line">Line</option>
               <option value="Symmetric">Symmetric Wave</option>
               <option value="Heartbeat">Heartbeat</option>
               <option value="Snake">Snake</option>
+              <option value="DoubleHelix">Double Helix</option>
+              <option value="Liquid">Liquid</option>
+              <option value="Glitch">Glitch</option>
+              <option value="Bars">Bars</option>
+              <option value="CenterSplit">Center Split</option>
             </select>
             <p class="hint">Choose how your voice is visualized in the overlay pill.</p>
           </div>
@@ -435,8 +522,6 @@
             </select>
             <p class="hint">Which direction the pill expands when you start dictating.</p>
           </div>
-
-          <h3>Overlay Position</h3>
 
           <div class="form-group">
             <label for="overlay-position">Screen Position</label>
@@ -477,7 +562,7 @@
           <p class="hint">Fine-tune the position by adding horizontal (X) or vertical (Y) pixel offsets.</p>
         </section>
 
-      {:else if activeTab === 'audio'}
+      {:else if activeTab === 'dictation'}
         <section>
           <h3>Audio Input</h3>
           <div class="form-group">
@@ -539,7 +624,6 @@
           </div>
         </section>
 
-      {:else if activeTab === 'stt'}
         <section>
           <h3>Speech-to-Text Mode</h3>
           <div class="form-group">
@@ -556,6 +640,7 @@
               <label for="cloud-provider">Cloud Provider</label>
               <select id="cloud-provider" bind:value={config.stt_config.provider} on:change={scheduleSave}>
                 <option value="groq">Groq (whisper-large-v3-turbo)</option>
+                <option value="openai">OpenAI (whisper-1)</option>
               </select>
             </div>
 
@@ -572,7 +657,7 @@
                   type="password"
                   bind:value={apiKeyInput}
                   on:input={scheduleSave}
-                  placeholder={hasApiKey ? "•••••••••••••••• (enter new key to change)" : "Enter your Groq API key"}
+                  placeholder={hasApiKey ? "•••••••••••••••• (enter new key to change)" : `Enter your ${config.stt_config.provider === 'openai' ? 'OpenAI' : 'Groq'} API key`}
                 />
                 <button class="btn-secondary" on:click={checkApiKey}>
                   Validate
@@ -589,12 +674,25 @@
                 </span>
               {/if}
               <p class="hint">
-                <a href="https://console.groq.com" target="_blank">Get your API key from Groq →</a>
+                {#if config.stt_config.provider === 'openai'}
+                  <a href="https://platform.openai.com/api-keys" target="_blank">Get your API key from OpenAI →</a>
+                {:else}
+                  <a href="https://console.groq.com" target="_blank">Get your API key from Groq →</a>
+                {/if}
               </p>
             </div>
           {/if}
 
           {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
+            <div class="form-group">
+              <label for="local-model">Active local model</label>
+              <select id="local-model" bind:value={config.stt_config.local_model} on:change={scheduleSave}>
+                <option value="sensevoice">SenseVoice Small</option>
+                <option value="whisper_base">Whisper Base</option>
+              </select>
+              <p class="hint">This model is used when mode is Local.</p>
+            </div>
+
             <div class="form-group">
               <span class="label-text">Local Models</span>
               <div class="model-list">
@@ -602,22 +700,59 @@
                   <div class="model-info">
                     <strong>SenseVoice Small</strong>
                     <span>200 MB • Fast • 50+ languages</span>
+                    {#if hardwareReqs['sensevoice'] && !hardwareReqs['sensevoice'].can_run}
+                      <span class="warning">⚠️ {hardwareReqs['sensevoice'].reason}</span>
+                    {/if}
+                    {#if modelStatuses['sensevoice']}
+                      <span class="status-badge {modelStatuses['sensevoice'].status.toLowerCase()}">{modelStatuses['sensevoice'].status}</span>
+                    {/if}
                   </div>
-                  <button class="btn-secondary">Download</button>
+                  <div class="model-actions">
+                    {#if !modelStatuses['sensevoice']?.installed}
+                      <button class="btn-secondary" disabled={hardwareReqs['sensevoice'] && !hardwareReqs['sensevoice'].can_run} on:click={() => downloadModel('sensevoice')}>Download</button>
+                    {:else}
+                      {#if modelStatuses['sensevoice'].status === 'Stopped' || modelStatuses['sensevoice'].status === 'Error'}
+                        <button class="btn-secondary" on:click={() => startModel('sensevoice')}>Start</button>
+                      {:else if modelStatuses['sensevoice'].status === 'Running'}
+                        <button class="btn-secondary" on:click={() => stopModel('sensevoice')}>Stop</button>
+                        <button class="btn-secondary" on:click={() => restartModel('sensevoice')}>Restart</button>
+                      {/if}
+                      <button class="btn-secondary btn-danger" title="Delete model" on:click={() => deleteModel('sensevoice')}>Delete</button>
+                    {/if}
+                  </div>
                 </div>
+
                 <div class="model-item">
                   <div class="model-info">
                     <strong>Whisper Base</strong>
                     <span>142 MB • Good quality</span>
+                    {#if hardwareReqs['whisper_base'] && !hardwareReqs['whisper_base'].can_run}
+                      <span class="warning">⚠️ {hardwareReqs['whisper_base'].reason}</span>
+                    {/if}
+                    {#if modelStatuses['whisper_base']}
+                      <span class="status-badge {modelStatuses['whisper_base'].status.toLowerCase()}">{modelStatuses['whisper_base'].status}</span>
+                    {/if}
                   </div>
-                  <button class="btn-secondary">Download</button>
+                  <div class="model-actions">
+                    {#if !modelStatuses['whisper_base']?.installed}
+                      <button class="btn-secondary" disabled={hardwareReqs['whisper_base'] && !hardwareReqs['whisper_base'].can_run} on:click={() => downloadModel('whisper_base')}>Download</button>
+                    {:else}
+                      {#if modelStatuses['whisper_base'].status === 'Stopped' || modelStatuses['whisper_base'].status === 'Error'}
+                        <button class="btn-secondary" on:click={() => startModel('whisper_base')}>Start</button>
+                      {:else if modelStatuses['whisper_base'].status === 'Running'}
+                        <button class="btn-secondary" on:click={() => stopModel('whisper_base')}>Stop</button>
+                        <button class="btn-secondary" on:click={() => restartModel('whisper_base')}>Restart</button>
+                      {/if}
+                      <button class="btn-secondary btn-danger" title="Delete model" on:click={() => deleteModel('whisper_base')}>Delete</button>
+                    {/if}
+                  </div>
                 </div>
               </div>
             </div>
           {/if}
 
           <div class="form-group language-multiselect">
-            <label>Recognition languages</label>
+            <label for="recognition-languages">Recognition languages</label>
             <p class="hint">First language is the default. Support depends on the current provider above; unsupported languages are dimmed.</p>
             <div class="selected-languages">
               {#each (config.languages ?? ['en']) as code, i}
@@ -644,6 +779,7 @@
             </div>
             <div class="add-language">
               <select
+                id="recognition-languages"
                 bind:value={addLanguageCode}
                 on:change={addSelectedLanguage}
               >
@@ -667,7 +803,6 @@
           {/if}
         </section>
 
-      {:else if activeTab === 'formatting'}
         <section>
           <h3>Text Formatting</h3>
           <div class="form-group checkbox">
@@ -729,26 +864,11 @@
             </label>
             <p class="hint">No audio or text is ever sent. Only metrics like session duration.</p>
           </div>
-
-          <div class="danger-zone">
-            <h4>Danger Zone</h4>
-            <p class="hint" style="margin-bottom: 12px;">Reset removes all configuration, history, and data. You will see the onboarding again as if the app were newly installed.</p>
-            {#if resetError}
-              <p class="save-error" role="alert" style="margin-bottom: 12px;">{resetError}</p>
-            {/if}
-            <button
-              class="btn-danger"
-              disabled={resetting}
-              on:click={confirmAndReset}
-            >
-              {resetting ? 'Resetting…' : 'Reset entire application'}
-            </button>
-          </div>
         </section>
 
-      {:else if activeTab === 'logging'}
+      {:else if activeTab === 'advanced'}
         <section>
-          <h3>Logging</h3>
+          <h3>App Data & Logging</h3>
           <p class="hint" style="margin-bottom: 16px;">
             When enabled, the app keeps a bounded in-memory log (no transcription or personal data).
             Use it to export a log file for support if something goes wrong.
@@ -813,6 +933,21 @@
             </p>
           </div>
         </section>
+
+        <section class="danger-zone">
+          <h4>Danger Zone</h4>
+          <p class="hint" style="margin-bottom: 12px;">Reset removes all configuration, history, and data. You will see the onboarding again as if the app were newly installed.</p>
+          {#if resetError}
+            <p class="save-error" role="alert" style="margin-bottom: 12px;">{resetError}</p>
+          {/if}
+          <button
+            class="btn-danger"
+            disabled={resetting}
+            on:click={confirmAndReset}
+          >
+            {resetting ? 'Resetting…' : 'Reset entire application'}
+          </button>
+        </section>
       {/if}
     </div>
   </div>
@@ -822,76 +957,95 @@
   .settings {
     max-width: 900px;
     padding: 8px;
+    animation: fadeIn 0.4s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 30px;
+    margin-bottom: 32px;
   }
 
   h2 {
-    font-size: 28px;
-    font-weight: 600;
+    font-size: 32px;
+    font-weight: 700;
   }
 
   .tabs {
     display: flex;
-    gap: 8px;
-    margin-bottom: 30px;
-    border-bottom: 1px solid var(--border-visible);
-    padding-bottom: 16px;
+    gap: 4px;
+    margin-bottom: 32px;
+    background: var(--bg-app);
+    padding: 6px;
+    border-radius: var(--radius-pill);
+    overflow-x: auto;
+    scrollbar-width: none; /* Firefox */
+  }
+  
+  .tabs::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
   }
 
   .tab {
     padding: 10px 20px;
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-pill);
     color: var(--text-secondary);
     font-size: 14px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    white-space: nowrap;
   }
 
   .tab:hover {
-    background: var(--bg-input);
-    color: var(--text-primary);
+    color: var(--navy-deep);
   }
 
   .tab.active {
-    background: var(--primary-alpha);
+    background: var(--bg-card);
     color: var(--primary-dark);
-    font-weight: 600;
+    box-shadow: var(--shadow-sm);
   }
 
   section {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 24px;
+    border-radius: var(--radius-lg);
+    padding: 32px;
     margin-bottom: 24px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.3s ease;
+  }
+  
+  section:hover {
+    box-shadow: var(--shadow-md);
   }
 
   section h3 {
-    font-size: 16px;
-    font-weight: 600;
-    margin-bottom: 20px;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 24px;
     color: var(--navy-deep);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 16px;
   }
 
   .form-group {
-    margin-bottom: 20px;
+    margin-bottom: 24px;
   }
 
   .form-group.row-group {
     display: flex;
-    gap: 16px;
-    margin-bottom: 8px;
+    gap: 20px;
+    margin-bottom: 12px;
   }
   
   .form-group.row-group .sub-setting {
@@ -907,55 +1061,132 @@
   .label-text {
     display: block;
     font-size: 14px;
-    font-weight: 500;
-    margin-bottom: 8px;
-    color: var(--text-primary);
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--navy-deep);
   }
 
   .form-group.checkbox label {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     cursor: pointer;
+    font-weight: 500;
+    color: var(--text-primary);
+    user-select: none;
   }
 
-  input[type="text"],
+  input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    background: var(--bg-input);
+    border: 2px solid var(--border-visible);
+    border-radius: 6px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-inner);
+    flex-shrink: 0;
+  }
+
+  input[type="checkbox"]:hover {
+    border-color: var(--primary);
+    background: var(--bg-card);
+  }
+
+  input[type="checkbox"]:checked {
+    background: var(--primary);
+    border-color: var(--primary);
+    box-shadow: 0 2px 8px var(--primary-alpha);
+  }
+
+  input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 1px;
+    width: 4px;
+    height: 9px;
+    border: solid var(--white);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+    animation: checkmark 0.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  }
+
+  @keyframes checkmark {
+    0% { height: 0; width: 0; opacity: 0; }
+    100% { height: 9px; width: 4px; opacity: 1; }
+  }
+
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    background-size: 16px;
+    padding-right: 48px !important;
+  }
+
   input[type="password"],
+  input[type="number"],
   select {
     width: 100%;
-    padding: 12px 16px;
+    padding: 14px 16px;
     background: var(--bg-input);
-    border: 1px solid var(--border-visible);
-    border-radius: 8px;
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
     color: var(--text-primary);
-    font-size: 14px;
+    font-size: 15px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-inner);
   }
 
-  input:focus,
+  input[type="password"]:focus,
+  input[type="number"]:focus,
   select:focus {
     outline: none;
+    background: var(--bg-card);
     border-color: var(--primary);
+    box-shadow: 0 4px 12px var(--primary-alpha);
+  }
+  
+  input[type="password"]:hover,
+  input[type="number"]:hover,
+  select:hover {
+    background: var(--bg-input-hover);
   }
 
   .save-error {
-    margin: 0 0 16px;
-    padding: 12px 16px;
-    background: rgba(255, 80, 80, 0.15);
+    margin: 0 0 20px;
+    padding: 14px 16px;
+    background: rgba(239, 68, 68, 0.1);
     border: 1px solid var(--error);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     color: var(--error);
     font-size: 14px;
+    font-weight: 500;
   }
 
   .hint {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-muted);
-    margin-top: 6px;
+    margin-top: 8px;
+    line-height: 1.5;
   }
 
   .hint a {
     color: var(--primary);
     text-decoration: none;
+    font-weight: 500;
+  }
+  
+  .hint a:hover {
+    text-decoration: underline;
   }
 
   .hint.warning {
@@ -964,7 +1195,7 @@
 
   .input-group {
     display: flex;
-    gap: 8px;
+    gap: 12px;
   }
 
   .input-group input {
@@ -972,63 +1203,87 @@
   }
 
   .language-multiselect .selected-languages {
-    margin-bottom: 12px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
 
   .language-multiselect .lang-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: 12px;
+    padding: 12px 16px;
     background: var(--bg-input);
-    border-radius: 8px;
-    margin-bottom: 6px;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+  }
+  
+  .language-multiselect .lang-row:hover {
+    background: var(--bg-card);
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
   }
 
   .language-multiselect .lang-badge {
-    font-size: 14px;
-    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--navy-deep);
   }
 
   .language-multiselect .default-tag {
     display: inline-block;
     background: var(--primary);
-    color: var(--navy-deep);
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 6px;
-    border-radius: 4px;
-    margin-right: 6px;
+    color: var(--white);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    margin-right: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
   .language-multiselect .lang-actions {
     display: flex;
-    gap: 4px;
+    gap: 6px;
   }
 
   .language-multiselect .btn-icon {
-    background: var(--border);
-    border: none;
-    color: var(--text-primary);
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     font-size: 14px;
-    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
   }
 
   .language-multiselect .btn-icon:hover {
-    background: var(--border-subtle);
+    background: var(--bg-input);
+    color: var(--navy-deep);
+    border-color: var(--border-visible);
   }
 
   .language-multiselect .btn-icon.remove {
     color: var(--error);
   }
+  
+  .language-multiselect .btn-icon.remove:hover {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: var(--error);
+  }
 
   .language-multiselect .lang-row.unsupported {
-    opacity: 0.65;
+    opacity: 0.7;
+    background: var(--bg-app);
   }
 
   .language-multiselect .lang-row.unsupported .lang-badge {
@@ -1036,10 +1291,9 @@
   }
 
   .language-multiselect .unsupported-icon {
-    margin-left: 6px;
+    margin-left: 8px;
     color: var(--warning);
-    font-size: 12px;
-    vertical-align: middle;
+    font-size: 14px;
   }
 
   .language-multiselect .add-language select {
@@ -1047,8 +1301,9 @@
   }
 
   .validation {
-    font-size: 12px;
-    margin-top: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    margin-top: 8px;
     display: block;
   }
 
@@ -1061,168 +1316,240 @@
   }
 
   .btn-primary {
-    padding: 10px 20px;
+    padding: 12px 24px;
     background: var(--primary);
     border: none;
-    border-radius: 8px;
-    color: var(--navy-deep);
-    font-weight: 500;
+    border-radius: var(--radius-md);
+    color: var(--white);
+    font-weight: 600;
+    font-size: 14px;
     cursor: pointer;
-    transition: background 0.2s;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px var(--primary-alpha);
   }
 
   .btn-primary:hover {
     background: var(--primary-dark);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px var(--primary-alpha);
   }
 
   .btn-primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
   }
 
   .save-status {
-    font-size: 13px;
+    font-size: 14px;
+    font-weight: 500;
     color: var(--text-secondary);
+    background: var(--bg-input);
+    padding: 6px 12px;
+    border-radius: var(--radius-pill);
   }
 
   .save-status.error {
     color: var(--error);
+    background: rgba(239, 68, 68, 0.1);
   }
 
   .btn-secondary {
-    padding: 10px 20px;
-    background: var(--bg-input);
+    padding: 12px 20px;
+    background: var(--bg-card);
     border: 1px solid var(--border-visible);
-    border-radius: 8px;
-    color: var(--text-primary);
+    border-radius: var(--radius-md);
+    color: var(--navy-deep);
     font-size: 14px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-sm);
   }
 
   .btn-secondary:hover {
-    background: var(--border);
+    background: var(--bg-input);
+    border-color: var(--navy-deep);
   }
 
   .btn-secondary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    box-shadow: none;
   }
 
   .btn-secondary.btn-link {
     color: var(--primary);
     border-color: transparent;
     background: transparent;
-    text-decoration: underline;
+    box-shadow: none;
+    padding: 8px 0;
   }
 
   .btn-secondary.btn-link:hover {
-    background: rgba(79, 193, 255, 0.1);
+    background: transparent;
+    color: var(--primary-dark);
+    text-decoration: underline;
   }
 
   .mic-level-container {
-    margin-top: 10px;
+    margin-top: 16px;
+    background: var(--bg-input);
+    padding: 16px;
+    border-radius: var(--radius-md);
   }
 
   .mic-level {
-    height: 8px;
-    background: var(--bg-input);
-    border-radius: 4px;
+    height: 12px;
+    background: var(--bg-card);
+    border-radius: var(--radius-pill);
     overflow: hidden;
+    box-shadow: var(--shadow-inner);
   }
 
   .mic-bar {
     height: 100%;
-    background: linear-gradient(90deg, var(--success), var(--primary-light));
-    border-radius: 4px;
+    background: linear-gradient(90deg, var(--primary), var(--primary-light));
+    border-radius: var(--radius-pill);
     transition: width 0.1s ease-out;
-    min-width: 2px;
+    min-width: 4px;
   }
 
   .mic-status {
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 500;
     color: var(--text-secondary);
-    margin-top: 4px;
+    margin-top: 10px;
     display: block;
+    text-align: center;
   }
 
   .btn-refresh {
-    background: transparent;
-    border: none;
-    color: var(--primary);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
     cursor: pointer;
     font-size: 14px;
-    margin-left: 8px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    transition: background 0.2s;
+    margin-left: 12px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    transition: all 0.2s ease;
   }
 
   .btn-refresh:hover {
-    background: var(--bg-input);
+    background: var(--bg-card);
+    color: var(--navy-deep);
+    border-color: var(--border-visible);
+    box-shadow: var(--shadow-sm);
   }
 
   .model-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 16px;
   }
 
   .model-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 16px;
+    padding: 20px;
     background: var(--bg-input);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+  }
+  
+  .model-item:hover {
+    background: var(--bg-card);
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
   }
 
   .model-info {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
+  }
+  
+  .model-info strong {
+    font-size: 15px;
+    color: var(--navy-deep);
   }
 
   .model-info span {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-secondary);
   }
 
+  .model-info span.warning {
+    color: var(--warning);
+    margin-top: 4px;
+  }
+
+  .status-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+  
+  .status-badge.running { background: var(--success); color: white; }
+  .status-badge.stopped { background: var(--bg-app); color: var(--text-secondary); }
+  .status-badge.starting { background: var(--primary); color: white; }
+  .status-badge.error { background: var(--error); color: white; }
+  .status-badge.notinstalled { background: var(--bg-app); color: var(--text-muted); }
+
+  .model-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
   .danger-zone {
-    margin-top: 30px;
-    padding: 20px;
-    border: 1px solid var(--error);
-    border-radius: 8px;
+    margin-top: 40px;
+    padding: 24px;
+    background: rgba(239, 68, 68, 0.02);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: var(--radius-lg);
   }
 
   .danger-zone h4 {
     color: var(--error);
-    margin-bottom: 16px;
+    margin-bottom: 12px;
+    font-size: 16px;
   }
 
   .btn-danger {
-    padding: 10px 20px;
-    background: transparent;
+    padding: 12px 24px;
+    background: var(--white);
     border: 1px solid var(--error);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     color: var(--error);
     font-size: 14px;
+    font-weight: 600;
     cursor: pointer;
-    margin-right: 10px;
-    transition: all 0.2s;
+    transition: all 0.2s ease;
   }
 
   .btn-danger:hover {
     background: var(--error);
     color: var(--white);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
   }
   
   .badge {
     font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 4px;
-    margin-left: 8px;
-    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: var(--radius-pill);
+    margin-left: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
   
   .badge.configured {
@@ -1231,17 +1558,57 @@
   }
   
   .input-group .btn-danger {
-    margin-left: 8px;
-    border-color: var(--error);
-    color: var(--error);
+    margin-left: 0;
   }
-  
-  .input-group .btn-danger:hover {
-    background: var(--error);
-    color: var(--white);
-  }
-  
-  .hint.warning {
-    color: var(--warning);
+
+  @media (max-width: 768px) {
+    .settings {
+      padding: 0;
+    }
+
+    header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .tabs {
+      padding: 4px;
+    }
+
+    .tab {
+      padding: 8px 16px;
+      font-size: 13px;
+    }
+
+    section {
+      padding: 24px 20px;
+    }
+
+    .form-group.row-group {
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .input-group {
+      flex-direction: column;
+    }
+
+    .input-group button {
+      width: 100%;
+      margin-left: 0 !important;
+    }
+
+    .language-multiselect .lang-row {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .language-multiselect .lang-actions {
+      width: 100%;
+      justify-content: flex-end;
+    }
   }
 </style>

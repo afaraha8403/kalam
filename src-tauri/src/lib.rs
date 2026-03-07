@@ -9,6 +9,7 @@ mod hotkey_win;
 mod injection;
 mod notifications;
 mod stt;
+mod system_reqs;
 mod tray;
 
 use std::sync::Arc;
@@ -67,6 +68,7 @@ pub struct AppState {
     /// On Windows: HWND of foreground window at recording start; restore before injection so text goes to the right app.
     pub foreground_for_injection: Arc<Mutex<Option<usize>>>,
     pub press_start_time: Arc<Mutex<Option<std::time::Instant>>>,
+    pub local_model_manager: Arc<crate::stt::lifecycle::LocalModelManager>,
 }
 
 impl AppState {
@@ -96,6 +98,7 @@ impl AppState {
         let audio_capture = Arc::new(Mutex::new(audio_capture));
         let last_injected_len = Arc::new(AtomicUsize::new(0));
         let last_injected_text = Arc::new(Mutex::new(String::new()));
+        let local_model_manager = Arc::new(crate::stt::lifecycle::LocalModelManager::new(app_handle.clone()));
 
         Ok(Self {
             config,
@@ -108,6 +111,7 @@ impl AppState {
             last_injected_text,
             foreground_for_injection: Arc::new(Mutex::new(None)),
             press_start_time: Arc::new(Mutex::new(None)),
+            local_model_manager,
         })
     }
 }
@@ -380,6 +384,11 @@ pub fn run() {
             get_app_log_empty,
             open_app_data_folder,
             reset_application,
+            check_model_requirements,
+            start_local_model,
+            stop_local_model,
+            restart_local_model,
+            delete_local_model,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -745,8 +754,53 @@ async fn get_snippets(state: tauri::State<'_, AppState>) -> Result<Vec<config::S
 }
 
 #[tauri::command]
-async fn get_model_status() -> Result<serde_json::Value, String> {
-    crate::stt::get_model_status().await.map_err(|e| e.to_string())
+async fn get_model_status(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+    use serde_json::json;
+    fn status_parts(status: crate::stt::lifecycle::ModelStatus) -> (String, Option<String>) {
+        match status {
+            crate::stt::lifecycle::ModelStatus::NotInstalled => ("NotInstalled".to_string(), None),
+            crate::stt::lifecycle::ModelStatus::Stopped => ("Stopped".to_string(), None),
+            crate::stt::lifecycle::ModelStatus::Starting => ("Starting".to_string(), None),
+            crate::stt::lifecycle::ModelStatus::Running => ("Running".to_string(), None),
+            crate::stt::lifecycle::ModelStatus::Error(msg) => ("Error".to_string(), Some(msg)),
+        }
+    }
+    let mut out = serde_json::Map::new();
+    for m in crate::stt::models::known_models() {
+        let status = state.local_model_manager.get_status(m.id).await;
+        let (status_label, error_message) = status_parts(status);
+        out.insert(
+            m.id.to_string(),
+            json!({
+                "installed": crate::stt::models::is_installed(m.id),
+                "size_mb": m.size_mb,
+                "status": status_label,
+                "error": error_message,
+                "download_progress": serde_json::Value::Null
+            }),
+        );
+    }
+    Ok(serde_json::Value::Object(out))
+}
+
+#[tauri::command]
+async fn start_local_model(state: tauri::State<'_, AppState>, model_id: String) -> Result<(), String> {
+    state.local_model_manager.start_model(&model_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn stop_local_model(state: tauri::State<'_, AppState>, model_id: String) -> Result<(), String> {
+    state.local_model_manager.stop_model(&model_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn restart_local_model(state: tauri::State<'_, AppState>, model_id: String) -> Result<(), String> {
+    state.local_model_manager.restart_model(&model_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_local_model(state: tauri::State<'_, AppState>, model_id: String) -> Result<(), String> {
+    state.local_model_manager.delete_model(&model_id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -798,6 +852,11 @@ async fn check_api_key(provider: String, api_key: String) -> Result<bool, String
 }
 
 
+
+#[tauri::command]
+fn check_model_requirements(model_id: String) -> Result<system_reqs::HardwareCheckResult, String> {
+    Ok(system_reqs::check_model_requirements(&model_id))
+}
 
 const OVERLAY_LABEL: &str = "overlay";
 const OVERLAY_WIDTH: i32 = 300;

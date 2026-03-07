@@ -20,6 +20,13 @@ pub fn create_provider_sync(config: &STTConfig) -> anyhow::Result<Box<dyn STTPro
                     .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
                 Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?) as Box<dyn STTProvider>)
             }
+            "openai" => {
+                let api_key = config
+                    .api_key
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("OpenAI API key not set"))?;
+                Ok(Box::new(super::openai::OpenAIProvider::new(api_key.clone())?) as Box<dyn STTProvider>)
+            }
             _ => Err(anyhow::anyhow!("Unknown provider: {}", config.provider)),
         },
         STTMode::Local => Err(anyhow::anyhow!(
@@ -45,20 +52,29 @@ impl STTProviderFactory {
                                 .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
                             Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?) as Box<dyn STTProvider>)
                         }
+                        "openai" => {
+                            let api_key = config.api_key.as_ref()
+                                .ok_or_else(|| anyhow::anyhow!("OpenAI API key not set"))?;
+                            Ok(Box::new(super::openai::OpenAIProvider::new(api_key.clone())?) as Box<dyn STTProvider>)
+                        }
                         _ => Err(anyhow::anyhow!("Unknown provider: {}", config.provider)),
                     }
                 }
                 crate::config::STTMode::Local => {
                     let handle = app_handle
                         .ok_or_else(|| anyhow::anyhow!("App handle required for Local STT"))?;
+                    let local_model_id = config
+                        .local_model
+                        .clone()
+                        .unwrap_or_else(|| "sensevoice".to_string());
                     let manifest = super::models::known_models()
                         .into_iter()
-                        .find(|m| m.id == "sensevoice")
-                        .ok_or_else(|| anyhow::anyhow!("SenseVoice manifest not found"))?;
-                    let model_path = super::models::model_path("sensevoice", &manifest)?;
+                        .find(|m| m.id == local_model_id.as_str())
+                        .ok_or_else(|| anyhow::anyhow!("Local model manifest not found"))?;
+                    let model_path = super::models::model_path(&local_model_id, &manifest)?;
                     if !model_path.exists() {
                         return Err(anyhow::anyhow!(
-                            "SenseVoice model not installed. Download it in Settings."
+                            "Selected local model is not installed. Download it in Settings."
                         ));
                     }
                     Ok(Box::new(super::sensevoice::SenseVoiceProvider::new(

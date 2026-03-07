@@ -65,11 +65,16 @@ pub enum ExpandDirection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub enum WaveformStyle {
-    #[default]
     Line,
     Symmetric,
+    #[default]
     Heartbeat,
     Snake,
+    DoubleHelix,
+    Liquid,
+    Glitch,
+    Bars,
+    CenterSplit,
 }
 
 fn default_hotkey() -> String {
