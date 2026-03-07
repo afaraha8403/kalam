@@ -8,15 +8,68 @@ export async function createEntry(entry: Entry): Promise<void> {
 export async function getEntriesByType(
   entryType: 'history' | 'note' | 'task' | 'reminder',
   limit?: number,
-  offset?: number
+  offset?: number,
+  scope?: 'active' | 'archived' | 'trash'
 ): Promise<Entry[]> {
   return invoke<Entry[]>('get_entries_by_type', {
     args: {
       entryType,
+      scope: scope ?? undefined,
       limit: limit ?? 100,
       offset: offset ?? 0
     }
   })
+}
+
+/** Get notes in a scope (active, archived, or trash). Uses get_entries_by_type with scope. */
+export async function getNotes(
+  scope: 'active' | 'archived' | 'trash',
+  limit?: number,
+  offset?: number
+): Promise<Entry[]> {
+  return getEntriesByType('note', limit ?? 100, offset ?? 0, scope)
+}
+
+/** Search notes with optional query and label filter. */
+export async function searchNotes(params: {
+  query?: string
+  label?: string
+  scope: 'active' | 'archived' | 'trash'
+  limit?: number
+  offset?: number
+}): Promise<Entry[]> {
+  return invoke<Entry[]>('search_notes', {
+    query: params.query ?? undefined,
+    label: params.label ?? undefined,
+    scope: params.scope,
+    limit: params.limit ?? 100,
+    offset: params.offset ?? 0
+  })
+}
+
+/** Entries that have a reminder: reminders + notes with reminder_at (not trashed). For Reminders view. */
+export async function getEntriesWithReminder(limit?: number, offset?: number): Promise<Entry[]> {
+  return invoke<Entry[]>('get_entries_with_reminder', {
+    args: {
+      limit: limit ?? 200,
+      offset: offset ?? 0
+    }
+  })
+}
+
+/** Distinct label (tag) strings from notes. Optional scope: active (default), archived, trash, or all. */
+export async function getNoteLabels(scope?: 'active' | 'archived' | 'trash' | 'all'): Promise<string[]> {
+  return invoke<string[]>('get_note_labels', { scope: scope ?? undefined })
+}
+
+/** Permanently delete all trashed notes. Returns count deleted. */
+export async function emptyTrash(): Promise<number> {
+  return invoke<number>('empty_trash')
+}
+
+/** Hard delete one entry (e.g. "Delete permanently" from Trash). For "move to trash" use updateEntry with deleted_at set. */
+export function permanentlyDeleteEntry(id: string): Promise<boolean> {
+  return deleteEntry(id)
 }
 
 export async function getEntry(id: string): Promise<Entry | null> {
@@ -63,6 +116,8 @@ export function newEntry(
     is_completed: boolean | null
     reminder_at: string | null
     rrule: string | null
+    archived_at: string | null
+    deleted_at: string | null
   }> = {}
 ): Entry {
   const now = new Date().toISOString()
@@ -83,6 +138,8 @@ export function newEntry(
     subtasks: opts.subtasks ?? null,
     is_completed: opts.is_completed ?? null,
     reminder_at: opts.reminder_at ?? null,
-    rrule: opts.rrule ?? null
+    rrule: opts.rrule ?? null,
+    archived_at: opts.archived_at ?? null,
+    deleted_at: opts.deleted_at ?? null
   }
 }

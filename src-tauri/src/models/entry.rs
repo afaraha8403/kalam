@@ -58,4 +58,6 @@ pub struct Entry {
     pub is_completed: Option<bool>,
     pub reminder_at: Option<DateTime<Utc>>,
     pub rrule: Option<String>,
+    pub archived_at: Option<DateTime<Utc>>,
+    pub deleted_at: Option<DateTime<Utc>>,
 }

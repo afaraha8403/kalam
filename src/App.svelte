@@ -190,9 +190,9 @@
       {:else if currentPage === 'notes'}
         <Notes />
       {:else if currentPage === 'tasks'}
-        <Tasks />
+        <Tasks navigate={navigate} />
       {:else if currentPage === 'reminders'}
-        <Reminders />
+        <Reminders onNavigateToPage={navigate} />
       {/if}
     </div>
   </main>

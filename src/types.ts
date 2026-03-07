@@ -126,6 +126,8 @@ export interface Entry {
   is_completed: boolean | null
   reminder_at: string | null
   rrule: string | null
+  archived_at: string | null
+  deleted_at: string | null
 }
 
 export interface AppLogRow {

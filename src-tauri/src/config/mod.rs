@@ -33,13 +33,10 @@ pub fn get_kalam_dir() -> anyhow::Result<PathBuf> {
         .map_err(|e| anyhow::anyhow!("Could not find home directory: {}", e))?;
 
     let kalam_dir = PathBuf::from(home).join(".kalam");
-    log::info!("Kalam directory: {:?}", kalam_dir);
 
     if !kalam_dir.exists() {
-        log::info!("Creating Kalam directory...");
         fs::create_dir_all(&kalam_dir)
             .map_err(|e| anyhow::anyhow!("Failed to create directory {:?}: {}", kalam_dir, e))?;
-        log::info!("Directory created successfully");
     }
 
     Ok(kalam_dir)
@@ -53,6 +50,7 @@ pub struct ConfigManager {
 impl ConfigManager {
     pub fn new() -> anyhow::Result<Self> {
         let kalam_dir = crate::config::get_kalam_dir()?;
+        log::info!("Kalam directory: {:?}", kalam_dir);
         let config_path = kalam_dir.join("config.json");
         log::info!("Config will be saved to: {:?}", config_path);
 

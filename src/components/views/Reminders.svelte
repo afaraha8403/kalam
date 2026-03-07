@@ -1,21 +1,78 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { getEntriesByType, createEntry, updateEntry, deleteEntry, newEntry } from '../../lib/api/db'
+  import { getEntriesWithReminder, createEntry, updateEntry, deleteEntry, newEntry } from '../../lib/api/db'
   import type { Entry } from '../../types'
   import Icon from '@iconify/svelte'
+  import { selectedTaskId } from '../../lib/taskDetailStore'
+
+  export let onNavigateToPage: ((page: 'notes' | 'tasks') => void) | undefined = undefined
 
   let entries: Entry[] = []
   let loading = true
   let error: string | null = null
   let newContent = ''
   let newReminderAt = ''
+  let newRrulePreset = 'none'
   let isComposerExpanded = false
+  let editingEntry: Entry | null = null
+  let editContent = ''
+  let editReminderAt = ''
+  let editRrulePreset: string = 'none'
+
+  const RRULE_PRESETS: { value: string; label: string; rrule: string | null }[] = [
+    { value: 'none', label: 'None', rrule: null },
+    { value: 'daily', label: 'Daily', rrule: 'FREQ=DAILY' },
+    { value: 'weekly', label: 'Weekly', rrule: 'FREQ=WEEKLY' },
+    { value: 'monthly', label: 'Monthly', rrule: 'FREQ=MONTHLY' }
+  ]
+
+  function openEdit(entry: Entry) {
+    if (entry.entry_type !== 'reminder') return
+    editingEntry = entry
+    editContent = entry.content
+    editReminderAt = entry.reminder_at
+      ? new Date(entry.reminder_at).toISOString().slice(0, 16)
+      : ''
+    const preset = RRULE_PRESETS.find((p) => p.rrule === entry.rrule || (p.rrule === null && !entry.rrule))
+    editRrulePreset = preset?.value ?? 'none'
+  }
+
+  function closeEdit() {
+    editingEntry = null
+    editContent = ''
+    editReminderAt = ''
+    editRrulePreset = 'none'
+  }
+
+  async function saveEdit() {
+    if (!editingEntry || editingEntry.entry_type !== 'reminder') return
+    const content = editContent.trim()
+    if (!content) return
+    const preset = RRULE_PRESETS.find((p) => p.value === editRrulePreset)
+    const rrule = preset?.rrule ?? null
+    const reminderAt = editReminderAt.trim() || null
+    const updated: Entry = {
+      ...editingEntry,
+      content,
+      reminder_at: reminderAt,
+      rrule,
+      updated_at: new Date().toISOString()
+    }
+    try {
+      await updateEntry(updated)
+      entries = entries.map((e) => (e.id === updated.id ? updated : e))
+      closeEdit()
+      await load()
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e)
+    }
+  }
 
   async function load() {
     loading = true
     error = null
     try {
-      const result = await getEntriesByType('reminder')
+      const result = await getEntriesWithReminder()
       entries = Array.isArray(result) ? result : []
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
@@ -28,11 +85,14 @@
     const content = newContent.trim()
     if (!content) return
     const reminderAt = newReminderAt.trim() || null
-    const entry = newEntry('reminder', content, { reminder_at: reminderAt })
+    const preset = RRULE_PRESETS.find((p) => p.value === newRrulePreset)
+    const rrule = preset?.rrule ?? null
+    const entry = newEntry('reminder', content, { reminder_at: reminderAt, rrule })
     try {
       await createEntry(entry)
       newContent = ''
       newReminderAt = ''
+      newRrulePreset = 'none'
       isComposerExpanded = false
       entries = [entry, ...entries]
       error = null
@@ -62,6 +122,42 @@
       error = e instanceof Error ? e.message : String(e)
       await load()
     }
+  }
+
+  /** Snooze: set reminder_at to 1 hour from now. */
+  async function snooze(entry: Entry) {
+    const inOneHour = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    const updated = { ...entry, reminder_at: inOneHour, updated_at: new Date().toISOString() }
+    try {
+      await updateEntry(updated)
+      entries = entries.map((e) => (e.id === entry.id ? updated : e))
+      await load()
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e)
+      await load()
+    }
+  }
+
+  /** Clear reminder_at on a note or task so it leaves the Reminders list. */
+  async function clearReminder(entry: Entry) {
+    if (entry.entry_type === 'reminder') return
+    try {
+      const updated = { ...entry, reminder_at: null, updated_at: new Date().toISOString() }
+      await updateEntry(updated)
+      entries = entries.filter((e) => e.id !== entry.id)
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e)
+      await load()
+    }
+  }
+
+  function openNote(entry: Entry) {
+    onNavigateToPage?.('notes')
+  }
+
+  function openTask(entry: Entry) {
+    selectedTaskId.set(entry.id)
+    onNavigateToPage?.('tasks')
   }
 
   function formatDateTime(iso: string | null) {
@@ -95,8 +191,44 @@
     }
   }
 
-  $: activeReminders = entries.filter(e => !e.is_completed)
-  $: completedReminders = entries.filter(e => e.is_completed)
+  /** Active: standalone reminders not completed, or any note/task with reminder. */
+  $: activeReminders = entries.filter(
+    (e) => (e.entry_type === 'reminder' ? !e.is_completed : true)
+  )
+  $: completedReminders = entries.filter(
+    (e) => e.entry_type === 'reminder' && !!e.is_completed
+  )
+
+  type DateGroup = 'overdue' | 'today' | 'tomorrow' | 'later'
+  function getDateGroup(reminderAt: string | null): DateGroup {
+    if (!reminderAt) return 'later'
+    const t = new Date(reminderAt).getTime()
+    const now = new Date()
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const tomorrowStart = todayStart + 24 * 60 * 60 * 1000
+    const dayAfterStart = tomorrowStart + 24 * 60 * 60 * 1000
+    if (t < todayStart) return 'overdue'
+    if (t >= todayStart && t < tomorrowStart) return 'today'
+    if (t >= tomorrowStart && t < dayAfterStart) return 'tomorrow'
+    return 'later'
+  }
+
+  $: groupedActive = (() => {
+    const groups: Record<DateGroup, Entry[]> = { overdue: [], today: [], tomorrow: [], later: [] }
+    for (const e of activeReminders) {
+      const g = getDateGroup(e.reminder_at)
+      groups[g].push(e)
+    }
+    return groups
+  })()
+
+  const groupLabels: Record<DateGroup, string> = {
+    overdue: 'Overdue',
+    today: 'Today',
+    tomorrow: 'Tomorrow',
+    later: 'Later'
+  }
+  const dateGroupOrder: DateGroup[] = ['overdue', 'today', 'tomorrow', 'later']
 
   onMount(() => load())
 </script>
@@ -136,9 +268,17 @@
               class="datetime-input" 
             />
           </div>
+          <div class="datetime-wrapper">
+            <Icon icon="ph:arrows-clockwise-duotone" class="detail-icon" />
+            <select class="datetime-input rrule-select" bind:value={newRrulePreset} aria-label="Repeat">
+              {#each RRULE_PRESETS as preset}
+                <option value={preset.value}>{preset.label}</option>
+              {/each}
+            </select>
+          </div>
         </div>
         <div class="composer-actions">
-          <button type="button" class="btn-ghost" on:click={() => { newContent=''; newReminderAt=''; isComposerExpanded=false; }}>Cancel</button>
+          <button type="button" class="btn-ghost" on:click={() => { newContent=''; newReminderAt=''; newRrulePreset='none'; isComposerExpanded=false; }}>Cancel</button>
           <button type="button" class="btn-primary" on:click={addReminder} disabled={!newContent.trim()}>
             <Icon icon="ph:bell-plus-bold" /> Add Reminder
           </button>
@@ -169,39 +309,104 @@
     </div>
   {:else}
     <div class="reminder-sections">
-      {#if activeReminders.length > 0}
-        <div class="reminder-list">
-          {#each activeReminders as entry (entry.id)}
-            <div class="reminder-item">
-              <button class="checkbox" on:click={() => toggleComplete(entry)}>
-                <div class="check-circle">
-                  <Icon icon="ph:check-bold" class="check-icon" />
-                </div>
-              </button>
-              <div class="reminder-content">
-                <span class="reminder-title">{entry.content}</span>
-                <div class="reminder-meta">
-                  <span class="reminder-time" class:has-date={entry.reminder_at}>
-                    <Icon icon="ph:clock-duotone" />
-                    {formatDateTime(entry.reminder_at)}
-                  </span>
-                  {#if entry.rrule}
-                    <span class="reminder-repeat">
-                      <Icon icon="ph:arrows-clockwise-duotone" />
-                      {entry.rrule}
-                    </span>
-                  {/if}
-                </div>
-              </div>
-              <div class="reminder-actions">
-                <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete reminder">
-                  <Icon icon="ph:trash-duotone" />
-                </button>
-              </div>
+      {#each dateGroupOrder as group}
+        {#if groupedActive[group].length > 0}
+          <div class="reminder-group">
+            <div class="section-header">
+              <h3 class:overdue={group === 'overdue'}>{groupLabels[group]}</h3>
+              <span class="count">{groupedActive[group].length}</span>
             </div>
-          {/each}
-        </div>
-      {/if}
+            <div class="reminder-list">
+              {#each groupedActive[group] as entry (entry.id)}
+                <div class="reminder-item" class:is-note={entry.entry_type === 'note'} class:is-task={entry.entry_type === 'task'}>
+                  {#if entry.entry_type === 'reminder'}
+                    <button class="checkbox" on:click={() => toggleComplete(entry)}>
+                      <div class="check-circle">
+                        <Icon icon="ph:check-bold" class="check-icon" />
+                      </div>
+                    </button>
+                    <div class="reminder-content">
+                      <span class="reminder-title">{entry.content}</span>
+                      <div class="reminder-meta">
+                        <span class="reminder-time" class:has-date={entry.reminder_at}>
+                          <Icon icon="ph:clock-duotone" />
+                          {formatDateTime(entry.reminder_at)}
+                        </span>
+                        {#if entry.rrule}
+                          <span class="reminder-repeat">
+                            <Icon icon="ph:arrows-clockwise-duotone" />
+                            {entry.rrule}
+                          </span>
+                        {/if}
+                      </div>
+                    </div>
+                    <div class="reminder-actions">
+                      <button class="action-btn" on:click={() => snooze(entry)} title="Snooze 1 hour">
+                        <Icon icon="ph:clock-countdown-duotone" />
+                      </button>
+                      <button class="action-btn" on:click={() => openEdit(entry)} title="Edit reminder">
+                        <Icon icon="ph:pencil-simple-duotone" />
+                      </button>
+                      <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete reminder">
+                        <Icon icon="ph:trash-duotone" />
+                      </button>
+                    </div>
+                  {:else if entry.entry_type === 'note'}
+                    <div class="checkbox-spacer" aria-hidden="true"></div>
+                    <div class="reminder-content">
+                      <span class="reminder-type-badge">Note</span>
+                      <span class="reminder-title">{entry.title || entry.content || '(no title)'}</span>
+                      <div class="reminder-meta">
+                        <span class="reminder-time" class:has-date={entry.reminder_at}>
+                          <Icon icon="ph:clock-duotone" />
+                          {formatDateTime(entry.reminder_at)}
+                        </span>
+                      </div>
+                    </div>
+                    <div class="reminder-actions">
+                      <button class="action-btn" on:click={() => snooze(entry)} title="Snooze 1 hour">
+                        <Icon icon="ph:clock-countdown-duotone" />
+                      </button>
+                      <button class="action-btn" on:click={() => clearReminder(entry)} title="Remove reminder">
+                        <Icon icon="ph:bell-slash-duotone" />
+                      </button>
+                      <button class="action-btn" on:click={() => openNote(entry)} title="Open note">
+                        <Icon icon="ph:note-duotone" />
+                      </button>
+                    </div>
+                  {:else if entry.entry_type === 'task'}
+                    <div class="checkbox-spacer" aria-hidden="true"></div>
+                    <div class="reminder-content">
+                      <span class="reminder-type-badge">Task</span>
+                      <span class="reminder-title">{entry.title || entry.content || '(no title)'}</span>
+                      <div class="reminder-meta">
+                        <span class="reminder-time" class:has-date={entry.reminder_at}>
+                          <Icon icon="ph:clock-duotone" />
+                          {formatDateTime(entry.reminder_at)}
+                        </span>
+                      </div>
+                    </div>
+                <div class="reminder-actions">
+                  <button class="action-btn" on:click={() => snooze(entry)} title="Snooze 1 hour">
+                    <Icon icon="ph:clock-countdown-duotone" />
+                  </button>
+                  <button class="action-btn" on:click={() => clearReminder(entry)} title="Remove reminder">
+                    <Icon icon="ph:bell-slash-duotone" />
+                  </button>
+                  <button class="action-btn" on:click={() => openTask(entry)} title="Open task">
+                    <Icon icon="ph:check-square-duotone" />
+                  </button>
+                  <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete task">
+                    <Icon icon="ph:trash-duotone" />
+                  </button>
+                </div>
+              {/if}
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      {/each}
 
       {#if completedReminders.length > 0}
         <div class="completed-section">
@@ -211,17 +416,20 @@
           </div>
           <div class="reminder-list completed">
             {#each completedReminders as entry (entry.id)}
-              <div class="reminder-item is-completed">
+              <div class="reminder-item is-completed" class:is-task={entry.entry_type === 'task'}>
                 <button class="checkbox" on:click={() => toggleComplete(entry)}>
                   <div class="check-circle checked">
                     <Icon icon="ph:check-bold" class="check-icon" />
                   </div>
                 </button>
                 <div class="reminder-content">
-                  <span class="reminder-title">{entry.content}</span>
+                  {#if entry.entry_type === 'task'}
+                    <span class="reminder-type-badge">Task</span>
+                  {/if}
+                  <span class="reminder-title">{entry.entry_type === 'task' ? (entry.title || entry.content || '(no title)') : entry.content}</span>
                 </div>
                 <div class="reminder-actions">
-                  <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete reminder">
+                  <button class="action-btn delete" on:click={() => remove(entry.id)} title={entry.entry_type === 'task' ? 'Delete task' : 'Delete reminder'}>
                     <Icon icon="ph:trash-duotone" />
                   </button>
                 </div>
@@ -230,6 +438,32 @@
           </div>
         </div>
       {/if}
+    </div>
+  {/if}
+
+  {#if editingEntry}
+    <div class="edit-modal-backdrop" role="presentation" on:click={closeEdit} on:keydown={(e) => e.key === 'Escape' && closeEdit()}>
+      <div class="edit-modal" role="dialog" aria-labelledby="edit-reminder-title" on:click|stopPropagation on:keydown|stopPropagation>
+        <h3 id="edit-reminder-title" class="edit-modal-title">Edit reminder</h3>
+        <div class="edit-modal-body">
+          <label class="edit-label" for="edit-content">Content</label>
+          <input id="edit-content" type="text" class="edit-input" bind:value={editContent} placeholder="Remind me to..." />
+          <label class="edit-label" for="edit-datetime">Date & time</label>
+          <input id="edit-datetime" type="datetime-local" class="edit-input" bind:value={editReminderAt} />
+          <label class="edit-label" for="edit-rrule">Repeat</label>
+          <select id="edit-rrule" class="edit-select" bind:value={editRrulePreset}>
+            {#each RRULE_PRESETS as preset}
+              <option value={preset.value}>{preset.label}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="edit-modal-actions">
+          <button type="button" class="btn-ghost" on:click={closeEdit}>Cancel</button>
+          <button type="button" class="btn-primary" on:click={saveEdit} disabled={!editContent.trim()}>
+            <Icon icon="ph:check-bold" /> Save
+          </button>
+        </div>
+      </div>
     </div>
   {/if}
 </div>
@@ -449,14 +683,35 @@
     transform: translateY(-2px);
   }
 
+  .checkbox,
+  .checkbox-spacer {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+  }
+
+  .checkbox-spacer {
+    margin-top: 2px;
+  }
+
   .checkbox {
     background: none;
     border: none;
-    padding: 2px 0 0 0;
+    padding: 0;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+
+  .reminder-type-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-bottom: 2px;
   }
 
   .check-circle {
@@ -667,6 +922,72 @@
     padding: 24px;
     flex-direction: row;
     color: var(--error);
+  }
+
+  .rrule-select {
+    min-width: 100px;
+  }
+
+  /* Edit modal */
+  .edit-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+
+  .edit-modal {
+    background: var(--bg-card);
+    border-radius: 16px;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--border-subtle);
+    max-width: 400px;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .edit-modal-title {
+    margin: 0;
+    padding: 20px 20px 12px;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--navy-deep);
+  }
+
+  .edit-modal-body {
+    padding: 12px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .edit-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .edit-input,
+  .edit-select {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+  }
+
+  .edit-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 20px 20px;
+    border-top: 1px solid var(--border-subtle);
   }
 
   @media (max-width: 768px) {

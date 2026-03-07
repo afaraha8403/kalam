@@ -2,13 +2,21 @@
   import { onMount } from 'svelte'
   import { fade } from 'svelte/transition'
   import { getEntriesByType, createEntry, updateEntry, deleteEntry, newEntry } from '../../lib/api/db'
-  import type { Entry } from '../../types'
+  import type { Entry, Subtask } from '../../types'
   import Icon from '@iconify/svelte'
+  import { selectedTaskId as selectedTaskIdStore } from '../../lib/taskDetailStore'
+  import { marked } from 'marked'
+  import DOMPurify from 'dompurify'
+
+  export let navigate: ((page: string) => void) | undefined = undefined
 
   let entries: Entry[] = []
   let loading = true
   let error: string | null = null
   let newTitle = ''
+  /** Task id for the detail panel. Synced from store when navigating from Reminders. */
+  let panelTaskId: string | null = null
+  let detailsPreviewActive = false
 
   async function load() {
     loading = true
@@ -18,7 +26,6 @@
       entries = Array.isArray(result) ? result : []
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
-      // Keep existing entries so UI does not break if refetch fails
     } finally {
       loading = false
     }
@@ -27,13 +34,13 @@
   async function addTask() {
     const title = newTitle.trim()
     if (!title) return
-    const entry = newEntry('task', title, { title })
+    const entry = newEntry('task', '', { title })
     try {
       await createEntry(entry)
       newTitle = ''
-      // Optimistic update: show new task immediately so UI does not depend on refetch
       entries = [entry, ...entries]
       error = null
+      panelTaskId = entry.id
       await load()
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
@@ -44,23 +51,22 @@
   async function toggleComplete(entry: Entry) {
     try {
       const updated = { ...entry, is_completed: !entry.is_completed, updated_at: new Date().toISOString() }
-      // Optimistic update
       entries = entries.map(e => e.id === entry.id ? updated : e)
       await updateEntry(updated)
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
-      await load() // Revert on error
+      await load()
     }
   }
 
   async function remove(id: string) {
     try {
-      // Optimistic update
       entries = entries.filter(e => e.id !== id)
+      if (panelTaskId === id) panelTaskId = null
       await deleteEntry(id)
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
-      await load() // Revert on error
+      await load()
     }
   }
 
@@ -73,10 +79,122 @@
     }
   }
 
-  $: activeTasks = entries.filter(e => !e.is_completed)
-  $: completedTasks = entries.filter(e => e.is_completed)
+  function formatDateTimeLocal(iso: string | null) {
+    if (!iso) return ''
+    try {
+      const d = new Date(iso)
+      const y = d.getFullYear()
+      const m = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      const h = String(d.getHours()).padStart(2, '0')
+      const min = String(d.getMinutes()).padStart(2, '0')
+      return `${y}-${m}-${day}T${h}:${min}`
+    } catch {
+      return ''
+    }
+  }
 
-  onMount(() => load())
+  function toISOStartOfDay(dateStr: string) {
+    if (!dateStr) return null
+    const d = new Date(dateStr + 'T00:00:00')
+    return isNaN(d.getTime()) ? null : d.toISOString()
+  }
+
+  function toISODateTime(dateTimeStr: string) {
+    if (!dateTimeStr) return null
+    const d = new Date(dateTimeStr)
+    return isNaN(d.getTime()) ? null : d.toISOString()
+  }
+
+  $: panelEntry = panelTaskId ? (entries.find((e) => e.id === panelTaskId) ?? null) : null
+
+  async function savePanelEntry(updates: Partial<Entry>) {
+    if (!panelEntry) return
+    const updated = { ...panelEntry, ...updates, updated_at: new Date().toISOString() }
+    entries = entries.map((e) => (e.id === updated.id ? updated : e))
+    try {
+      await updateEntry(updated)
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e)
+      await load()
+    }
+  }
+
+  function onPanelTitleBlur(e: Event) {
+    const el = e.currentTarget as HTMLInputElement
+    const v = el?.value?.trim() ?? ''
+    if (panelEntry && v !== (panelEntry.title ?? '')) savePanelEntry({ title: v || null })
+  }
+
+  function onPanelDetailsBlur(e: Event) {
+    const el = e.currentTarget as HTMLTextAreaElement
+    const v = el?.value ?? ''
+    if (panelEntry && v !== panelEntry.content) savePanelEntry({ content: v })
+  }
+
+  function getInputValue(e: Event): string {
+    const el = e.currentTarget as HTMLInputElement | HTMLTextAreaElement | null
+    return el?.value ?? ''
+  }
+
+  function onDueDateChange(e: Event) {
+    const v = getInputValue(e)
+    if (panelEntry) savePanelEntry({ due_date: toISOStartOfDay(v) })
+  }
+
+  function onReminderChange(e: Event) {
+    const v = getInputValue(e)
+    if (panelEntry) savePanelEntry({ reminder_at: toISODateTime(v) })
+  }
+
+  function onSubtaskTitleBlur(entry: Entry, index: number, e: Event) {
+    const v = getInputValue(e)
+    const list = [...(entry.subtasks ?? [])]
+    if (list[index] && list[index].title !== v) {
+      list[index] = { ...list[index], title: v }
+      updateSubtasks(entry, list)
+    }
+  }
+
+  function updateSubtasks(entry: Entry, next: Subtask[]) {
+    savePanelEntry({ subtasks: next })
+  }
+
+  function addSubtask(entry: Entry) {
+    const list = entry.subtasks ?? []
+    updateSubtasks(entry, [...list, { title: '', is_completed: false }])
+  }
+
+  function toggleSubtask(entry: Entry, index: number) {
+    const list = entry.subtasks ?? []
+    const next = list.map((s, i) => (i === index ? { ...s, is_completed: !s.is_completed } : s))
+    updateSubtasks(entry, next)
+  }
+
+  function removeSubtask(entry: Entry, index: number) {
+    const list = entry.subtasks ?? []
+    updateSubtasks(entry, list.filter((_, i) => i !== index))
+  }
+
+  function renderDetailsMarkdown(content: string): string {
+    if (!content.trim()) return ''
+    const raw = marked.parse(content, { async: false }) as string
+    return DOMPurify.sanitize(raw)
+  }
+
+  $: activeTasks = entries.filter((e) => !e.is_completed)
+  $: completedTasks = entries.filter((e) => e.is_completed)
+
+  onMount(() => {
+    load()
+    const unsub = selectedTaskIdStore.subscribe((id) => {
+      if (id) {
+        panelTaskId = id
+        selectedTaskIdStore.set(null)
+      }
+    })
+    return () => unsub()
+  })
 </script>
 
 <div class="view tasks-view">
@@ -140,14 +258,30 @@
               </button>
               <div class="task-content">
                 <span class="task-title">{entry.title || entry.content}</span>
-                {#if entry.due_date}
-                  <span class="task-due">
-                    <Icon icon="ph:calendar-blank-duotone" />
-                    {formatDate(entry.due_date)}
-                  </span>
-                {/if}
+                <div class="task-meta">
+                  {#if entry.due_date}
+                    <span class="task-due">
+                      <Icon icon="ph:calendar-blank-duotone" />
+                      {formatDate(entry.due_date)}
+                    </span>
+                  {/if}
+                  {#if entry.reminder_at}
+                    <span class="task-reminder">
+                      <Icon icon="ph:bell-duotone" />
+                      {formatDate(entry.reminder_at)}
+                    </span>
+                  {/if}
+                  {#if entry.subtasks && entry.subtasks.length > 0}
+                    <span class="task-subtask-count">
+                      {entry.subtasks.filter((s) => s.is_completed).length}/{entry.subtasks.length}
+                    </span>
+                  {/if}
+                </div>
               </div>
               <div class="task-actions">
+                <button class="action-btn open" on:click={() => (panelTaskId = entry.id)} title="Open details">
+                  <Icon icon="ph:caret-right-duotone" />
+                </button>
                 <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete task">
                   <Icon icon="ph:trash-duotone" />
                 </button>
@@ -184,6 +318,103 @@
           </div>
         </div>
       {/if}
+    </div>
+  {/if}
+
+  {#if panelTaskId && panelEntry}
+    <div class="panel-backdrop" on:click={() => (panelTaskId = null)} role="button" tabindex="-1" aria-label="Close panel"></div>
+    <div class="task-detail-panel">
+      <div class="panel-header">
+        <button class="panel-close" on:click={() => (panelTaskId = null)} title="Close">
+          <Icon icon="ph:x-bold" />
+        </button>
+        <h3>Task details</h3>
+      </div>
+      <div class="panel-body">
+        <div class="field">
+          <label for="task-detail-title">Title</label>
+          <input
+            id="task-detail-title"
+            type="text"
+            value={panelEntry.title ?? ''}
+            on:blur={onPanelTitleBlur}
+            placeholder="Task title"
+          />
+          {#if (panelEntry.title ?? '').trim() === ''}
+            <span class="field-hint">Title is required</span>
+          {/if}
+        </div>
+        <div class="field">
+          <label>Details (markdown)</label>
+          <div class="details-tabs">
+            <button type="button" class:active={!detailsPreviewActive} on:click={() => (detailsPreviewActive = false)}>Edit</button>
+            <button type="button" class:active={detailsPreviewActive} on:click={() => (detailsPreviewActive = true)}>Preview</button>
+          </div>
+          {#if !detailsPreviewActive}
+            <textarea
+              class="details-textarea"
+              value={panelEntry.content}
+              on:blur={onPanelDetailsBlur}
+              placeholder="Add details (markdown supported)"
+              rows="6"
+            ></textarea>
+          {:else}
+            <div class="details-preview" data-details-preview>
+              {@html renderDetailsMarkdown(panelEntry.content)}
+            </div>
+          {/if}
+        </div>
+        <div class="field row">
+          <div class="field-half">
+            <label for="task-due">Due date</label>
+            <input
+              id="task-due"
+              type="date"
+              value={panelEntry.due_date ? panelEntry.due_date.slice(0, 10) : ''}
+              on:change={onDueDateChange}
+            />
+          </div>
+          <div class="field-half">
+            <label for="task-reminder">Reminder</label>
+            <input
+              id="task-reminder"
+              type="datetime-local"
+              value={formatDateTimeLocal(panelEntry.reminder_at)}
+              on:change={onReminderChange}
+            />
+          </div>
+        </div>
+        <div class="field">
+          <label>Subtasks</label>
+          <div class="subtasks-list">
+            {#each panelEntry.subtasks ?? [] as subtask, i}
+              <div class="subtask-row">
+                <button type="button" class="subtask-checkbox" on:click={() => toggleSubtask(panelEntry, i)} aria-label="Toggle subtask">
+                  <div class="check-circle" class:checked={subtask.is_completed}>
+                    {#if subtask.is_completed}
+                      <Icon icon="ph:check-bold" class="check-icon" />
+                    {/if}
+                  </div>
+                </button>
+                <input
+                  type="text"
+                  class="subtask-input"
+                  value={subtask.title}
+                  on:blur={(e) => onSubtaskTitleBlur(panelEntry, i, e)}
+                  placeholder="Subtask"
+                />
+                <button type="button" class="action-btn delete subtask-delete" on:click={() => removeSubtask(panelEntry, i)} title="Remove subtask">
+                  <Icon icon="ph:trash-duotone" />
+                </button>
+              </div>
+            {/each}
+            <button type="button" class="add-subtask-btn" on:click={() => addSubtask(panelEntry)}>
+              <Icon icon="ph:plus-duotone" />
+              Add subtask
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   {/if}
 </div>
@@ -373,6 +604,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 0;
   }
 
   .task-title {
@@ -382,13 +614,26 @@
     transition: all 0.2s;
   }
 
-  .task-due {
+  .task-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .task-due,
+  .task-reminder,
+  .task-subtask-count {
     display: flex;
     align-items: center;
     gap: 4px;
     font-size: 12px;
     color: var(--text-muted);
     font-weight: 600;
+  }
+
+  .task-subtask-count {
+    font-weight: 500;
   }
 
   .task-actions {
@@ -530,12 +775,232 @@
     color: var(--error);
   }
 
+  /* Detail panel */
+  .panel-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 100;
+    cursor: pointer;
+  }
+
+  .task-detail-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(420px, 100vw);
+    background: var(--bg-card);
+    border-left: 1px solid var(--border-subtle);
+    z-index: 101;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .panel-close {
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-muted);
+  }
+
+  .panel-close:hover {
+    background: var(--bg-input);
+    color: var(--navy-deep);
+  }
+
+  .panel-header h3 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--navy-deep);
+    margin: 0;
+  }
+
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+
+  .field input[type="text"],
+  .field input[type="date"],
+  .field input[type="datetime-local"],
+  .field textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    font-size: 15px;
+    font-family: inherit;
+    background: var(--bg-input, #f8f9fa);
+    color: var(--text-primary);
+  }
+
+  .field-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    display: block;
+  }
+
+  .field.row {
+    display: flex;
+    gap: 12px;
+  }
+
+  .field-half {
+    flex: 1;
+  }
+
+  .details-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+
+  .details-tabs button {
+    padding: 6px 12px;
+    font-size: 13px;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-input);
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--text-secondary);
+  }
+
+  .details-tabs button.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+  }
+
+  .details-textarea {
+    min-height: 120px;
+    resize: vertical;
+  }
+
+  .details-preview {
+    min-height: 120px;
+    padding: 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    background: var(--bg-input);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .details-preview :global(p) { margin: 0 0 0.5em; }
+  .details-preview :global(ul) { margin: 0 0 0.5em; padding-left: 1.2em; }
+  .details-preview :global(ol) { margin: 0 0 0.5em; padding-left: 1.2em; }
+  .details-preview :global(h1), .details-preview :global(h2), .details-preview :global(h3) { margin: 0.6em 0 0.3em; font-size: 1em; }
+
+  .subtasks-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .subtask-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-left: 12px;
+    border-left: 3px solid var(--border-visible);
+  }
+
+  .subtask-checkbox {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .subtask-row .check-circle {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--border-visible);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: transparent;
+  }
+
+  .subtask-row .check-circle.checked {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+  }
+
+  .subtask-input {
+    flex: 1;
+    padding: 8px 10px;
+    font-size: 14px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    background: var(--bg-input);
+  }
+
+  .subtask-delete {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+  }
+
+  .add-subtask-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    font-size: 14px;
+    color: var(--primary);
+    background: transparent;
+    border: 1px dashed var(--border-visible);
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+
+  .add-subtask-btn:hover {
+    background: var(--primary-alpha);
+  }
+
   @media (max-width: 768px) {
     .task-actions {
       opacity: 1;
     }
     .subtitle {
       padding-left: 0;
+    }
+    .task-detail-panel {
+      width: 100vw;
     }
   }
 </style>

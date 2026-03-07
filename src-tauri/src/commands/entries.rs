@@ -7,6 +7,14 @@ use std::path::PathBuf;
 pub struct GetEntriesByTypeArgs {
     #[serde(rename = "entryType")]
     pub entry_type: String,
+    /// For notes: "active" | "archived" | "trash". Ignored for other types.
+    pub scope: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetEntriesWithReminderArgs {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
@@ -36,7 +44,66 @@ pub fn get_entries_by_type(args: GetEntriesByTypeArgs) -> Result<Vec<Entry>, Str
     let conn = db::open_db().map_err(|e| e.to_string())?;
     let limit = args.limit.unwrap_or(100);
     let offset = args.offset.unwrap_or(0);
-    db::get_entries_by_type(&conn, &args.entry_type, limit, offset).map_err(|e| e.to_string())
+    db::get_entries_by_type(&conn, &args.entry_type, args.scope.as_deref(), limit, offset).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_entries_with_reminder(args: GetEntriesWithReminderArgs) -> Result<Vec<Entry>, String> {
+    let conn = db::open_db().map_err(|e| e.to_string())?;
+    let limit = args.limit.unwrap_or(200);
+    let offset = args.offset.unwrap_or(0);
+    db::get_entries_with_reminder(&conn, limit, offset).map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetEntriesForRemindersArgs {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[tauri::command]
+pub fn get_entries_for_reminders(args: GetEntriesForRemindersArgs) -> Result<Vec<Entry>, String> {
+    let conn = db::open_db().map_err(|e| e.to_string())?;
+    let limit = args.limit.unwrap_or(200);
+    let offset = args.offset.unwrap_or(0);
+    db::get_entries_for_reminders_view(&conn, limit, offset).map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchNotesArgs {
+    pub query: Option<String>,
+    pub label: Option<String>,
+    pub scope: String,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[tauri::command]
+pub fn search_notes(args: SearchNotesArgs) -> Result<Vec<Entry>, String> {
+    let conn = db::open_db().map_err(|e| e.to_string())?;
+    let limit = args.limit.unwrap_or(100);
+    let offset = args.offset.unwrap_or(0);
+    db::search_notes(
+        &conn,
+        args.query.as_deref(),
+        args.label.as_deref(),
+        &args.scope,
+        limit,
+        offset,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_note_labels(scope: Option<String>) -> Result<Vec<String>, String> {
+    let conn = db::open_db().map_err(|e| e.to_string())?;
+    db::get_note_labels(&conn, scope.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn empty_trash() -> Result<i64, String> {
+    let conn = db::open_db().map_err(|e| e.to_string())?;
+    db::empty_trash(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -101,13 +168,15 @@ fn snippet_entry(trigger: String, expansion: String) -> Entry {
         is_completed: None,
         reminder_at: None,
         rrule: None,
+        archived_at: None,
+        deleted_at: None,
     }
 }
 
 #[tauri::command]
 pub fn get_snippets() -> Result<Vec<crate::config::Snippet>, String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
-    let entries = db::get_entries_by_type(&conn, "snippet", 500, 0).map_err(|e| e.to_string())?;
+    let entries = db::get_entries_by_type(&conn, "snippet", None, 500, 0).map_err(|e| e.to_string())?;
     Ok(entries
         .into_iter()
         .map(|e| crate::config::Snippet {
@@ -120,7 +189,7 @@ pub fn get_snippets() -> Result<Vec<crate::config::Snippet>, String> {
 #[tauri::command]
 pub fn add_snippet(trigger: String, expansion: String) -> Result<(), String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
-    let existing = db::get_entries_by_type(&conn, "snippet", 500, 0).map_err(|e| e.to_string())?;
+    let existing = db::get_entries_by_type(&conn, "snippet", None, 500, 0).map_err(|e| e.to_string())?;
     for e in existing.iter().filter(|e| e.title.as_deref() == Some(trigger.as_str())) {
         let _ = db::delete_entry(&conn, &e.id);
     }
@@ -134,7 +203,7 @@ pub fn add_snippet(trigger: String, expansion: String) -> Result<(), String> {
 #[tauri::command]
 pub fn remove_snippet(trigger: String) -> Result<bool, String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
-    let existing = db::get_entries_by_type(&conn, "snippet", 500, 0).map_err(|e| e.to_string())?;
+    let existing = db::get_entries_by_type(&conn, "snippet", None, 500, 0).map_err(|e| e.to_string())?;
     if let Some(e) = existing.into_iter().find(|e| e.title.as_deref() == Some(trigger.as_str())) {
         Ok(db::delete_entry(&conn, &e.id).map_err(|e| e.to_string())?)
     } else {

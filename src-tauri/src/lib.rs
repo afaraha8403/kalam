@@ -411,9 +411,14 @@ pub fn run() {
             commands::export_logs_csv,
             commands::create_entry,
             commands::get_entries_by_type,
+            commands::get_entries_with_reminder,
+            commands::get_entries_for_reminders,
             commands::get_entry,
             commands::update_entry,
             commands::delete_entry,
+            commands::search_notes,
+            commands::get_note_labels,
+            commands::empty_trash,
             commands::save_attachment,
             commands::search_similar,
             reset_application,
@@ -1248,7 +1253,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         
         let mut config = state.config.lock().await.get_all();
         if let Ok(conn) = crate::db::open_db() {
-            if let Ok(entries) = crate::db::get_entries_by_type(&conn, "snippet", 500, 0) {
+            if let Ok(entries) = crate::db::get_entries_by_type(&conn, "snippet", None, 500, 0) {
                 config.snippets = entries
                     .into_iter()
                     .map(|e| config::Snippet {

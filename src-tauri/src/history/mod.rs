@@ -116,6 +116,8 @@ pub async fn save_transcription(text: &str) -> anyhow::Result<()> {
         is_completed: None,
         reminder_at: None,
         rrule: None,
+        archived_at: None,
+        deleted_at: None,
     };
     let conn = db::open_db()?;
     db::insert_entry(&conn, &entry)?;
@@ -321,6 +323,8 @@ pub fn migrate_legacy_to_unified() -> anyhow::Result<()> {
             is_completed: None,
             reminder_at: None,
             rrule: None,
+            archived_at: None,
+            deleted_at: None,
         };
         db::insert_entry(&unified, &entry)?;
         db::insert_embedding_stub(&unified, &id)?;

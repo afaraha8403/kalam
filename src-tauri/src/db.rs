@@ -80,6 +80,27 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         );
         "#,
     )?;
+
+    // Schema version 2: add archived_at, deleted_at for notes (archive/trash)
+    let has_archived_at: bool = conn.query_row(
+        "SELECT COUNT(1) FROM pragma_table_info('entries') WHERE name = 'archived_at'",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_archived_at {
+        conn.execute("ALTER TABLE entries ADD COLUMN archived_at TEXT", [])?;
+        conn.execute("ALTER TABLE entries ADD COLUMN deleted_at TEXT", [])?;
+    } else {
+        let has_deleted_at: bool = conn.query_row(
+            "SELECT COUNT(1) FROM pragma_table_info('entries') WHERE name = 'deleted_at'",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_deleted_at {
+            conn.execute("ALTER TABLE entries ADD COLUMN deleted_at TEXT", [])?;
+        }
+    }
+
     Ok(())
 }
 
@@ -100,11 +121,13 @@ pub fn insert_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
     let updated_at = e.updated_at.to_rfc3339();
     let due_date = e.due_date.as_ref().map(|d| d.to_rfc3339());
     let reminder_at = e.reminder_at.as_ref().map(|r| r.to_rfc3339());
+    let archived_at = e.archived_at.as_ref().map(|a| a.to_rfc3339());
+    let deleted_at = e.deleted_at.as_ref().map(|d| d.to_rfc3339());
     conn.execute(
         r#"
         INSERT INTO entries (id, entry_type, created_at, updated_at, sync_status, title, content,
-            attachments, tags, color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            attachments, tags, color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
         "#,
         rusqlite::params![
             e.id,
@@ -124,6 +147,8 @@ pub fn insert_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
             e.is_completed.map(|c| c as i32),
             reminder_at,
             e.rrule,
+            archived_at,
+            deleted_at,
         ],
     )?;
     Ok(())
@@ -161,6 +186,8 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<crate::models::Entry> {
     let is_completed: Option<i32> = row.get(14)?;
     let reminder_at: Option<String> = row.get(15)?;
     let rrule: Option<String> = row.get(16)?;
+    let archived_at: Option<String> = row.get::<_, Option<String>>(17).ok().flatten();
+    let deleted_at: Option<String> = row.get::<_, Option<String>>(18).ok().flatten();
     let attachments: Vec<String> = serde_json::from_str(&attachments).unwrap_or_default();
     let tags: Vec<String> = serde_json::from_str(&tags).unwrap_or_default();
     let subtasks: Option<Vec<crate::models::Subtask>> =
@@ -174,6 +201,10 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<crate::models::Entry> {
     let due_date = due_date
         .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
     let reminder_at = reminder_at
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
+    let archived_at = archived_at
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
+    let deleted_at = deleted_at
         .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
     Ok(crate::models::Entry {
         id,
@@ -193,21 +224,86 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<crate::models::Entry> {
         is_completed: is_completed.map(|c| c != 0),
         reminder_at,
         rrule,
+        archived_at,
+        deleted_at,
     })
 }
 
-/// Get entries by type, ordered by updated_at DESC.
-pub fn get_entries_by_type(
+/// Get entries for the Reminders view: type reminder OR (type note with reminder_at set, not trashed).
+/// Archived notes with reminder still appear. Order: reminder_at ASC (soonest first).
+pub fn get_entries_with_reminder(
     conn: &Connection,
-    entry_type: &str,
     limit: i64,
     offset: i64,
 ) -> anyhow::Result<Vec<crate::models::Entry>> {
     let mut stmt = conn.prepare(
         "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule
-         FROM entries WHERE entry_type = ?1 ORDER BY updated_at DESC LIMIT ?2 OFFSET ?3",
+         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
+         FROM entries
+         WHERE (entry_type = 'reminder') OR (entry_type = 'note' AND reminder_at IS NOT NULL AND deleted_at IS NULL)
+         ORDER BY reminder_at ASC LIMIT ?1 OFFSET ?2",
     )?;
+    let rows = stmt.query_map(rusqlite::params![limit, offset], |row| row_to_entry(row))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// Get entries for the Reminders tab: type reminder OR (type task with reminder_at set).
+/// Order: active first (incomplete), then reminder_at ASC (nulls last), then updated_at DESC.
+pub fn get_entries_for_reminders_view(
+    conn: &Connection,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<crate::models::Entry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
+         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
+         FROM entries
+         WHERE (entry_type = 'reminder') OR (entry_type = 'task' AND reminder_at IS NOT NULL)
+         ORDER BY COALESCE(is_completed, 0), reminder_at IS NULL, reminder_at ASC, updated_at DESC
+         LIMIT ?1 OFFSET ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![limit, offset], |row| row_to_entry(row))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// Get entries by type. For notes, optional scope: "active" | "archived" | "trash".
+/// Order: for notes, is_pinned DESC then updated_at DESC; otherwise updated_at DESC.
+pub fn get_entries_by_type(
+    conn: &Connection,
+    entry_type: &str,
+    scope: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<crate::models::Entry>> {
+    let (where_extra, order_by) = if entry_type == "note" {
+        let scope = scope.unwrap_or("active");
+        let where_scope = match scope {
+            "archived" => " AND deleted_at IS NULL AND archived_at IS NOT NULL",
+            "trash" => " AND deleted_at IS NOT NULL",
+            _ => " AND deleted_at IS NULL AND archived_at IS NULL",
+        };
+        (
+            where_scope,
+            " ORDER BY is_pinned DESC, updated_at DESC",
+        )
+    } else {
+        ("", " ORDER BY updated_at DESC")
+    };
+    let sql = format!(
+        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
+         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
+         FROM entries WHERE entry_type = ?1{}{} LIMIT ?2 OFFSET ?3",
+        where_extra, order_by
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params![entry_type, limit, offset], |row| row_to_entry(row))?;
     let mut out = Vec::new();
     for row in rows {
@@ -216,11 +312,97 @@ pub fn get_entries_by_type(
     Ok(out)
 }
 
+/// Search notes with optional text query and label filter. Scope: "active" | "archived" | "trash".
+pub fn search_notes(
+    conn: &Connection,
+    query: Option<&str>,
+    label: Option<&str>,
+    scope: &str,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<Vec<crate::models::Entry>> {
+    let where_scope = match scope {
+        "archived" => "deleted_at IS NULL AND archived_at IS NOT NULL",
+        "trash" => "deleted_at IS NOT NULL",
+        _ => "deleted_at IS NULL AND archived_at IS NULL",
+    };
+    let pattern = format!("%{}%", query.unwrap_or(""));
+    let has_label = label.map(|l| !l.is_empty()).unwrap_or(false);
+
+    let out = if has_label {
+        let label = label.unwrap().to_string();
+        let sql = format!(
+            "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
+             color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
+             FROM entries WHERE entry_type = 'note' AND {} AND (title LIKE ?1 OR content LIKE ?2)
+             AND EXISTS (SELECT 1 FROM json_each(entries.tags) WHERE json_each.value = ?3)
+             ORDER BY is_pinned DESC, updated_at DESC LIMIT ?4 OFFSET ?5",
+            where_scope
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params![&pattern, &pattern, &label, limit, offset], |row| row_to_entry(row))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    } else {
+        let sql = format!(
+            "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
+             color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
+             FROM entries WHERE entry_type = 'note' AND {} AND (title LIKE ?1 OR content LIKE ?2)
+             ORDER BY is_pinned DESC, updated_at DESC LIMIT ?3 OFFSET ?4",
+            where_scope
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params![&pattern, &pattern, limit, offset], |row| row_to_entry(row))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    Ok(out)
+}
+
+/// Get distinct tag strings from notes in the given scope. Scope: "active" | "archived" | "trash" (or "all" for no filter).
+pub fn get_note_labels(conn: &Connection, scope: Option<&str>) -> anyhow::Result<Vec<String>> {
+    let where_scope = match scope {
+        Some("archived") => "deleted_at IS NULL AND archived_at IS NOT NULL",
+        Some("trash") => "deleted_at IS NOT NULL",
+        Some("active") | None => "deleted_at IS NULL AND archived_at IS NULL",
+        _ => "", // "all" or unknown: no scope filter
+    };
+    let sql = if where_scope.is_empty() {
+        "SELECT DISTINCT value FROM entries, json_each(entries.tags) WHERE entry_type = 'note'".to_string()
+    } else {
+        format!(
+            "SELECT DISTINCT value FROM entries, json_each(entries.tags) WHERE entry_type = 'note' AND {}",
+            where_scope
+        )
+    };
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Permanently delete all trashed notes (entry_type = 'note' AND deleted_at IS NOT NULL). Returns count deleted.
+pub fn empty_trash(conn: &Connection) -> anyhow::Result<i64> {
+    let ids: Vec<String> = conn.prepare(
+        "SELECT id FROM entries WHERE entry_type = 'note' AND deleted_at IS NOT NULL",
+    )?
+    .query_map([], |row| row.get(0))?
+    .collect::<Result<Vec<_>, _>>()?;
+    let count = ids.len() as i64;
+    for id in &ids {
+        let _ = conn.execute("DELETE FROM vec_entries WHERE entry_id = ?1", rusqlite::params![id]);
+        conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])?;
+    }
+    Ok(count)
+}
+
 /// Get a single entry by id.
 pub fn get_entry(conn: &Connection, id: &str) -> anyhow::Result<Option<crate::models::Entry>> {
     let mut stmt = conn.prepare(
         "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule
+         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
          FROM entries WHERE id = ?1",
     )?;
     let mut rows = stmt.query(rusqlite::params![id])?;
@@ -236,12 +418,15 @@ pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
     let updated_at = e.updated_at.to_rfc3339();
     let due_date = e.due_date.as_ref().map(|d| d.to_rfc3339());
     let reminder_at = e.reminder_at.as_ref().map(|r| r.to_rfc3339());
+    let archived_at = e.archived_at.as_ref().map(|a| a.to_rfc3339());
+    let deleted_at = e.deleted_at.as_ref().map(|d| d.to_rfc3339());
     let n = conn.execute(
         r#"
         UPDATE entries SET entry_type = ?1, created_at = ?2, updated_at = ?3, sync_status = ?4,
             title = ?5, content = ?6, attachments = ?7, tags = ?8, color = ?9, is_pinned = ?10,
-            priority = ?11, due_date = ?12, subtasks = ?13, is_completed = ?14, reminder_at = ?15, rrule = ?16
-        WHERE id = ?17
+            priority = ?11, due_date = ?12, subtasks = ?13, is_completed = ?14, reminder_at = ?15, rrule = ?16,
+            archived_at = ?17, deleted_at = ?18
+        WHERE id = ?19
         "#,
         rusqlite::params![
             e.entry_type,
@@ -260,6 +445,8 @@ pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
             e.is_completed.map(|c| c as i32),
             reminder_at,
             e.rrule,
+            archived_at,
+            deleted_at,
             e.id,
         ],
     )?;
@@ -323,6 +510,8 @@ pub fn migrate_snippets_from_config(snippets: &[crate::config::Snippet]) -> anyh
             is_completed: None,
             reminder_at: None,
             rrule: None,
+            archived_at: None,
+            deleted_at: None,
         };
         insert_entry(&conn, &entry)?;
         insert_embedding_stub(&conn, &id)?;
