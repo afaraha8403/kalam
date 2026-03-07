@@ -1,3 +1,11 @@
+export type LogLevel = 'Off' | 'Error' | 'Warn' | 'Info' | 'Debug'
+
+export interface LoggingConfig {
+  enabled: boolean
+  level: LogLevel
+  max_records: number
+}
+
 export interface AppConfig {
   hotkey: string
   recording_mode: 'Hold' | 'Toggle'
@@ -6,10 +14,15 @@ export interface AppConfig {
   formatting: FormattingConfig
   privacy: PrivacyConfig
   notifications: NotificationConfig
+  logging: LoggingConfig
   snippets: Snippet[]
   auto_start: boolean
-  language: string
+  /** Ordered list of recognition languages. First is default; toggle hotkey swaps first and second. */
+  languages: string[]
+  language_toggle_hotkey: string | null
   start_in_focus: boolean
+  min_hold_ms: number
+  onboarding_complete?: boolean
 }
 
 export interface STTConfig {

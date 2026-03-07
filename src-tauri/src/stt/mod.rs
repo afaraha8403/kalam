@@ -1,7 +1,15 @@
 #![allow(dead_code)]
 
 pub mod groq;
+pub mod models;
 pub mod provider;
+pub mod sensevoice;
+
+use crate::audio::vad::{VADConfig, VADProcessor};
+use crate::stt::provider::STTProvider;
+
+/// Overlap between consecutive chunks in samples (0.5s at 16kHz).
+const CHUNK_OVERLAP_SAMPLES: usize = 8000;
 
 #[derive(Debug, Clone)]
 pub struct TranscriptionResult {
@@ -18,27 +26,74 @@ impl STTManager {
     }
 }
 
-pub async fn download_model(model_type: &str) -> anyhow::Result<()> {
-    log::info!("Downloading model: {}", model_type);
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-    Ok(())
+/// Transcribe audio using VAD-based chunking and prompt chaining for context.
+/// Chunks are built from VAD segments with 0.5s overlap; each chunk is sent with
+/// the previous chunk's text as prompt for consistent capitalization/context.
+/// If `language_hint` is Some (e.g. "en"), the provider may use it for the API.
+pub fn transcribe_chunked(
+    provider: &dyn STTProvider,
+    audio: &[f32],
+    sample_rate: u32,
+    vad_config: &VADConfig,
+    language_hint: Option<&str>,
+) -> anyhow::Result<TranscriptionResult> {
+    let mut vad = VADProcessor::new(vad_config.clone())?;
+    let segments = vad.process(audio);
+
+    if segments.is_empty() {
+        return provider.transcribe_blocking(audio, sample_rate, None, language_hint);
+    }
+
+    let mut combined_text = String::new();
+    let mut prev_text: Option<String> = None;
+    let mut confidence_sum = 0.0f32;
+    let mut count = 0usize;
+    let mut language = String::new();
+
+    for (start, end) in segments {
+        let chunk_start = start.saturating_sub(CHUNK_OVERLAP_SAMPLES);
+        let chunk = &audio[chunk_start..end];
+        if chunk.len() < 1600 {
+            continue;
+        }
+        let prompt = prev_text.as_deref();
+        let result = provider.transcribe_blocking(chunk, sample_rate, prompt, language_hint)?;
+        let t = result.text.trim();
+        if !t.is_empty() {
+            if !combined_text.is_empty() {
+                combined_text.push(' ');
+            }
+            combined_text.push_str(t);
+            confidence_sum += result.confidence;
+            count += 1;
+            if !result.language.is_empty() && language.is_empty() {
+                language = result.language;
+            }
+            prev_text = Some(result.text);
+        }
+    }
+
+    Ok(TranscriptionResult {
+        text: combined_text,
+        confidence: if count > 0 { confidence_sum / count as f32 } else { 0.9 },
+        language: if language.is_empty() { "unknown".to_string() } else { language },
+    })
 }
 
 pub async fn get_model_status() -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
-    
-    Ok(json!({
-        "sensevoice": {
-            "installed": false,
-            "size_mb": 200,
-            "download_progress": null
-        },
-        "whisper_base": {
-            "installed": false,
-            "size_mb": 142,
-            "download_progress": null
-        }
-    }))
+    let mut out = serde_json::Map::new();
+    for m in models::known_models() {
+        out.insert(
+            m.id.to_string(),
+            json!({
+                "installed": models::is_installed(m.id),
+                "size_mb": m.size_mb,
+                "download_progress": serde_json::Value::Null
+            }),
+        );
+    }
+    Ok(serde_json::Value::Object(out))
 }
 
 pub async fn validate_api_key(provider: &str, api_key: &str) -> anyhow::Result<bool> {

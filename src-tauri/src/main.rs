@@ -1,5 +1,6 @@
-use kalam_voice::run;
+use kalam_voice::{app_log, run};
 
 fn main() {
+    app_log::init(Default::default());
     run();
 }

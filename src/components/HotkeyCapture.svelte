@@ -78,13 +78,22 @@
     })
   }
 
-  function startCapture(e: MouseEvent) {
-    e.preventDefault()
-    e.stopPropagation()
-    
+  function startCapture(e?: MouseEvent) {
+    if (e) {
+      e.preventDefault()
+      e.stopPropagation()
+    }
     isCapturing = true
     currentKeys = new Set()
     keysPressed = new Set()
+  }
+
+  function handleCaptureAreaKeydown(event: KeyboardEvent) {
+    if (isCapturing) return
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      startCapture()
+    }
   }
 
   function stopCapture() {
@@ -176,8 +185,11 @@
   <div
     class="capture-area"
     class:capturing={isCapturing}
-    on:click={!isCapturing ? startCapture : null}
+    role="button"
     tabindex={isCapturing ? 0 : -1}
+    on:click={!isCapturing ? startCapture : null}
+    on:keydown={handleCaptureAreaKeydown}
+    aria-label={value ? `Hotkey: ${value}. Click to change.` : 'Click to set hotkey'}
   >
     {#if isCapturing}
       {#if keysPressed.size === 0}

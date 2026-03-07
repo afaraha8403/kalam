@@ -2,14 +2,22 @@ use lazy_static::lazy_static;
 use rdev::{listen, Event, EventType, Key};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 lazy_static! {
     static ref CTRL_PRESSED: AtomicBool = AtomicBool::new(false);
     static ref ALT_PRESSED: AtomicBool = AtomicBool::new(false);
     static ref SHIFT_PRESSED: AtomicBool = AtomicBool::new(false);
     static ref META_PRESSED: AtomicBool = AtomicBool::new(false);
-    static ref MAIN_KEY_PRESSED: AtomicBool = AtomicBool::new(false);
+    /// Set when dictation hotkey is active (used on Windows to suppress Start Menu on Win key release).
+    pub(crate) static ref HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
+}
+
+/// One hotkey registration with its own active state and callbacks.
+pub struct HotkeyRegistration {
+    pub target: RdevHotkey,
+    pub active: Arc<AtomicBool>,
+    pub on_press: Arc<dyn Fn() + Send + Sync>,
+    pub on_release: Arc<dyn Fn() + Send + Sync>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,7 +26,7 @@ pub struct RdevHotkey {
     pub alt: bool,
     pub shift: bool,
     pub meta: bool,
-    pub main_key: Key,
+    pub main_key: Option<Key>,
 }
 
 pub fn parse_rdev_hotkey(hotkey_str: &str) -> anyhow::Result<RdevHotkey> {
@@ -29,10 +37,8 @@ pub fn parse_rdev_hotkey(hotkey_str: &str) -> anyhow::Result<RdevHotkey> {
         alt: false,
         shift: false,
         meta: false,
-        main_key: Key::Unknown(0),
+        main_key: None,
     };
-
-    let mut key_code = None;
 
     for part in parts {
         match part.to_lowercase().as_str() {
@@ -41,12 +47,16 @@ pub fn parse_rdev_hotkey(hotkey_str: &str) -> anyhow::Result<RdevHotkey> {
             "shift" => hotkey.shift = true,
             "super" | "win" | "command" | "cmd" | "meta" => hotkey.meta = true,
             key => {
-                key_code = Some(parse_rdev_key_code(key)?);
+                hotkey.main_key = Some(parse_rdev_key_code(key)?);
             }
         }
     }
 
-    hotkey.main_key = key_code.ok_or_else(|| anyhow::anyhow!("No key code found"))?;
+    let has_any_modifier = hotkey.ctrl || hotkey.alt || hotkey.shift || hotkey.meta;
+    if hotkey.main_key.is_none() && !has_any_modifier {
+        return Err(anyhow::anyhow!("Hotkey must have at least one key or modifier"));
+    }
+
     Ok(hotkey)
 }
 
@@ -119,54 +129,93 @@ fn parse_rdev_key_code(key: &str) -> anyhow::Result<Key> {
     }
 }
 
-pub fn start_listener(
-    target_hotkey: RdevHotkey,
-    on_press: impl Fn() + Send + Sync + 'static,
-    on_release: impl Fn() + Send + Sync + 'static,
-) {
-    let press_cb = Arc::new(on_press);
-    let release_cb = Arc::new(on_release);
+/// Start the global key listener with multiple hotkey registrations.
+/// The first registration (index 0) is the dictation hotkey; when it is active, HOTKEY_ACTIVE is set (for Windows Win-key suppression).
+pub fn start_listener(registrations: Vec<HotkeyRegistration>) {
+    let any_meta = registrations.iter().any(|r| r.target.meta);
+    #[cfg(windows)]
+    if any_meta {
+        crate::hotkey_win::start_win_key_suppression();
+    }
+
+    let regs = Arc::new(registrations);
 
     std::thread::spawn(move || {
         if let Err(error) = listen(move |event| {
-            handle_event(event, &target_hotkey, press_cb.clone(), release_cb.clone());
+            handle_event_multi(event, regs.clone());
         }) {
             log::error!("Error in rdev listener: {:?}", error);
         }
     });
 }
 
-fn handle_event(
-    event: Event,
-    target: &RdevHotkey,
-    on_press: Arc<impl Fn()>,
-    on_release: Arc<impl Fn()>,
-) {
+fn handle_event_multi(event: Event, regs: Arc<Vec<HotkeyRegistration>>) {
+    let key = match event.event_type {
+        EventType::KeyPress(k) => {
+            update_modifiers(k, true);
+            k
+        }
+        EventType::KeyRelease(k) => {
+            update_modifiers(k, false);
+            k
+        }
+        _ => return,
+    };
+
     match event.event_type {
-        EventType::KeyPress(key) => {
-            update_modifiers(key, true);
-
-            if key == target.main_key {
-                MAIN_KEY_PRESSED.store(true, Ordering::SeqCst);
-
-                // Check if modifiers match target
-                if modifiers_match(target) {
-                    on_press();
+        EventType::KeyPress(_) => {
+            for (idx, reg) in regs.iter().enumerate() {
+                let activated = match reg.target.main_key {
+                    Some(main_key) => {
+                        key == main_key
+                            && modifiers_match(&reg.target)
+                            && !reg.active.load(Ordering::SeqCst)
+                    }
+                    None => {
+                        is_modifier_key(key)
+                            && modifiers_match(&reg.target)
+                            && !reg.active.load(Ordering::SeqCst)
+                    }
+                };
+                if activated {
+                    reg.active.store(true, Ordering::SeqCst);
+                    if idx == 0 {
+                        HOTKEY_ACTIVE.store(true, Ordering::SeqCst);
+                    }
+                    (reg.on_press)();
+                    break;
                 }
             }
         }
-        EventType::KeyRelease(key) => {
-            update_modifiers(key, false);
-
-            if key == target.main_key {
-                if MAIN_KEY_PRESSED.load(Ordering::SeqCst) {
-                    on_release();
+        EventType::KeyRelease(_) => {
+            for (idx, reg) in regs.iter().enumerate() {
+                if !reg.active.load(Ordering::SeqCst) {
+                    continue;
                 }
-                MAIN_KEY_PRESSED.store(false, Ordering::SeqCst);
+                let release = match reg.target.main_key {
+                    Some(main_key) => key == main_key,
+                    None => !modifiers_match(&reg.target),
+                };
+                if release {
+                    reg.active.store(false, Ordering::SeqCst);
+                    if idx == 0 {
+                        HOTKEY_ACTIVE.store(false, Ordering::SeqCst);
+                    }
+                    (reg.on_release)();
+                    break;
+                }
             }
         }
         _ => (),
     }
+}
+
+fn is_modifier_key(key: Key) -> bool {
+    matches!(
+        key,
+        Key::ControlLeft | Key::ControlRight | Key::Alt | Key::AltGr |
+        Key::ShiftLeft | Key::ShiftRight | Key::MetaLeft | Key::MetaRight
+    )
 }
 
 fn update_modifiers(key: Key, pressed: bool) {

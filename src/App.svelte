@@ -1,16 +1,43 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { invoke } from '@tauri-apps/api/core'
+  import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
+  import { initTelemetry } from './lib/telemetry'
   import Settings from './pages/Settings.svelte'
   import History from './pages/History.svelte'
   import Snippets from './pages/Snippets.svelte'
   import Onboarding from './pages/Onboarding.svelte'
+  import Overlay from './components/Overlay.svelte'
+  import type { AppConfig } from './types'
+
+  const isOverlay =
+    (() => {
+      try {
+        return getCurrentWebviewWindow().label === 'overlay'
+      } catch {
+        return false
+      }
+    })()
+
+  // Must run synchronously before first paint to prevent dark flash
+  if (isOverlay) {
+    document.documentElement.style.background = 'transparent'
+    document.body.style.background = 'transparent'
+    document.body.style.overflow = 'hidden'
+  }
 
   let currentPage = 'settings'
-  let isFirstRun = false
+  let isFirstRun = true
 
   onMount(async () => {
-    // Check if first run
-    // isFirstRun = await invoke('is_first_run')
+    if (isOverlay) return
+    try {
+      const config = (await invoke('get_settings')) as AppConfig
+      isFirstRun = !config.onboarding_complete
+      initTelemetry(config.privacy?.telemetry_enabled ?? false)
+    } catch {
+      isFirstRun = true
+    }
   })
 
   function navigate(page: string) {
@@ -18,8 +45,10 @@
   }
 </script>
 
-{#if isFirstRun}
-  <Onboarding />
+{#if isOverlay}
+  <Overlay />
+{:else if isFirstRun}
+  <Onboarding on:complete={() => isFirstRun = false} />
 {:else}
   <main class="app">
     <nav class="sidebar">

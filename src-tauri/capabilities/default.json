@@ -2,9 +2,10 @@
   {
     "identifier": "default",
     "description": "Default permissions for Kalam Voice",
-    "windows": ["main"],
+    "windows": ["main", "overlay"],
     "permissions": [
       "core:default",
+      "core:event:default",
       "notification:default",
       "updater:default",
       "shell:default"

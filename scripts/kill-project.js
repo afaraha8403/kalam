@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
@@ -9,83 +9,72 @@ const __dirname = dirname(__filename);
 const projectRoot = resolve(__dirname, '..');
 
 const isWindows = process.platform === 'win32';
+const VITE_PORT = 5173;
 
-console.log(`Killing processes for project: ${projectRoot}`);
+console.log(`Killing dev processes for project: ${projectRoot}\n`);
+
+function killPid(pid, label) {
+  if (!pid || isNaN(parseInt(pid))) return;
+  try {
+    if (isWindows) execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' });
+    else execSync(`kill -9 ${pid}`, { stdio: 'pipe' });
+    console.log(`Killed ${label || 'process'} ${pid}`);
+  } catch (_) {}
+}
 
 try {
   if (isWindows) {
-    // Windows: Find and kill node processes running from this project
+    // 1) Kill by port (Vite dev server)
     try {
-      // Get list of node processes with their command lines
-      const result = execSync('wmic process where "name=\'node.exe\'" get ProcessId,CommandLine /format:csv', { encoding: 'utf8' });
-      const lines = result.trim().split('\n').slice(1); // Skip header
-      
-      for (const line of lines) {
-        if (line.includes(projectRoot)) {
-          const parts = line.split(',');
-          const pid = parts[parts.length - 1]?.trim();
-          if (pid && !isNaN(parseInt(pid))) {
-            console.log(`Killing node process ${pid}`);
-            try {
-              execSync(`taskkill /F /PID ${pid}`);
-            } catch (e) {
-              // Process might already be dead
-            }
-          }
-        }
+      const out = execSync(`netstat -ano | findstr :${VITE_PORT}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+      const pids = new Set();
+      for (const line of out.split('\n')) {
+        const m = line.trim().split(/\s+/);
+        const pid = m[m.length - 1];
+        if (pid && /^\d+$/.test(pid)) pids.add(pid);
       }
-    } catch (e) {
-      // WMIC might fail, fallback to killing by name
-      console.log('Using fallback method...');
+      pids.forEach((pid) => killPid(pid, 'port ' + VITE_PORT));
+    } catch (_) {
+      // No process on port
     }
 
-    // Kill common process names
-    const processesToKill = ['node.exe', 'tauri.exe', 'cargo.exe', 'rustc.exe'];
-    for (const proc of processesToKill) {
-      try {
-        execSync(`taskkill /F /IM ${proc} 2>nul`);
-        console.log(`Killed ${proc}`);
-      } catch (e) {
-        // Process not running
-      }
+    // 2) Kill any process whose command line contains this project path (node, cargo, kalam-voice, etc.)
+    const ps = spawnSync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($env:KILL_PROJECT_ROOT) } | ForEach-Object { $_.ProcessId }`,
+      ],
+      { encoding: 'utf8', env: { ...process.env, KILL_PROJECT_ROOT: projectRoot } }
+    );
+    if (ps.stdout && ps.status === 0) {
+      const selfPid = String(process.pid);
+      const pids = ps.stdout.trim().split(/\r?\n/).filter((p) => p && p !== selfPid);
+      for (const pid of pids) killPid(pid, 'project');
     }
   } else {
-    // macOS/Linux
-    // Kill processes that have this project path in their command line
+    // macOS/Linux: kill by port first
     try {
-      const result = execSync(`ps aux | grep -E '(node|tauri|cargo)' | grep -v grep | grep "${projectRoot}"`, { encoding: 'utf8' });
-      const lines = result.trim().split('\n');
-      
-      for (const line of lines) {
-        const parts = line.trim().split(/\s+/);
-        const pid = parts[1];
-        if (pid && !isNaN(parseInt(pid))) {
-          console.log(`Killing process ${pid}: ${parts.slice(10).join(' ')}`);
-          try {
-            execSync(`kill -9 ${pid}`);
-          } catch (e) {
-            // Process might already be dead
-          }
-        }
-      }
-    } catch (e) {
-      // No matching processes
-    }
+      const pids = execSync(`lsof -ti:${VITE_PORT}`, { encoding: 'utf8' }).trim().split(/\s+/).filter(Boolean);
+      pids.forEach((pid) => killPid(pid, 'port ' + VITE_PORT));
+    } catch (_) {}
 
-    // Also try killing by port (Vite default 5173, Tauri default 1420)
+    // Then processes with project path in command line
     try {
-      execSync('lsof -ti:5173 | xargs kill -9 2>/dev/null');
-      console.log('Killed process on port 5173');
-    } catch (e) {}
-    
-    try {
-      execSync('lsof -ti:1420 | xargs kill -9 2>/dev/null');
-      console.log('Killed process on port 1420');
-    } catch (e) {}
+      const result = execSync(
+        `ps -eo pid,args | grep -E '(node|tauri|cargo|vite|kalam)' | grep -v grep | grep "${projectRoot}"`,
+        { encoding: 'utf8' }
+      );
+      for (const line of result.trim().split('\n')) {
+        const pid = line.trim().split(/\s+/)[0];
+        if (pid && pid !== String(process.pid)) killPid(pid, 'project');
+      }
+    } catch (_) {}
   }
 
-  console.log('Done!');
-} catch (error) {
-  console.error('Error killing processes:', error.message);
+  console.log('\nDone.');
+} catch (err) {
+  console.error('Error:', err.message);
   process.exit(1);
 }

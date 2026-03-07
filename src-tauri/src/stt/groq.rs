@@ -26,23 +26,33 @@ impl GroqProvider {
 }
 
 impl STTProvider for GroqProvider {
-    fn transcribe_blocking(&self, audio: &[f32]) -> anyhow::Result<TranscriptionResult> {
-        // Convert f32 samples to i16 for WAV
+    fn transcribe_blocking(
+        &self,
+        audio: &[f32],
+        sample_rate: u32,
+        prompt: Option<&str>,
+        language_hint: Option<&str>,
+    ) -> anyhow::Result<TranscriptionResult> {
         let samples_i16: Vec<i16> = audio
             .iter()
             .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
             .collect();
 
-        // Create WAV file in memory
-        let wav_data = create_wav(&samples_i16, 16000, 1)?;
+        log::info!("Creating WAV: {} samples at {}Hz", samples_i16.len(), sample_rate);
+        let wav_data = create_wav(&samples_i16, sample_rate, 1)?;
 
-        let form = Form::new()
+        let mut form = Form::new()
             .part("file", Part::bytes(wav_data)
                 .file_name("audio.wav")
                 .mime_str("audio/wav")?)
             .text("model", self.model.clone())
-            .text("language", "auto")
             .text("response_format", "verbose_json");
+        if let Some(lang) = language_hint {
+            form = form.text("language", lang.to_string());
+        }
+        if let Some(p) = prompt {
+            form = form.text("prompt", p.to_string());
+        }
 
         let response = self.client
             .post("https://api.groq.com/openai/v1/audio/transcriptions")
@@ -51,8 +61,9 @@ impl STTProvider for GroqProvider {
             .send()?;
 
         if !response.status().is_success() {
-            let error_text = response.text()?;
-            return Err(anyhow::anyhow!("Groq API error: {}", error_text));
+            let status = response.status();
+            let _ = response.text(); // consume body
+            return Err(anyhow::anyhow!("Groq API error: status {}", status));
         }
 
         let result: GroqResponse = response.json()?;

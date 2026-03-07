@@ -4,9 +4,8 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, SupportedStreamConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-use super::resample::Resampler;
+use super::resample::{self, Resampler};
 use super::vad::{VADConfig, VADProcessor};
 
 const TARGET_SAMPLE_RATE: u32 = 16000;
@@ -15,7 +14,7 @@ pub struct AudioCapture {
     device: cpal::Device,
     config: SupportedStreamConfig,
     is_recording: Arc<AtomicBool>,
-    audio_buffer: Arc<Mutex<Vec<f32>>>,
+    audio_buffer: Arc<std::sync::Mutex<Vec<f32>>>,
     resampler: Option<Resampler>,
     _vad: VADProcessor,
     _stream: Option<cpal::Stream>,
@@ -25,7 +24,8 @@ unsafe impl Send for AudioCapture {}
 unsafe impl Sync for AudioCapture {}
 
 impl AudioCapture {
-    pub fn new() -> anyhow::Result<Self> {
+    /// Create capture with the given VAD config (from STTConfig::vad_config()).
+    pub fn new(vad_config: VADConfig) -> anyhow::Result<Self> {
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -34,13 +34,13 @@ impl AudioCapture {
         let config = device.default_input_config()?;
         log::info!("Default input config: {:?}", config);
 
-        let vad = VADProcessor::new(VADConfig::default())?;
+        let vad = VADProcessor::new(vad_config)?;
 
         Ok(Self {
             device,
             config,
             is_recording: Arc::new(AtomicBool::new(false)),
-            audio_buffer: Arc::new(Mutex::new(Vec::new())),
+            audio_buffer: Arc::new(std::sync::Mutex::new(Vec::new())),
             resampler: None,
             _vad: vad,
             _stream: None,
@@ -51,7 +51,7 @@ impl AudioCapture {
         let host = cpal::default_host();
         
         // Get the new device
-        let new_device = if device_id == "default" || device_id.is_empty() {
+        let new_device = if device_id == "default" || device_id.is_empty() || device_id == "null" {
             host.default_input_device()
                 .ok_or_else(|| anyhow::anyhow!("No default input device available"))?
         } else {
@@ -81,14 +81,42 @@ impl AudioCapture {
         Ok(())
     }
 
+    /// If the current device (by id) is no longer available, switch to system default.
+    /// Returns true if fallback was performed (caller should update config and notify).
+    pub fn try_fallback_if_disconnected(&mut self, current_device_id: Option<&str>) -> bool {
+        let device_id = match current_device_id {
+            None | Some("") | Some("default") | Some("null") => return false,
+            Some(id) => id,
+        };
+        if !device_id.starts_with("device_") {
+            return false;
+        }
+        let n: usize = match device_id["device_".len()..].parse() {
+            Ok(x) => x,
+            Err(_) => return false,
+        };
+        let host = cpal::default_host();
+        let count = match host.input_devices() {
+            Ok(devices) => devices.count(),
+            Err(_) => return false,
+        };
+        if count <= n {
+            if self.set_device("default").is_ok() {
+                log::info!("Audio device {} disconnected, fell back to default", device_id);
+                return true;
+            }
+        }
+        false
+    }
+
     pub async fn start_recording(&mut self) -> anyhow::Result<()> {
         if self.is_recording.load(Ordering::SeqCst) {
             return Ok(());
         }
 
-        // Clear buffer
+        // Clear buffer (std::sync::Mutex so cpal callback can push without Tokio)
         {
-            let mut buffer = self.audio_buffer.lock().await;
+            let mut buffer = self.audio_buffer.lock().unwrap();
             buffer.clear();
         }
 
@@ -113,45 +141,73 @@ impl AudioCapture {
         Ok(())
     }
 
-    pub async fn stop_recording(&mut self) -> anyhow::Result<Vec<f32>> {
+    /// Returns (samples, sample_rate). Sample rate is always 16000 when resampling was applied.
+    pub async fn stop_recording(&mut self) -> anyhow::Result<(Vec<f32>, u32)> {
         self.is_recording.store(false, Ordering::SeqCst);
 
-        // Wait a moment for final samples
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Drop the stream to stop recording
+        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
         self._stream = None;
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-        let buffer = self.audio_buffer.lock().await;
-        Ok(buffer.clone())
+        let buffer = self.audio_buffer.lock().unwrap().clone();
+        let device_rate = self.config.config().sample_rate.0;
+
+        if device_rate == TARGET_SAMPLE_RATE {
+            return Ok((buffer, device_rate));
+        }
+        let resampled = resample::resample_to_16k_mono(&buffer, device_rate)?;
+        Ok((resampled, TARGET_SAMPLE_RATE))
     }
 
-    pub async fn test_microphone(&mut self) -> anyhow::Result<f32> {
-        // Quick 1-second test to get audio level
-        self.start_recording().await?;
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let audio = self.stop_recording().await?;
+    pub fn get_sample_rate(&self) -> u32 {
+        self.config.config().sample_rate.0
+    }
 
-        // Calculate RMS level
+    /// Current input level (0–1) from recent buffer. Use while recording for a live meter.
+    /// Uses last ~100ms of audio so the value reflects current volume.
+    pub fn get_current_recording_level(&self) -> f32 {
+        if !self.is_recording.load(Ordering::SeqCst) {
+            return 0.0;
+        }
+        let buffer = self.audio_buffer.lock().unwrap();
+        let sample_rate = self.get_sample_rate() as usize;
+        let window_samples = (sample_rate / 10).max(256); // ~100ms or at least 256 samples
+        let start = buffer.len().saturating_sub(window_samples);
+        let slice = &buffer[start..];
+        if slice.is_empty() {
+            return 0.0;
+        }
+        let sum: f32 = slice.iter().map(|s| s * s).sum();
+        let rms = (sum / slice.len() as f32).sqrt();
+        // Scale so normal speech (~0.02–0.1 RMS) gives ~20–80%; shouting can hit 100%
+        let normalized = (rms * 10.0).min(1.0);
+        normalized
+    }
+
+    /// Stop recording and return (level 0-1, samples, sample_rate) for test playback.
+    pub async fn stop_and_get_test_result(&mut self) -> anyhow::Result<(f32, Vec<f32>, u32)> {
+        let (audio, sample_rate) = self.stop_recording().await?;
+
         if audio.is_empty() {
-            return Ok(0.0);
+            return Ok((0.0, vec![], sample_rate));
         }
 
         let sum: f32 = audio.iter().map(|s| s * s).sum();
         let rms = (sum / audio.len() as f32).sqrt();
-        
-        log::info!("Microphone test captured {} samples, RMS level: {}", audio.len(), rms);
-        
-        // Normalize to 0-1 range (typical RMS values are 0-0.3 for normal speech)
-        let normalized = (rms * 3.0).min(1.0);
-        
-        Ok(normalized)
+        log::info!(
+            "Test stopped: {} samples, RMS: {}, sample_rate: {}",
+            audio.len(),
+            rms,
+            sample_rate
+        );
+        let normalized = (rms * 10.0).min(1.0);
+        Ok((normalized, audio, sample_rate))
     }
 
     fn build_stream_f32(
         &self,
         is_recording: Arc<AtomicBool>,
-        audio_buffer: Arc<Mutex<Vec<f32>>>,
+        audio_buffer: Arc<std::sync::Mutex<Vec<f32>>>,
         channels: u16,
     ) -> anyhow::Result<cpal::Stream> {
         let err_fn = |err| eprintln!("Stream error: {}", err);
@@ -172,13 +228,10 @@ impl AudioCapture {
                     data.to_vec()
                 };
 
-                // Store in buffer (async runtime handle)
-                let buffer = audio_buffer.clone();
-                let mono = mono_data.clone();
-                tokio::spawn(async move {
-                    let mut buf = buffer.lock().await;
-                    buf.extend_from_slice(&mono);
-                });
+                // Store in buffer (std::sync::Mutex: callback runs on cpal thread, no Tokio)
+                if let Ok(mut buf) = audio_buffer.lock() {
+                    buf.extend_from_slice(&mono_data);
+                }
             },
             err_fn,
             None,
@@ -190,7 +243,7 @@ impl AudioCapture {
     fn build_stream_i16(
         &self,
         is_recording: Arc<AtomicBool>,
-        audio_buffer: Arc<Mutex<Vec<f32>>>,
+        audio_buffer: Arc<std::sync::Mutex<Vec<f32>>>,
         channels: u16,
     ) -> anyhow::Result<cpal::Stream> {
         let err_fn = |err| eprintln!("Stream error: {}", err);
@@ -213,12 +266,9 @@ impl AudioCapture {
                     data.iter().map(|&s| s as f32 / 32768.0).collect()
                 };
 
-                let buffer = audio_buffer.clone();
-                let mono = mono_data.clone();
-                tokio::spawn(async move {
-                    let mut buf = buffer.lock().await;
-                    buf.extend_from_slice(&mono);
-                });
+                if let Ok(mut buf) = audio_buffer.lock() {
+                    buf.extend_from_slice(&mono_data);
+                }
             },
             err_fn,
             None,
@@ -230,7 +280,7 @@ impl AudioCapture {
     fn build_stream_u16(
         &self,
         is_recording: Arc<AtomicBool>,
-        audio_buffer: Arc<Mutex<Vec<f32>>>,
+        audio_buffer: Arc<std::sync::Mutex<Vec<f32>>>,
         channels: u16,
     ) -> anyhow::Result<cpal::Stream> {
         let err_fn = |err| eprintln!("Stream error: {}", err);
@@ -253,12 +303,9 @@ impl AudioCapture {
                     data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).collect()
                 };
 
-                let buffer = audio_buffer.clone();
-                let mono = mono_data.clone();
-                tokio::spawn(async move {
-                    let mut buf = buffer.lock().await;
-                    buf.extend_from_slice(&mono);
-                });
+                if let Ok(mut buf) = audio_buffer.lock() {
+                    buf.extend_from_slice(&mono_data);
+                }
             },
             err_fn,
             None,
