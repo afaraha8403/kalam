@@ -6,13 +6,15 @@ export interface LoggingConfig {
   max_records: number
 }
 
-export type WaveformStyle = 'Line' | 'Symmetric' | 'Heartbeat' | 'Snake' | 'DoubleHelix' | 'Liquid' | 'Glitch' | 'Bars' | 'CenterSplit'
+export type WaveformStyle = 'Line' | 'Symmetric' | 'Heartbeat' | 'Snake' | 'DoubleHelix' | 'Liquid' | 'Waves' | 'Glitch' | 'Bars' | 'CenterSplit'
 export type OverlayPosition = 'BottomCenter' | 'BottomLeft' | 'BottomRight' | 'TopCenter' | 'TopLeft' | 'TopRight' | 'CenterLeft' | 'CenterRight' | 'Center'
 export type ExpandDirection = 'Up' | 'Down' | 'Center'
 
 export interface AppConfig {
   hotkey: string
   recording_mode: 'Hold' | 'Toggle'
+  /** Master switch: when false, hotkeys and transcription are disabled. */
+  dictation_enabled: boolean
   audio_device: string | null
   stt_config: STTConfig
   formatting: FormattingConfig
@@ -27,6 +29,12 @@ export interface AppConfig {
   start_in_focus: boolean
   min_hold_ms: number
   onboarding_complete?: boolean
+  /** User email (required at onboarding). */
+  user_email?: string | null
+  /** Opt-in to marketing. Default false. */
+  marketing_opt_in?: boolean
+  /** Opt-in to product notifications and updates. Default false. */
+  notifications_opt_in?: boolean
   waveform_style?: WaveformStyle
   overlay_position?: OverlayPosition
   overlay_offset_x?: number

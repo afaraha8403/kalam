@@ -39,6 +39,22 @@ pub struct AppConfig {
     pub overlay_offset_y: i32,
     #[serde(default)]
     pub overlay_expand_direction: ExpandDirection,
+    /// Master switch: when false, hotkeys and transcription are disabled.
+    #[serde(default = "default_dictation_enabled")]
+    pub dictation_enabled: bool,
+    /// User email collected at onboarding (required to use the app).
+    #[serde(default)]
+    pub user_email: Option<String>,
+    /// Opt-in to marketing communications. Default false.
+    #[serde(default)]
+    pub marketing_opt_in: bool,
+    /// Opt-in to product notifications and updates. Default false (opt-out by default).
+    #[serde(default)]
+    pub notifications_opt_in: bool,
+}
+
+fn default_dictation_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -72,6 +88,7 @@ pub enum WaveformStyle {
     Snake,
     DoubleHelix,
     Liquid,
+    Waves,
     Glitch,
     Bars,
     CenterSplit,
@@ -121,6 +138,10 @@ impl Default for AppConfig {
             overlay_offset_x: 0,
             overlay_offset_y: 0,
             overlay_expand_direction: ExpandDirection::default(),
+            dictation_enabled: true,
+            user_email: None,
+            marketing_opt_in: false,
+            notifications_opt_in: false,
         }
     }
 }

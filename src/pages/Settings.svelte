@@ -506,6 +506,7 @@
               <option value="Snake">Snake</option>
               <option value="DoubleHelix">Double Helix</option>
               <option value="Liquid">Liquid</option>
+              <option value="Waves">Waves</option>
               <option value="Glitch">Glitch</option>
               <option value="Bars">Bars</option>
               <option value="CenterSplit">Center Split</option>

@@ -257,11 +257,16 @@ pub fn run() {
                         let rt = rt_for_press.clone();
                         rt.spawn(async move {
                             let state = app_handle.state::<AppState>();
+                            let (dictation_enabled, recording_mode) = {
+                                let config = state.config.lock().await;
+                                let cfg = config.get_all();
+                                (cfg.dictation_enabled, cfg.recording_mode.clone())
+                            };
+                            if !dictation_enabled {
+                                return;
+                            }
                             *state.press_start_time.lock().await = Some(std::time::Instant::now());
-                            let config = state.config.lock().await;
-                            let cfg = config.get_all();
-                            drop(config);
-                            match cfg.recording_mode {
+                            match recording_mode {
                                 crate::config::RecordingMode::Hold => {
                                     start_dictation(state, is_recording).await;
                                 }
@@ -278,6 +283,12 @@ pub fn run() {
                             let rt = rt_for_release.clone();
                             rt.spawn(async move {
                                 let state = app_handle.state::<AppState>();
+                                {
+                                    let config = state.config.lock().await;
+                                    if !config.get_all().dictation_enabled {
+                                        return;
+                                    }
+                                }
                                 let min_hold_ms = {
                                     let config = state.config.lock().await;
                                     config.get_all().min_hold_ms
@@ -299,7 +310,7 @@ pub fn run() {
                                         let app_for_overlay = state.app_handle.clone();
                                         tauri::async_runtime::spawn(async move {
                                             tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
-                                            emit_overlay_event(&app_for_overlay, OverlayEvent::Collapsed);
+                                            reset_overlay_state(&app_for_overlay);
                                         });
                                     }
                                 } else {
@@ -327,6 +338,9 @@ pub fn run() {
                                     let state = app_handle.state::<AppState>();
                                     let mut config_mgr = state.config.lock().await;
                                     let mut cfg = config_mgr.get_all();
+                                    if !cfg.dictation_enabled {
+                                        return;
+                                    }
                                     if cfg.languages.len() >= 2 {
                                         cfg.languages.swap(0, 1);
                                         let label = language_display_name(&cfg.languages[0]);
@@ -357,12 +371,14 @@ pub fn run() {
             if let Err(e) = show_overlay(&app.handle()) {
                 log::warn!("Failed to show overlay on startup: {}", e);
             }
-            emit_overlay_event(&app.handle(), OverlayEvent::Collapsed);
+            reset_overlay_state(&app.handle());
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_platform,
+            get_app_version,
+            check_for_updates,
             request_system_permission,
             open_system_permission_page,
             get_settings,
@@ -424,6 +440,19 @@ pub async fn run_update_check(app: &tauri::AppHandle) -> anyhow::Result<()> {
 #[tauri::command]
 fn get_platform() -> String {
     std::env::consts::OS.to_string()
+}
+
+#[tauri::command]
+fn get_app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+/// Check for updates; returns new version if available, None if up to date, Err on failure.
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let updater = app.updater().map_err(|e| format!("{:?}", e))?;
+    let update = updater.check().await.map_err(|e| format!("{:?}", e))?;
+    Ok(update.as_ref().map(|u| u.version.clone()))
 }
 
 /// Request a system permission using OS-native methods when available.
@@ -604,13 +633,27 @@ async fn save_settings(
     match config.save(config_to_save.clone()) {
         Ok(_) => {
             app_log::reconfigure(config.get_all().logging.clone());
-            let _ = state.app_handle.emit("settings_updated", config_to_save);
+            let _ = state.app_handle.emit("settings_updated", &config_to_save);
             
             // Drop the lock before calling update_overlay_position
             // to avoid blocking the async runtime
             drop(config);
             let _ = update_overlay_position(&state.app_handle);
             
+            reset_overlay_state(&state.app_handle);
+            
+            if !config_to_save.dictation_enabled {
+                // If dictation was turned off while recording, abort it immediately
+                if state.is_recording.load(Ordering::SeqCst) {
+                    log::info!("Dictation disabled while recording, aborting dictation...");
+                    state.is_recording.store(false, Ordering::SeqCst);
+                    let mut audio_state = state.audio_state.lock().await;
+                    *audio_state = AudioState::Idle;
+                    let _ = state.audio_capture.lock().await.stop_recording().await;
+                    let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Idle);
+                }
+            }
+
             log::info!("=== SAVE_SETTINGS SUCCESS ===");
             Ok(())
         }
@@ -866,6 +909,7 @@ const OVERLAY_BOTTOM_MARGIN: i32 = 24;
 #[derive(serde::Serialize, Clone)]
 #[serde(tag = "kind")]
 enum OverlayEvent {
+    Hidden,
     Collapsed,
     Listening,
     ShortPress,
@@ -879,6 +923,20 @@ enum OverlayEvent {
 fn emit_overlay_event(app: &tauri::AppHandle, event: OverlayEvent) {
     // Emit only to the overlay window so it always receives the event
     let _ = app.emit_to(OVERLAY_LABEL, "overlay-state", event);
+}
+
+fn reset_overlay_state(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let dictation_enabled = if let Ok(config) = state.config.try_lock() {
+        config.get_all().dictation_enabled
+    } else {
+        true // default fallback
+    };
+    if dictation_enabled {
+        emit_overlay_event(app, OverlayEvent::Collapsed);
+    } else {
+        emit_overlay_event(app, OverlayEvent::Hidden);
+    }
 }
 
 fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
@@ -1184,7 +1242,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                 let app_for_overlay = state.app_handle.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-                    emit_overlay_event(&app_for_overlay, OverlayEvent::Collapsed);
+                    reset_overlay_state(&app_for_overlay);
                 });
                 return;
             }
@@ -1237,7 +1295,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                         let app_for_overlay = app_handle.clone();
                         tauri::async_runtime::spawn(async move {
                             tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-                            emit_overlay_event(&app_for_overlay, OverlayEvent::Collapsed);
+                            reset_overlay_state(&app_for_overlay);
                         });
                         return;
                     }
@@ -1330,7 +1388,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
             let app_for_overlay = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
-                emit_overlay_event(&app_for_overlay, OverlayEvent::Collapsed);
+                reset_overlay_state(&app_for_overlay);
             });
         });
     } else {

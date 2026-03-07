@@ -8,6 +8,7 @@
   import Settings from './pages/Settings.svelte'
   import Home from './pages/Home.svelte'
   import Snippets from './pages/Snippets.svelte'
+  import About from './pages/About.svelte'
   import Onboarding from './pages/Onboarding.svelte'
   import Overlay from './components/Overlay.svelte'
   import Icon from '@iconify/svelte'
@@ -31,6 +32,7 @@
 
   let currentPage = 'home'
   let isFirstRun = true
+  let dictationEnabled = true
 
   onMount(() => {
     if (isOverlay) return
@@ -42,6 +44,7 @@
       try {
         const config = (await invoke('get_settings')) as AppConfig
         isFirstRun = !config.onboarding_complete
+        dictationEnabled = config.dictation_enabled ?? true
         initTelemetry(config.privacy?.telemetry_enabled ?? false)
         const platform = (await invoke('get_platform')) as string
         sidebarDictationStore.updateFromConfig(config, platform)
@@ -62,10 +65,23 @@
     isFirstRun = false
     try {
       const config = (await invoke('get_settings')) as AppConfig
+      dictationEnabled = config.dictation_enabled ?? true
       const platform = (await invoke('get_platform')) as string
       sidebarDictationStore.updateFromConfig(config, platform)
     } catch {
       // keep store as-is
+    }
+  }
+
+  async function setDictation(next: boolean) {
+    if (dictationEnabled === next) return;
+    dictationEnabled = next;
+    try {
+      const config = (await invoke('get_settings')) as AppConfig;
+      await invoke('save_settings', { newConfig: { ...config, dictation_enabled: next } });
+    } catch (e) {
+      console.error('Failed to save dictation state:', e);
+      dictationEnabled = !next;
     }
   }
 </script>
@@ -103,8 +119,25 @@
             <p>Press <kbd>{displayHotkey($sidebarDictationStore.languageToggleHotkey, $sidebarDictationStore.platform)}</kbd> to switch language</p>
           {/if}
         </div>
+
+        <div class="dictation-control" title="Turn dictation and hotkeys on or off">
+          <div class="dictation-info">
+            <Icon icon="ph:microphone-stage-duotone" class="nav-icon" />
+            <span class="nav-text">Dictation</span>
+          </div>
+          <div class="tab-selector">
+            <button type="button" class="tab" class:active={dictationEnabled} on:click={() => setDictation(true)}>On</button>
+            <button type="button" class="tab" class:active={!dictationEnabled} on:click={() => setDictation(false)}>Off</button>
+          </div>
+        </div>
         
         <ul class="nav-links settings-link">
+          <li class:active={currentPage === 'about'}>
+            <button on:click={() => navigate('about')} title="About">
+              <Icon icon="ph:info-duotone" class="nav-icon" />
+              <span class="nav-text">About</span>
+            </button>
+          </li>
           <li class:active={currentPage === 'settings'}>
             <button on:click={() => navigate('settings')} title="Settings">
               <Icon icon="ph:gear-duotone" class="nav-icon" />
@@ -122,6 +155,8 @@
         <Settings />
       {:else if currentPage === 'snippets'}
         <Snippets />
+      {:else if currentPage === 'about'}
+        <About />
       {/if}
     </div>
   </main>
@@ -270,6 +305,60 @@
     gap: 16px;
   }
 
+  .dictation-control {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px 8px 16px;
+    background: transparent;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    transition: background 0.2s;
+  }
+
+  .dictation-control:hover {
+    background: var(--bg-input);
+  }
+
+  .dictation-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 500;
+  }
+
+  .tab-selector {
+    display: flex;
+    background: var(--bg-app);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    gap: 2px;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .tab-selector .tab {
+    border: none;
+    background: transparent;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-radius: calc(var(--radius-sm) - 2px);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .tab-selector .tab:hover:not(.active) {
+    color: var(--text-primary);
+  }
+
+  .tab-selector .tab.active {
+    background: var(--bg-card);
+    color: var(--navy-deep);
+    box-shadow: var(--shadow-sm);
+  }
+
   .settings-link {
     flex: none;
   }
@@ -350,6 +439,34 @@
 
     .footer {
       display: none; /* Hide hotkey hints on small screens */
+    }
+
+    .dictation-control {
+      padding: 8px 4px;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 12px;
+      width: 100%;
+    }
+
+    .dictation-info .nav-text {
+      display: none;
+    }
+
+    .dictation-info {
+      gap: 0;
+    }
+
+    .tab-selector {
+      padding: 2px;
+      width: 100%;
+      flex-direction: column;
+    }
+
+    .tab-selector .tab {
+      padding: 6px 4px;
+      font-size: 11px;
+      text-align: center;
     }
 
     .content {

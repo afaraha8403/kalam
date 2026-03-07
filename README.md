@@ -2,6 +2,8 @@
 
 **Kalam** (كلام — *speech* in Arabic) is an open-source, cross-platform voice dictation application that transforms spoken language into polished text across all applications on Windows, macOS, and Linux. A free, privacy-friendly alternative to Whisperflow.
 
+> **⚠️ In development** — Kalam is still under active development. APIs, features, and UX may change. Not recommended for production use yet.
+
 ![License](https://img.shields.io/badge/license-Dual%20(MIT%20NC%20%2B%20Commercial)-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 
@@ -18,10 +20,11 @@
 
 ## Quick Start
 
-1. **Download** the latest release for your platform from [Releases](https://github.com/kalam-voice/kalam/releases)
-2. **Install** and launch the app
-3. **Configure** your API key (for cloud mode) or download a local model
-4. **Press** `Ctrl+Win` (or `Ctrl+Cmd` on macOS) to start dictating
+There are no releases yet. To try Kalam, build from source (see [Development](#development) below):
+
+1. **Clone**, install dependencies, and run `npm run tauri:dev`
+2. **Configure** your API key (for cloud mode) or download a local model in Settings
+3. **Press** `Ctrl+Win` (or `Ctrl+Cmd` on macOS) to start dictating
 
 ## Development
 
@@ -80,7 +83,7 @@ Local mode works without any API key!
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+Contributions are welcome. Open an issue or PR to get started.
 
 ## License
 
@@ -92,9 +95,3 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - [Groq](https://groq.com/) for fast STT API
 - [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) for local STT
 - All our contributors and supporters!
-
----
-
-<p align="center">
-  Made with ❤️ by the Kalam team
-</p>

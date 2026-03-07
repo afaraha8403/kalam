@@ -5,8 +5,9 @@
   import { listen } from '@tauri-apps/api/event'
   import type { AppConfig, WaveformStyle, ExpandDirection } from '../types'
 
-  const KINDS = ['Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error'] as const
+  const KINDS = ['Hidden', 'Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error'] as const
   type OverlayEvent =
+    | { kind: 'Hidden' }
     | { kind: 'Collapsed' }
     | { kind: 'Listening' }
     | { kind: 'ShortPress' }
@@ -15,7 +16,7 @@
     | { kind: 'Success' }
     | { kind: 'Error'; message: string }
 
-  let state: OverlayEvent = { kind: 'Collapsed' }
+  let state: OverlayEvent = { kind: 'Hidden' }
   let prevLevel = 0
   let smoothLevel = 0
   let waveformStyle: WaveformStyle = 'Heartbeat'
@@ -35,7 +36,7 @@
 
   $: rawLevel = state.kind === 'Recording' ? Number(state.level) || 0 : 0
 
-  $: isExpanded = state.kind !== 'Collapsed'
+  $: isExpanded = state.kind !== 'Collapsed' && state.kind !== 'Hidden'
 
   // Rolling history of mic levels for the live wave
   const WAVE_POINTS = 100
@@ -88,6 +89,7 @@
     
     let points = ''
     let points2 = ''
+    let points3 = ''
     let bars: {x: number, y: number, w: number, h: number}[] = []
 
     if (waveformStyle === 'Symmetric') {
@@ -132,6 +134,33 @@
         return `${i},${Math.max(1, Math.min(23, y))}`
       }).join(' ')
       points = `0,24 ${topEdge} ${WAVE_POINTS - 1},24`
+    } else if (waveformStyle === 'Waves') {
+      const amplitude = 16
+      const freq1 = 0.04
+      const freq2 = 0.06
+      const freq3 = 0.09
+      
+      const topEdge1 = padded.map((l, i) => {
+        const wave = Math.sin(i * freq1 - snakeOffset * 0.8) * 3
+        const y = centerY + 4 - l * amplitude + wave
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
+      
+      const topEdge2 = padded.map((l, i) => {
+        const wave = Math.sin(i * freq2 - snakeOffset * 1.2 + Math.PI/3) * 4
+        const y = centerY + 7 - l * (amplitude * 0.8) + wave
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
+
+      const topEdge3 = padded.map((l, i) => {
+        const wave = Math.sin(i * freq3 - snakeOffset * 1.6 + Math.PI) * 2
+        const y = centerY + 10 - l * (amplitude * 0.5) + wave
+        return `${i},${Math.max(1, Math.min(23, y))}`
+      }).join(' ')
+
+      points = `0,24 ${topEdge1} ${WAVE_POINTS - 1},24`
+      points2 = `0,24 ${topEdge2} ${WAVE_POINTS - 1},24`
+      points3 = `0,24 ${topEdge3} ${WAVE_POINTS - 1},24`
     } else if (waveformStyle === 'Glitch') {
       const amplitude = 20
       points = padded.map((l, i) => {
@@ -162,7 +191,7 @@
       }).join(' ')
     }
 
-    return { points, points2, bars }
+    return { points, points2, points3, bars }
   })()
 
   onMount(() => {
@@ -211,6 +240,7 @@
   })
 </script>
 
+{#if state.kind !== 'Hidden'}
 <div class="blip-root" class:expand-up={expandDirection === 'Up'} class:expand-down={expandDirection === 'Down'} class:expand-center={expandDirection === 'Center'}>
   <div
     class="blip"
@@ -253,28 +283,34 @@
               </feMerge>
             </filter>
           </defs>
-          {#if waveformStyle === 'DoubleHelix'}
-            <polyline class="wave-line" points={waveData.points} fill="none" stroke="url(#wave-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" />
-            <polyline class="wave-line" points={waveData.points2} fill="none" stroke="url(#wave-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" opacity="0.5" />
-          {:else if waveformStyle === 'Liquid'}
-            <polygon class="wave-line" points={waveData.points} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="0.8" />
-          {:else if waveformStyle === 'Bars'}
-            {#each waveData.bars as bar}
-              <rect x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill="url(#wave-grad)" rx="1.5" filter="url(#wave-glow)" />
-            {/each}
-          {:else}
-            <polyline
-              class="wave-line"
-              class:filled={waveformStyle === 'Symmetric'}
-              points={waveData.points}
-              fill={waveformStyle === 'Symmetric' ? "url(#wave-grad)" : "none"}
-              stroke={waveformStyle === 'Symmetric' ? "none" : "url(#wave-grad)"}
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              filter="url(#wave-glow)"
-            />
-          {/if}
+          <g>
+            {#if waveformStyle === 'DoubleHelix'}
+              <polyline class="wave-line" points={waveData.points} fill="none" stroke="url(#wave-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" />
+              <polyline class="wave-line" points={waveData.points2} fill="none" stroke="url(#wave-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" opacity="0.5" />
+            {:else if waveformStyle === 'Liquid'}
+              <polygon class="wave-line" points={waveData.points} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="0.8" />
+            {:else if waveformStyle === 'Waves'}
+              <polygon class="wave-line" points={waveData.points3} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="0.4" />
+              <polygon class="wave-line" points={waveData.points2} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="0.7" />
+              <polygon class="wave-line" points={waveData.points} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="1.0" />
+            {:else if waveformStyle === 'Bars'}
+              {#each waveData.bars as bar}
+                <rect x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill="url(#wave-grad)" rx="1.5" filter="url(#wave-glow)" />
+              {/each}
+            {:else}
+              <polyline
+                class="wave-line"
+                class:filled={waveformStyle === 'Symmetric'}
+                points={waveData.points}
+                fill={waveformStyle === 'Symmetric' ? "url(#wave-grad)" : "none"}
+                stroke={waveformStyle === 'Symmetric' ? "none" : "url(#wave-grad)"}
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                filter="url(#wave-glow)"
+              />
+            {/if}
+          </g>
         </svg>
       </div>
     {:else if state.kind === 'Processing'}
@@ -298,6 +334,7 @@
     {/if}
   </div>
 </div>
+{/if}
 
 <style>
   /* Overlay window only: force full transparency, no box/border */
