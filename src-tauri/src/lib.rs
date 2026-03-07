@@ -379,6 +379,7 @@ pub fn run() {
             get_app_log,
             get_app_log_empty,
             open_app_data_folder,
+            reset_application,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -624,6 +625,30 @@ fn get_app_log() -> Result<String, String> {
 #[tauri::command]
 fn get_app_log_empty() -> Result<bool, String> {
     Ok(app_log::is_empty())
+}
+
+#[tauri::command]
+async fn reset_application(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let kalam_dir = crate::config::get_kalam_dir().map_err(|e| e.to_string())?;
+    let config_path = kalam_dir.join("config.json");
+    let _ = std::fs::remove_file(&config_path);
+
+    if let Err(e) = history::delete_all_persisted_data() {
+        log::warn!("reset_application: failed to delete history data: {}", e);
+    }
+
+    if let Err(e) = state.audio_capture.lock().await.set_device("") {
+        log::warn!("reset_application: failed to set default audio device: {}", e);
+    }
+
+    let default_config = AppConfig::default();
+    let mut config = state.config.lock().await;
+    config.save(default_config.clone()).map_err(|e| e.to_string())?;
+    app_log::reconfigure(config.get_all().logging.clone());
+    drop(config);
+    let _ = state.app_handle.emit("app_reset", ());
+    let _ = update_overlay_position(&state.app_handle);
+    Ok(())
 }
 
 #[tauri::command]

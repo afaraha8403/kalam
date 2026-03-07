@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import { listen } from '@tauri-apps/api/event'
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
   import { initTelemetry } from './lib/telemetry'
   import { sidebarDictationStore, displayHotkey } from './lib/sidebarDictation'
@@ -32,6 +33,9 @@
 
   onMount(async () => {
     if (isOverlay) return
+    const unlistenReset = await listen('app_reset', () => {
+      isFirstRun = true
+    })
     try {
       const config = (await invoke('get_settings')) as AppConfig
       isFirstRun = !config.onboarding_complete
@@ -40,6 +44,9 @@
       sidebarDictationStore.updateFromConfig(config, platform)
     } catch {
       isFirstRun = true
+    }
+    return () => {
+      unlistenReset()
     }
   })
 

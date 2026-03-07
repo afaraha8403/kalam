@@ -2,7 +2,7 @@
 
 **Kalam** (كلام — *speech* in Arabic) is an open-source, cross-platform voice dictation application that transforms spoken language into polished text across all applications on Windows, macOS, and Linux. A free, privacy-friendly alternative to Whisperflow.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![License](https://img.shields.io/badge/license-Dual%20(MIT%20NC%20%2B%20Commercial)-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 
 ## Features

@@ -23,6 +23,8 @@
   let saveError: string | null = null
   let initialLoadDone = false
   let saveDebounceId: ReturnType<typeof setTimeout> | null = null
+  let resetting = false
+  let resetError: string | null = null
 
     const tabs = [
     { id: 'general', label: 'General' },
@@ -158,6 +160,21 @@
       await invoke('open_app_data_folder')
     } catch (e) {
       console.error('Failed to open app data folder:', e)
+    }
+  }
+
+  async function confirmAndReset() {
+    if (!confirm('Reset the entire application? This will delete all settings, history, and data. You will see the onboarding again. This cannot be undone.')) return
+    resetError = null
+    resetting = true
+    try {
+      await invoke('reset_application')
+    } catch (e) {
+      console.error('Reset failed:', e)
+      const err = e as Error & { message?: string }
+      resetError = err?.message ?? String(e)
+    } finally {
+      resetting = false
     }
   }
 
@@ -715,8 +732,17 @@
 
           <div class="danger-zone">
             <h4>Danger Zone</h4>
-            <button class="btn-danger">Clear All History</button>
-            <button class="btn-danger">Reset All Settings</button>
+            <p class="hint" style="margin-bottom: 12px;">Reset removes all configuration, history, and data. You will see the onboarding again as if the app were newly installed.</p>
+            {#if resetError}
+              <p class="save-error" role="alert" style="margin-bottom: 12px;">{resetError}</p>
+            {/if}
+            <button
+              class="btn-danger"
+              disabled={resetting}
+              on:click={confirmAndReset}
+            >
+              {resetting ? 'Resetting…' : 'Reset entire application'}
+            </button>
           </div>
         </section>
 

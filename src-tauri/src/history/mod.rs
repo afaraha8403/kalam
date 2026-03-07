@@ -252,3 +252,13 @@ pub fn migrate_from_json_if_needed() -> anyhow::Result<()> {
     log::info!("Migrated history from JSON to SQLite");
     Ok(())
 }
+
+/// Remove all persisted history data (DB, key, legacy JSON). Used for full app reset.
+pub fn delete_all_persisted_data() -> anyhow::Result<()> {
+    let kalam = get_kalam_dir()?;
+    let _ = fs::remove_file(kalam.join(HISTORY_DB));
+    let _ = fs::remove_file(kalam.join(KEY_FILE));
+    let _ = fs::remove_file(kalam.join("history.json"));
+    log::info!("Deleted history DB, key, and legacy JSON");
+    Ok(())
+}
