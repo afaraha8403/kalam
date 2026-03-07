@@ -11,27 +11,21 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::db;
+use crate::models::Entry;
+
 const HISTORY_DB: &str = "history.db";
 const KEY_FILE: &str = ".key";
 const MAX_HISTORY_ENTRIES: usize = 1000;
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 
-fn get_kalam_dir() -> anyhow::Result<PathBuf> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| anyhow::anyhow!("Could not find home directory"))?;
-    let kalam_dir = PathBuf::from(home).join(".kalam");
-    fs::create_dir_all(&kalam_dir)?;
-    Ok(kalam_dir)
+fn get_legacy_db_path() -> anyhow::Result<PathBuf> {
+    Ok(crate::config::get_kalam_dir()?.join(HISTORY_DB))
 }
 
 fn get_key_path() -> anyhow::Result<PathBuf> {
-    Ok(get_kalam_dir()?.join(KEY_FILE))
-}
-
-fn get_db_path() -> anyhow::Result<PathBuf> {
-    Ok(get_kalam_dir()?.join(HISTORY_DB))
+    Ok(crate::config::get_kalam_dir()?.join(KEY_FILE))
 }
 
 fn ensure_key() -> anyhow::Result<[u8; 32]> {
@@ -74,8 +68,8 @@ fn decrypt(blob: &[u8], key: &[u8; 32]) -> anyhow::Result<String> {
     String::from_utf8(plain).map_err(|e| anyhow::anyhow!("{:?}", e))
 }
 
-fn open_db() -> anyhow::Result<Connection> {
-    let path = get_db_path()?;
+fn open_legacy_db() -> anyhow::Result<Connection> {
+    let path = get_legacy_db_path()?;
     let conn = Connection::open(&path)?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS history (
@@ -102,26 +96,51 @@ pub struct HistoryEntry {
 }
 
 pub async fn save_transcription(text: &str) -> anyhow::Result<()> {
-    let key = ensure_key()?;
-    let blob = encrypt(text, &key)?;
     let id = uuid::Uuid::new_v4().to_string();
-    let created_at = Utc::now().to_rfc3339();
+    let now = Utc::now();
+    let entry = Entry {
+        id: id.clone(),
+        entry_type: "history".to_string(),
+        created_at: now,
+        updated_at: now,
+        sync_status: "pending".to_string(),
+        title: None,
+        content: text.to_string(),
+        attachments: vec![],
+        tags: vec![],
+        color: None,
+        is_pinned: false,
+        priority: None,
+        due_date: None,
+        subtasks: None,
+        is_completed: None,
+        reminder_at: None,
+        rrule: None,
+    };
+    let conn = db::open_db()?;
+    db::insert_entry(&conn, &entry)?;
+    db::insert_embedding_stub(&conn, &id)?;
+    trim_history_if_needed(&conn)?;
+    Ok(())
+}
 
-    let conn = open_db()?;
-    conn.execute(
-        "INSERT INTO history (id, text_blob, created_at, mode, language, duration_ms)
-         VALUES (?1, ?2, ?3, 'cloud', 'auto', NULL)",
-        rusqlite::params![id, blob, created_at],
+fn trim_history_if_needed(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM entries WHERE entry_type = 'history'",
+        [],
+        |r| r.get(0),
     )?;
-
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))?;
     if count > MAX_HISTORY_ENTRIES as i64 {
         let to_delete = count - MAX_HISTORY_ENTRIES as i64;
         conn.execute(
-            "DELETE FROM history WHERE id IN (
-                SELECT id FROM history ORDER BY created_at ASC LIMIT ?1
+            "DELETE FROM entries WHERE id IN (
+                SELECT id FROM entries WHERE entry_type = 'history' ORDER BY created_at ASC LIMIT ?1
             )",
             [to_delete],
+        )?;
+        conn.execute(
+            "DELETE FROM vec_entries WHERE entry_id NOT IN (SELECT id FROM entries)",
+            [],
         )?;
     }
     Ok(())
@@ -131,23 +150,17 @@ pub async fn get_history(
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> anyhow::Result<Vec<HistoryEntry>> {
-    let key = ensure_key()?;
-    let conn = open_db()?;
+    let conn = db::open_db()?;
     let limit = limit.unwrap_or(50) as i64;
     let offset = offset.unwrap_or(0) as i64;
-
     let mut stmt = conn.prepare(
-        "SELECT id, text_blob, created_at, mode, language, duration_ms
-         FROM history ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+        "SELECT id, content, created_at FROM entries WHERE entry_type = 'history'
+         ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
     )?;
     let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
         let id: String = row.get(0)?;
-        let blob: Vec<u8> = row.get(1)?;
+        let text: String = row.get(1)?;
         let created_at: String = row.get(2)?;
-        let mode: String = row.get(3)?;
-        let language: String = row.get(4)?;
-        let duration_ms: Option<u32> = row.get(5)?;
-        let text = decrypt(&blob, &key).unwrap_or_default();
         let created_at = DateTime::parse_from_rfc3339(&created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
@@ -155,9 +168,9 @@ pub async fn get_history(
             id,
             text,
             created_at,
-            mode,
-            language,
-            duration_ms,
+            mode: "cloud".to_string(),
+            language: "auto".to_string(),
+            duration_ms: None,
         })
     })?;
     let mut entries = Vec::new();
@@ -177,8 +190,9 @@ pub async fn search(query: &str) -> anyhow::Result<Vec<HistoryEntry>> {
 }
 
 pub async fn clear() -> anyhow::Result<()> {
-    let conn = open_db()?;
-    conn.execute("DELETE FROM history", [])?;
+    let conn = db::open_db()?;
+    conn.execute("DELETE FROM entries WHERE entry_type = 'history'", [])?;
+    conn.execute("DELETE FROM vec_entries WHERE entry_id NOT IN (SELECT id FROM entries)", [])?;
     Ok(())
 }
 
@@ -211,14 +225,14 @@ pub async fn export(format: &str) -> anyhow::Result<String> {
     }
 }
 
-/// Migrate from legacy history.json if it exists and DB is empty.
-pub fn migrate_from_json_if_needed() -> anyhow::Result<()> {
-    let kalam = get_kalam_dir()?;
+/// Migrate from legacy history.json into legacy history.db if it exists and legacy DB is empty.
+fn migrate_json_to_legacy_if_needed() -> anyhow::Result<()> {
+    let kalam = crate::config::get_kalam_dir()?;
     let json_path = kalam.join("history.json");
     if !json_path.exists() {
         return Ok(());
     }
-    let conn = open_db()?;
+    let conn = open_legacy_db()?;
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))?;
     if count > 0 {
         return Ok(());
@@ -249,16 +263,88 @@ pub fn migrate_from_json_if_needed() -> anyhow::Result<()> {
         )?;
     }
     fs::remove_file(&json_path).ok();
-    log::info!("Migrated history from JSON to SQLite");
+    log::info!("Migrated history from JSON to legacy SQLite");
     Ok(())
 }
 
-/// Remove all persisted history data (DB, key, legacy JSON). Used for full app reset.
+/// Migrate from legacy history.db (encrypted) into unified data.db entries table. Run once at startup.
+pub fn migrate_legacy_to_unified() -> anyhow::Result<()> {
+    let legacy_path = get_legacy_db_path()?;
+    if !legacy_path.exists() {
+        return Ok(());
+    }
+    let unified = db::open_db()?;
+    let count: i64 = unified.query_row(
+        "SELECT COUNT(*) FROM entries WHERE entry_type = 'history'",
+        [],
+        |r| r.get(0),
+    )?;
+    if count > 0 {
+        return Ok(());
+    }
+    let key = ensure_key()?;
+    let legacy_conn = open_legacy_db()?;
+    let rows: Vec<_> = {
+        let mut stmt = legacy_conn.prepare(
+            "SELECT id, text_blob, created_at FROM history ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    drop(legacy_conn);
+    for (id, blob, created_at_str) in rows {
+        let text = decrypt(&blob, &key).unwrap_or_default();
+        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        let entry = Entry {
+            id: id.clone(),
+            entry_type: "history".to_string(),
+            created_at,
+            updated_at: created_at,
+            sync_status: "pending".to_string(),
+            title: None,
+            content: text,
+            attachments: vec![],
+            tags: vec![],
+            color: None,
+            is_pinned: false,
+            priority: None,
+            due_date: None,
+            subtasks: None,
+            is_completed: None,
+            reminder_at: None,
+            rrule: None,
+        };
+        db::insert_entry(&unified, &entry)?;
+        db::insert_embedding_stub(&unified, &id)?;
+    }
+    fs::remove_file(&legacy_path).ok();
+    fs::remove_file(get_key_path()?).ok();
+    log::info!("Migrated legacy history.db to unified data.db");
+    Ok(())
+}
+
+/// Run all history migrations: JSON -> legacy, then legacy -> unified. Call once at startup.
+pub fn migrate_from_json_if_needed() -> anyhow::Result<()> {
+    migrate_json_to_legacy_if_needed()?;
+    migrate_legacy_to_unified()?;
+    Ok(())
+}
+
+/// Remove all persisted history data (unified DB, legacy DB, key, legacy JSON). Used for full app reset.
 pub fn delete_all_persisted_data() -> anyhow::Result<()> {
-    let kalam = get_kalam_dir()?;
+    let kalam = crate::config::get_kalam_dir()?;
+    let _ = fs::remove_file(kalam.join("data.db"));
     let _ = fs::remove_file(kalam.join(HISTORY_DB));
     let _ = fs::remove_file(kalam.join(KEY_FILE));
     let _ = fs::remove_file(kalam.join("history.json"));
-    log::info!("Deleted history DB, key, and legacy JSON");
+    log::info!("Deleted all history data (unified, legacy, key, JSON)");
     Ok(())
 }

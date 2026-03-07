@@ -4,6 +4,7 @@
   import { initTelemetry, optOut } from '../lib/telemetry'
   import { sidebarDictationStore } from '../lib/sidebarDictation'
   import { LANGUAGE_OPTIONS, languageLabel, isLanguageSupportedByProvider } from '../lib/languages'
+  import { exportLogsCsv } from '../lib/api/db'
   import type { AppConfig, AudioDevice } from '../types'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
 
@@ -229,6 +230,21 @@
       await checkLogEmpty()
     } catch (e) {
       console.error('Failed to download log:', e)
+    }
+  }
+
+  async function downloadLogsCsv() {
+    try {
+      const { csv, filename } = await exportLogsCsv()
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('Failed to download logs CSV:', e)
     }
   }
 
@@ -917,19 +933,28 @@
           </div>
           <div class="form-group">
             <span class="label-text">Export log</span>
-            <button
-              class="btn-secondary"
-              on:click={downloadLog}
-              disabled={logEmpty}
-              title={logEmpty ? 'No log entries yet' : 'Download current log buffer as a file'}
-            >
-              Download log
-            </button>
+            <div class="button-row">
+              <button
+                class="btn-secondary"
+                on:click={downloadLog}
+                disabled={logEmpty}
+                title={logEmpty ? 'No log entries yet' : 'Download current log buffer as a file'}
+              >
+                Download log
+              </button>
+              <button
+                class="btn-secondary"
+                on:click={downloadLogsCsv}
+                title="Download all logs from database as CSV"
+              >
+                Download logs (CSV)
+              </button>
+            </div>
             <p class="hint">
               {#if logEmpty}
                 No log entries yet. Enable logging and use the app to capture entries, then download.
               {:else}
-                Saves the current in-memory log to a .log file. No transcription or sensitive data is included.
+                Log: in-memory buffer. CSV: full log history from database. No transcription or sensitive data.
               {/if}
             </p>
           </div>
@@ -1356,6 +1381,11 @@
     background: rgba(239, 68, 68, 0.1);
   }
 
+  .button-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
   .btn-secondary {
     padding: 12px 20px;
     background: var(--bg-card);

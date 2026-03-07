@@ -100,6 +100,42 @@ export interface HistoryEntry {
   duration_ms: number | null
 }
 
+// Unified entry (notes, tasks, reminders, history) for SQLite + vector DB
+export type EntryType = 'history' | 'note' | 'task' | 'reminder'
+
+export interface Subtask {
+  title: string
+  is_completed: boolean
+}
+
+export interface Entry {
+  id: string
+  entry_type: EntryType
+  created_at: string
+  updated_at: string
+  sync_status: string
+  title: string | null
+  content: string
+  attachments: string[]
+  tags: string[]
+  color: string | null
+  is_pinned: boolean
+  priority: number | null
+  due_date: string | null
+  subtasks: Subtask[] | null
+  is_completed: boolean | null
+  reminder_at: string | null
+  rrule: string | null
+}
+
+export interface AppLogRow {
+  id: string
+  level: string
+  message: string
+  module: string
+  timestamp: string
+}
+
 export interface AudioDevice {
   id: string
   name: string

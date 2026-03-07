@@ -1,8 +1,11 @@
 pub mod app_log;
 mod audio;
 mod config;
+mod commands;
+mod db;
 mod formatting;
 mod history;
+mod models;
 mod hotkey;
 #[cfg(windows)]
 mod hotkey_win;
@@ -75,6 +78,12 @@ impl AppState {
     pub fn new(app_handle: tauri::AppHandle) -> anyhow::Result<Self> {
         let _ = history::migrate_from_json_if_needed();
         let config = Arc::new(Mutex::new(ConfigManager::new()?));
+        if let Ok(true) = crate::db::migrate_snippets_from_config(config.blocking_lock().get_all().snippets.as_slice()) {
+            let mut c = config.blocking_lock();
+            let mut cfg = c.get_all().clone();
+            cfg.snippets.clear();
+            let _ = c.save(cfg);
+        }
         let notification_manager = Arc::new(NotificationManager::new(app_handle.clone()));
         let audio_state = Arc::new(Mutex::new(AudioState::Idle));
         let is_recording = Arc::new(AtomicBool::new(false));
@@ -390,15 +399,23 @@ pub fn run() {
             test_microphone_stop,
             get_history,
             clear_history,
-            get_snippets,
-            add_snippet,
-            remove_snippet,
+            commands::get_snippets,
+            commands::add_snippet,
+            commands::remove_snippet,
             check_api_key,
             get_model_status,
             download_model,
             get_app_log,
             get_app_log_empty,
             open_app_data_folder,
+            commands::export_logs_csv,
+            commands::create_entry,
+            commands::get_entries_by_type,
+            commands::get_entry,
+            commands::update_entry,
+            commands::delete_entry,
+            commands::save_attachment,
+            commands::search_similar,
             reset_application,
             check_model_requirements,
             start_local_model,
@@ -791,12 +808,6 @@ async fn clear_history() -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn get_snippets(state: tauri::State<'_, AppState>) -> Result<Vec<config::Snippet>, String> {
-    let config = state.config.lock().await;
-    Ok(config.get_snippets())
-}
-
-#[tauri::command]
 async fn get_model_status(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     use serde_json::json;
     fn status_parts(status: crate::stt::lifecycle::ModelStatus) -> (String, Option<String>) {
@@ -855,22 +866,6 @@ async fn download_model(
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
-}
-
-#[tauri::command]
-async fn add_snippet(
-    state: tauri::State<'_, AppState>,
-    trigger: String,
-    expansion: String,
-) -> Result<(), String> {
-    let mut config = state.config.lock().await;
-    config.add_snippet(trigger, expansion).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn remove_snippet(state: tauri::State<'_, AppState>, trigger: String) -> Result<(), String> {
-    let mut config = state.config.lock().await;
-    config.remove_snippet(&trigger).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1251,7 +1246,19 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         drop(audio_state);
         log::info!("Audio recording stopped, {} samples at {}Hz, processing...", audio_data.len(), sample_rate);
         
-        let config = state.config.lock().await.get_all();
+        let mut config = state.config.lock().await.get_all();
+        if let Ok(conn) = crate::db::open_db() {
+            if let Ok(entries) = crate::db::get_entries_by_type(&conn, "snippet", 500, 0) {
+                config.snippets = entries
+                    .into_iter()
+                    .map(|e| config::Snippet {
+                        trigger: e.title.unwrap_or_default(),
+                        expansion: e.content,
+                    })
+                    .collect();
+            }
+        }
+        let config = config;
         let audio_state_ref = state.audio_state.clone();
         let last_injected_len = state.last_injected_len.clone();
         let last_injected_text = state.last_injected_text.clone();
@@ -1333,6 +1340,10 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                         Some(prev_ref),
                     );
                     log::info!("Transcription completed, length: {}", formatted.len());
+                    if let Err(e) = history::save_transcription(&formatted).await {
+                        log::error!("Failed to save transcription to DB: {}", e);
+                    }
+                    let _ = app_handle.emit("transcription-saved", ());
                     let _ = app_handle.emit("dictation-result", &formatted);
                     #[cfg(windows)]
                     if let Some(hwnd) = foreground_hwnd {

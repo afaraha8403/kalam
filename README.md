@@ -1,5 +1,7 @@
 # Kalam
 
+![Kalam logo](public/logo/kalam-logo-horizontal.svg)
+
 **Kalam** (كلام — *speech* in Arabic) is an open-source, cross-platform voice dictation application that transforms spoken language into polished text across all applications on Windows, macOS, and Linux. A free, privacy-friendly alternative to Whisperflow.
 
 > **⚠️ In development** — Kalam is still under active development. APIs, features, and UX may change. Not recommended for production use yet.
@@ -14,7 +16,7 @@
 - 🌍 **Cross-Platform** (Windows, macOS, Linux)
 - ☁️ **Dual-Engine** (Cloud + Local STT)
 - 🎯 **Global Hotkey** activation
-- 📝 **Transcription History** with search
+- 📝 **History** with search
 - 🎭 **Voice Commands** for formatting
 - 📎 **Snippets** for frequently used text
 
@@ -28,12 +30,14 @@ There are no releases yet. To try Kalam, build from source (see [Development](#d
 
 ## Development
 
+We use a PowerShell task runner (`tasks.ps1`) to simplify common development operations, testing, and releases.
+
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+
 - [Rust](https://rustup.rs/) 1.75+
 
-### Setup
+### Setup & Task Runner
 
 ```bash
 # Clone the repository
@@ -41,17 +45,21 @@ git clone https://github.com/kalam-voice/kalam.git
 cd kalam
 
 # Install dependencies
-npm install
+./tasks.ps1 deps
 
 # Run in development mode
-npm run tauri:dev
+./tasks.ps1 dev
+
+# Run tests and checks
+./tasks.ps1 test
+
+# Build for production
+./tasks.ps1 build
 ```
 
-### Building
-
+To see all available commands, including release and signing key generation:
 ```bash
-# Build for production
-npm run tauri:build
+./tasks.ps1 help
 ```
 
 ## Architecture

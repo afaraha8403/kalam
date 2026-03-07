@@ -50,6 +50,7 @@ parking_lot = "0.12"
 rdev = "0.5.3"
 lazy_static = "1.5.0"
 rusqlite = { version = "0.31", features = ["bundled"] }
+sqlite-vec = "0.1"
 aes-gcm = "0.10"
 rand = "0.8"
 active-win-pos-rs = "0.9"

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import Icon from '@iconify/svelte'
   import type { Snippet } from '../types'
 
   let snippets: Snippet[] = []
@@ -80,63 +81,102 @@
   }
 </script>
 
-<div class="snippets">
-  <header>
-    <h2>Snippets</h2>
-    <p class="subtitle">Create shortcuts for frequently used text</p>
+<div class="snippets-view">
+  <header class="page-header">
+    <div class="header-content">
+      <div class="title-wrapper">
+        <Icon icon="ph:scissors-duotone" class="header-icon" />
+        <h2>Snippets</h2>
+      </div>
+      <p class="subtitle">Create magical shortcuts for your most used phrases.</p>
+    </div>
   </header>
 
-  <div class="add-form">
-    <h3>{editing ? 'Edit Snippet' : 'Add New Snippet'}</h3>
-    <div class="form-row">
-      <div class="form-group">
-        <label for="trigger-phrase">Trigger phrase</label>
-        <input
-          id="trigger-phrase"
-          type="text"
-          bind:value={newTrigger}
-          placeholder="e.g., @@email"
-        />
+  <div class="composer-card" class:is-editing={editing}>
+    <div class="composer-header">
+      <Icon icon={editing ? "ph:pencil-simple-duotone" : "ph:plus-circle-duotone"} class="composer-icon" />
+      <h3>{editing ? 'Edit Snippet' : 'Create New Snippet'}</h3>
+    </div>
+    
+    <div class="composer-body">
+      <div class="input-group trigger-group">
+        <label for="trigger-phrase">Trigger</label>
+        <div class="input-wrapper">
+          <Icon icon="ph:lightning-duotone" class="input-icon" />
+          <input
+            id="trigger-phrase"
+            type="text"
+            bind:value={newTrigger}
+            placeholder="e.g. @@email"
+            autocomplete="off"
+          />
+        </div>
       </div>
-      <div class="form-group flex-1">
-        <label for="expanded-text">Expanded text</label>
-        <input
-          id="expanded-text"
-          type="text"
-          bind:value={newExpansion}
-          placeholder="e.g., myemail@example.com"
-        />
+      
+      <div class="arrow-divider">
+        <Icon icon="ph:arrow-right-bold" />
+      </div>
+
+      <div class="input-group expansion-group">
+        <label for="expanded-text">Expansion</label>
+        <div class="input-wrapper">
+          <Icon icon="ph:text-aa-duotone" class="input-icon" />
+          <input
+            id="expanded-text"
+            type="text"
+            bind:value={newExpansion}
+            placeholder="e.g. hello@example.com"
+            autocomplete="off"
+            on:keydown={(e) => e.key === 'Enter' && (editing ? saveEdit() : addSnippet())}
+          />
+        </div>
       </div>
     </div>
-    <div class="form-actions">
+
+    <div class="composer-actions">
       {#if editing}
-        <button class="btn-primary" on:click={saveEdit}>Save Changes</button>
-        <button class="btn-secondary" on:click={cancelEdit}>Cancel</button>
+        <button class="btn-ghost" on:click={cancelEdit}>Cancel</button>
+        <button class="btn-primary" on:click={saveEdit}>
+          <Icon icon="ph:check-bold" /> Save Changes
+        </button>
       {:else}
-        <button class="btn-primary" on:click={addSnippet}>Add Snippet</button>
+        <button class="btn-primary" on:click={addSnippet} disabled={!newTrigger.trim() || !newExpansion.trim()}>
+          <Icon icon="ph:plus-bold" /> Add Snippet
+        </button>
       {/if}
     </div>
   </div>
 
   {#if loading}
-    <div class="loading">Loading...</div>
+    <div class="state-container">
+      <Icon icon="ph:spinner-gap-duotone" class="spin-icon" />
+      <p>Loading snippets...</p>
+    </div>
   {:else if snippets.length === 0}
-    <div class="empty">
-      <p>No snippets yet.</p>
-      <p class="hint">Create shortcuts for email signatures, common phrases, code templates, etc.</p>
+    <div class="state-container empty-state">
+      <div class="empty-icon-wrapper">
+        <Icon icon="ph:magic-wand-duotone" class="empty-icon" />
+      </div>
+      <h3>No snippets yet</h3>
+      <p>Create your first shortcut above to save time typing.</p>
     </div>
   {:else}
-    <div class="snippet-list">
+    <div class="snippets-grid">
       {#each snippets as snippet}
-        <div class="snippet-item">
-          <div class="snippet-content">
-            <span class="trigger">{snippet.trigger}</span>
-            <span class="arrow">→</span>
-            <span class="expansion">{snippet.expansion}</span>
+        <div class="snippet-card">
+          <div class="snippet-trigger">
+            <span class="badge">{snippet.trigger}</span>
           </div>
-          <div class="snippet-actions">
-            <button on:click={() => startEdit(snippet)}>Edit</button>
-            <button on:click={() => removeSnippet(snippet.trigger)}>Delete</button>
+          <div class="snippet-expansion">
+            <p>{snippet.expansion}</p>
+          </div>
+          <div class="snippet-hover-actions">
+            <button class="action-btn edit" on:click={() => startEdit(snippet)} title="Edit">
+              <Icon icon="ph:pencil-simple-duotone" />
+            </button>
+            <button class="action-btn delete" on:click={() => removeSnippet(snippet.trigger)} title="Delete">
+              <Icon icon="ph:trash-duotone" />
+            </button>
           </div>
         </div>
       {/each}
@@ -145,278 +185,429 @@
 </div>
 
 <style>
-  .snippets {
-    max-width: 800px;
-    animation: fadeIn 0.4s ease-out;
+  .snippets-view {
+    max-width: 1000px;
+    margin: 0 auto;
+    animation: fadeSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
   }
 
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
+  @keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateY(20px); }
     to { opacity: 1; transform: translateY(0); }
   }
 
-  header {
-    margin-bottom: 32px;
+  /* Header */
+  .page-header {
+    position: relative;
+  }
+
+  .header-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .title-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .header-icon {
+    font-size: 24px;
+    color: var(--primary);
   }
 
   h2 {
-    font-size: 32px;
+    font-size: 24px;
     font-weight: 700;
-    margin-bottom: 8px;
+    color: var(--navy-deep);
+    margin: 0;
   }
 
   .subtitle {
     color: var(--text-muted);
     font-size: 15px;
+    margin: 0;
+    padding-left: 34px;
   }
 
-  .add-form {
+  /* Composer Card */
+  .composer-card {
     background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 32px;
-    margin-bottom: 32px;
-    box-shadow: var(--shadow-sm);
-    transition: box-shadow 0.3s ease;
+    border: 1px solid var(--border-subtle);
+    border-radius: 20px;
+    padding: 28px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.02);
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+  }
+
+  .composer-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--primary), #a855f7);
+    opacity: 0.5;
+  }
+
+  .composer-card.is-editing::before {
+    background: linear-gradient(90deg, #f59e0b, #f97316);
+    opacity: 1;
+  }
+
+  .composer-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .composer-icon {
+    font-size: 20px;
+    color: var(--primary);
   }
   
-  .add-form:hover {
-    box-shadow: var(--shadow-md);
+  .is-editing .composer-icon {
+    color: #f59e0b;
   }
 
-  .add-form h3 {
+  .composer-header h3 {
     font-size: 18px;
     font-weight: 700;
-    margin-bottom: 24px;
     color: var(--navy-deep);
-    border-bottom: 1px solid var(--border-subtle);
-    padding-bottom: 16px;
+    margin: 0;
   }
 
-  .form-row {
+  .composer-body {
     display: flex;
+    align-items: flex-end;
     gap: 20px;
     margin-bottom: 24px;
   }
 
-  .form-group {
-    flex: 0 0 220px;
+  .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
 
-  .form-group.flex-1 {
+  .trigger-group {
+    flex: 0 0 240px;
+  }
+
+  .expansion-group {
     flex: 1;
   }
 
   label {
-    display: block;
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 10px;
-    color: var(--navy-deep);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+
+  .input-icon {
+    position: absolute;
+    left: 16px;
+    font-size: 18px;
+    color: var(--text-muted);
+    pointer-events: none;
   }
 
   input {
     width: 100%;
-    padding: 14px 16px;
+    padding: 14px 16px 14px 44px;
     background: var(--bg-input);
     border: 2px solid transparent;
-    border-radius: var(--radius-md);
+    border-radius: 12px;
     color: var(--text-primary);
     font-size: 15px;
     font-weight: 500;
-    transition: all 0.2s ease;
-    box-shadow: var(--shadow-inner);
+    font-family: inherit;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .trigger-group input {
+    font-family: 'DM Sans', monospace;
+    color: var(--primary-dark);
   }
 
   input:focus {
     outline: none;
     background: var(--bg-card);
     border-color: var(--primary);
-    box-shadow: 0 4px 12px var(--primary-alpha);
+    box-shadow: 0 0 0 4px var(--primary-alpha);
   }
 
-  input:hover {
+  input:hover:not(:focus) {
     background: var(--bg-input-hover);
   }
 
-  .form-actions {
+  .arrow-divider {
+    color: var(--border-visible);
+    font-size: 20px;
+    padding-bottom: 14px;
+  }
+
+  .composer-actions {
     display: flex;
+    justify-content: flex-end;
     gap: 12px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border-subtle);
   }
 
   .btn-primary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 12px 24px;
     background: var(--primary);
+    color: white;
     border: none;
-    border-radius: var(--radius-md);
-    color: var(--white);
-    font-weight: 600;
+    border-radius: 10px;
     font-size: 14px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.2s;
     box-shadow: 0 4px 12px var(--primary-alpha);
   }
-  
-  .btn-primary:hover {
-    background: var(--primary-dark);
-    transform: translateY(-1px);
+
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
     box-shadow: 0 6px 16px var(--primary-alpha);
+    background: var(--primary-dark);
   }
 
-  .btn-secondary {
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .btn-ghost {
     padding: 12px 20px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-visible);
-    border-radius: var(--radius-md);
-    color: var(--navy-deep);
+    background: transparent;
+    color: var(--text-secondary);
+    border: none;
+    border-radius: 10px;
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: var(--shadow-sm);
+    transition: all 0.2s;
   }
-  
-  .btn-secondary:hover {
+
+  .btn-ghost:hover {
     background: var(--bg-input);
-    border-color: var(--navy-deep);
+    color: var(--navy-deep);
   }
 
-  .loading,
-  .empty {
-    text-align: center;
-    padding: 80px 20px;
-    color: var(--text-muted);
+  /* Grid & Cards */
+  .snippets-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+  }
+
+  .snippet-card {
     background: var(--bg-card);
-    border-radius: var(--radius-lg);
-    border: 1px dashed var(--border);
-  }
-
-  .empty p {
-    font-size: 16px;
-    font-weight: 500;
-  }
-
-  .empty .hint {
-    margin-top: 12px;
-    color: var(--primary-dark);
-    font-size: 14px;
-  }
-
-  .snippet-list {
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    padding: 24px;
     display: flex;
     flex-direction: column;
     gap: 16px;
+    position: relative;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
   }
 
-  .snippet-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 24px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-sm);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  
-  .snippet-item:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
+  .snippet-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.06);
     border-color: var(--border-visible);
   }
 
-  .snippet-content {
+  .snippet-trigger {
     display: flex;
     align-items: center;
-    gap: 16px;
-    flex: 1;
   }
 
-  .trigger {
+  .badge {
     background: var(--primary-alpha-light);
     color: var(--primary-dark);
-    border: 1px solid var(--primary-alpha);
     padding: 6px 12px;
-    border-radius: var(--radius-sm);
+    border-radius: 8px;
     font-family: 'DM Sans', monospace;
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .arrow {
-    color: var(--border-visible);
-    font-size: 18px;
-  }
-
-  .expansion {
-    color: var(--navy-deep);
-    font-size: 15px;
-    font-weight: 500;
-  }
-
-  .snippet-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .snippet-actions button {
-    padding: 8px 16px;
-    background: var(--bg-input);
-    border: 1px solid transparent;
-    border-radius: var(--radius-md);
-    color: var(--text-secondary);
     font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border: 1px solid var(--primary-alpha);
   }
 
-  .snippet-actions button:hover {
-    background: var(--bg-card);
-    border-color: var(--border-visible);
+  .snippet-expansion p {
+    margin: 0;
+    font-size: 15px;
     color: var(--navy-deep);
-    box-shadow: var(--shadow-sm);
+    line-height: 1.5;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .snippet-hover-actions {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transform: translateX(10px);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .snippet-card:hover .snippet-hover-actions {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.2s;
+    background: var(--bg-card);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+
+  .action-btn.edit {
+    color: var(--text-secondary);
+  }
+  .action-btn.edit:hover {
+    color: var(--primary);
+    background: var(--primary-alpha);
+  }
+
+  .action-btn.delete {
+    color: var(--text-secondary);
+  }
+  .action-btn.delete:hover {
+    color: var(--error);
+    background: rgba(239, 68, 68, 0.1);
+  }
+
+  /* States */
+  .state-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 64px 20px;
+    background: var(--bg-card);
+    border-radius: 20px;
+    border: 1px dashed var(--border-visible);
+    color: var(--text-muted);
+    gap: 16px;
+  }
+
+  .spin-icon {
+    font-size: 32px;
+    animation: spin 1s linear infinite;
+    color: var(--primary);
+  }
+
+  @keyframes spin {
+    100% { transform: rotate(360deg); }
+  }
+
+  .empty-state {
+    text-align: center;
+  }
+
+  .empty-icon-wrapper {
+    width: 64px;
+    height: 64px;
+    background: var(--primary-alpha);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+  }
+
+  .empty-icon {
+    font-size: 32px;
+    color: var(--primary);
+  }
+
+  .empty-state h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--navy-deep);
+    margin: 0;
+  }
+
+  .empty-state p {
+    font-size: 15px;
+    max-width: 300px;
+    margin: 0;
   }
 
   @media (max-width: 768px) {
-    .form-row {
+    .composer-body {
       flex-direction: column;
+      align-items: stretch;
       gap: 16px;
     }
 
-    .form-group {
-      flex: 1;
+    .trigger-group {
+      flex: none;
     }
 
-    .form-actions {
-      flex-direction: column;
-    }
-
-    .form-actions button {
-      width: 100%;
-    }
-
-    .snippet-item {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 16px;
-      padding: 16px;
-    }
-
-    .snippet-content {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 8px;
-    }
-
-    .arrow {
+    .arrow-divider {
       display: none;
     }
 
-    .snippet-actions {
-      width: 100%;
+    .subtitle {
+      padding-left: 0;
+    }
+
+    .snippet-hover-actions {
+      opacity: 1;
+      transform: none;
+      position: static;
       justify-content: flex-end;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .action-btn {
+      box-shadow: none;
+      background: var(--bg-input);
     }
   }
 </style>

@@ -4,8 +4,8 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Manager};
 
-/// Larger icon for system tray (64x64) so it scales sharply on HiDPI.
-const TRAY_ICON: tauri::image::Image<'static> = tauri::include_image!("icons/64x64.png");
+/// Icon for system tray (32x32; 64x64 not present in repo).
+const TRAY_ICON: tauri::image::Image<'static> = tauri::include_image!("icons/32x32.png");
 
 pub const TRAY_ID: &str = "main";
 

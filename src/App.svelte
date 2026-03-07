@@ -11,6 +11,10 @@
   import About from './pages/About.svelte'
   import Onboarding from './pages/Onboarding.svelte'
   import Overlay from './components/Overlay.svelte'
+  import History from './components/views/History.svelte'
+  import Notes from './components/views/Notes.svelte'
+  import Tasks from './components/views/Tasks.svelte'
+  import Reminders from './components/views/Reminders.svelte'
   import Icon from '@iconify/svelte'
   import type { AppConfig } from './types'
 
@@ -110,6 +114,30 @@
             <span class="nav-text">Snippets</span>
           </button>
         </li>
+        <li class:active={currentPage === 'history'}>
+          <button on:click={() => navigate('history')} title="History">
+            <Icon icon="ph:clock-counter-clockwise-duotone" class="nav-icon" />
+            <span class="nav-text">History</span>
+          </button>
+        </li>
+        <li class:active={currentPage === 'notes'}>
+          <button on:click={() => navigate('notes')} title="Notes">
+            <Icon icon="ph:note-duotone" class="nav-icon" />
+            <span class="nav-text">Notes</span>
+          </button>
+        </li>
+        <li class:active={currentPage === 'tasks'}>
+          <button on:click={() => navigate('tasks')} title="Tasks">
+            <Icon icon="ph:check-square-duotone" class="nav-icon" />
+            <span class="nav-text">Tasks</span>
+          </button>
+        </li>
+        <li class:active={currentPage === 'reminders'}>
+          <button on:click={() => navigate('reminders')} title="Reminders">
+            <Icon icon="ph:bell-duotone" class="nav-icon" />
+            <span class="nav-text">Reminders</span>
+          </button>
+        </li>
       </ul>
       
       <div class="sidebar-bottom">
@@ -157,6 +185,14 @@
         <Snippets />
       {:else if currentPage === 'about'}
         <About />
+      {:else if currentPage === 'history'}
+        <History />
+      {:else if currentPage === 'notes'}
+        <Notes />
+      {:else if currentPage === 'tasks'}
+        <Tasks />
+      {:else if currentPage === 'reminders'}
+        <Reminders />
       {/if}
     </div>
   </main>
