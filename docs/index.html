@@ -3,24 +3,67 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kalam — Speak, It Types Everywhere. Free & Open-Source Voice Dictation</title>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-F3WK2BDF59"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-F3WK2BDF59');
+    </script>
+    <title>Kalam — Speak, It Types Everywhere. Free & Open-Source Voice Dictation | Voice Typing for PC & Mac</title>
     
     <!-- SEO Meta Tags -->
-    <meta name="description" content="Speak. It types everywhere. Kalam turns your voice into text in any app—free, open source, no subscription. Windows, macOS, Linux. BYOK or fully offline.">
-    <meta name="keywords" content="voice dictation, open source, speech to text, whisperflow alternative, tauri, rust, privacy, cross-platform, local STT">
+    <meta name="description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline. No subscription.">
+    <meta name="keywords" content="voice typing, voice typing for computer, wispr flow alternative, wisprflow open source, whisperflow, whisperflow for computer, open source voice dictation, speech to text desktop, free voice dictation, dictation software Windows Mac Linux, voice dictation, open source, speech to text, tauri, rust, privacy, cross-platform, local STT">
     <meta name="author" content="Kalam Voice">
+    <link rel="canonical" href="https://afaraha8403.github.io/kalam/">
     
-    <!-- OpenGraph / Social Meta Tags -->
-    <meta property="og:title" content="Kalam — Speak. It Types Everywhere. Free Voice Dictation">
-    <meta property="og:description" content="Turn your voice into text in any app. Free, open source, no subscription. BYOK or fully offline. Windows, Mac, Linux.">
+    <!-- OpenGraph / Social sharing (WhatsApp, Facebook, LinkedIn, etc.) -->
+    <meta property="og:title" content="Kalam — Free Open-Source Voice Typing for PC & Mac | Wispr Flow Alternative">
+    <meta property="og:description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline.">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://afaraha8403.github.io/kalam/">
     <meta property="og:image" content="https://afaraha8403.github.io/kalam/logo.svg">
+    <meta property="og:image:alt" content="Kalam — Free open-source voice typing for your computer">
+    <meta property="og:site_name" content="Kalam Voice">
+    <meta property="og:locale" content="en_US">
     
-    <!-- Twitter Meta Tags -->
+    <!-- Twitter Card (Twitter, some other apps) -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Kalam — Speak. It Types Everywhere. Free Voice Dictation">
-    <meta name="twitter:description" content="Turn your voice into text in any app. Free, open source, no subscription. BYOK or fully offline. Windows, Mac, Linux.">
+    <meta name="twitter:title" content="Kalam — Free Open-Source Voice Typing for PC & Mac | Wispr Flow Alternative">
+    <meta name="twitter:description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline.">
+    <meta name="twitter:image" content="https://afaraha8403.github.io/kalam/logo.svg">
+    <meta name="twitter:image:alt" content="Kalam — Free open-source voice typing for your computer">
+    
+    <!-- Structured Data (JSON-LD) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Kalam",
+      "description": "Free open-source voice typing for Windows, Mac, and Linux. Turns your voice into text in any app. Wispr Flow and Whisperflow alternative with BYOK or fully offline.",
+      "applicationCategory": "ProductivityApplication",
+      "operatingSystem": "Windows, macOS, Linux",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "url": "https://afaraha8403.github.io/kalam/"
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {"@type": "Question", "name": "Is Kalam free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Kalam is open source and free. You can use cloud transcription with your own API key (Groq has a free tier) or run fully offline with local models—no subscription."}},
+        {"@type": "Question", "name": "Is Kalam like Wispr Flow or Whisperflow?", "acceptedAnswer": {"@type": "Answer", "text": "Yes—same idea (voice typing in any app). Kalam is free, open source, and runs on Windows, Mac, and Linux (desktop only); Wispr Flow is paid and also on mobile."}},
+        {"@type": "Question", "name": "What platforms does Kalam support?", "acceptedAnswer": {"@type": "Answer", "text": "Kalam runs on Windows, macOS, and Linux (desktop only). We are not building for Android or iOS."}},
+        {"@type": "Question", "name": "Does Kalam work offline?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. You can use a local STT model (SenseVoice or Whisper) so no audio leaves your device. No API key required for offline mode."}},
+        {"@type": "Question", "name": "Do I need an API key?", "acceptedAnswer": {"@type": "Answer", "text": "Only for cloud transcription (e.g. Groq). Sign up at Groq Console, get a free key, and add it in Settings → STT Provider. For local mode, no key is needed."}},
+        {"@type": "Question", "name": "Is my audio stored or sent somewhere?", "acceptedAnswer": {"@type": "Answer", "text": "Audio is not stored to disk (in-memory only). In cloud mode it's sent to the provider over TLS and not retained. In local mode, nothing leaves your machine."}},
+        {"@type": "Question", "name": "How do I start dictating?", "acceptedAnswer": {"@type": "Answer", "text": "Press Ctrl+Win (Windows) or Ctrl+Cmd (macOS), hold while you speak, then release. Text is typed into the app that had focus when you pressed the key."}}
+      ]
+    }
+    </script>
     
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -178,7 +221,7 @@
                 </h1>
                 
                 <p class="text-base sm:text-lg md:text-xl text-text-secondary mb-3 sm:mb-4 max-w-2xl mx-auto leading-relaxed px-1">
-                    Kalam turns your voice into text and types it into <strong class="text-navy-deep">any app</strong>—email, Slack, VS Code, Notion, your browser. Press a hotkey, talk, done. No switching windows. No copy-paste.
+                    Kalam is free, open-source <strong class="text-navy-deep">voice typing for your computer</strong>—Windows, Mac, and Linux. It turns your voice into text and types it into <strong class="text-navy-deep">any app</strong>: email, Slack, VS Code, Notion, your browser. Press a hotkey, talk, done. No switching windows. No copy-paste.
                 </p>
                 <p class="text-sm sm:text-base md:text-lg text-text-secondary mb-3 sm:mb-4 max-w-2xl mx-auto px-1">
                     <strong class="text-navy-deep">100% open source. Zero cost.</strong> Bring your own API key (free tier works) or run fully offline. No subscriptions, no lock-in, no catch.
@@ -345,6 +388,7 @@
                     <h2 class="font-heading text-2xl sm:text-3xl md:text-4xl font-bold text-navy-deep mb-3 sm:mb-4">How Kalam compares</h2>
                     <p class="text-text-secondary text-sm sm:text-base md:text-lg max-w-2xl mx-auto px-1">Stacked against the voice tools you’ve heard of: <a href="https://wisprflow.ai/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Wispr Flow</a>, <a href="https://otter.ai/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Otter.ai</a>, and <a href="https://superwhisper.com/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Superwhisper</a>.</p>
                 </div>
+                <p class="text-center text-text-secondary text-sm sm:text-base max-w-2xl mx-auto mb-6 px-2">If you search for <strong>Wispr Flow open source</strong> or <strong>Whisperflow for computer</strong>, Kalam is the free, open-source option that runs on desktop with BYOK or full offline.</p>
                 <p class="sm:hidden text-center text-text-muted text-xs mb-3">Scroll horizontally to see all columns →</p>
                 <div class="overflow-x-auto compare-table-wrap">
                     <div class="min-w-[800px] bg-white rounded-xl shadow-app-md border border-gray-100 overflow-hidden">
@@ -456,6 +500,10 @@
                     <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
                         <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">Is Kalam free?</dt>
                         <dd class="text-text-secondary text-sm sm:text-base leading-relaxed">Yes. Kalam is open source and free. You can use cloud transcription with your own API key (Groq has a free tier) or run fully offline with local models—no subscription.</dd>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
+                        <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">Is Kalam like Wispr Flow or Whisperflow?</dt>
+                        <dd class="text-text-secondary text-sm sm:text-base leading-relaxed">Yes—same idea (voice typing in any app). Kalam is free, open source, and runs on Windows, Mac, and Linux (desktop only); Wispr Flow is paid and also on mobile.</dd>
                     </div>
                     <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
                         <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">What platforms does Kalam support?</dt>
