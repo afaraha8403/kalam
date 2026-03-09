@@ -70,11 +70,13 @@ impl TextInjector {
     }
 
     async fn inject_via_keystrokes(&self, text: &str, delay_ms: u64) -> anyhow::Result<()> {
-        let mut enigo = Enigo::new(&Settings::default())
-            .map_err(|e| anyhow::anyhow!("Failed to init enigo: {:?}", e))?;
-        enigo
-            .text(text)
-            .map_err(|e| anyhow::anyhow!("Failed to type text: {:?}", e))?;
+        {
+            let mut enigo = Enigo::new(&Settings::default())
+                .map_err(|e| anyhow::anyhow!("Failed to init enigo: {:?}", e))?;
+            enigo
+                .text(text)
+                .map_err(|e| anyhow::anyhow!("Failed to type text: {:?}", e))?;
+        }
         if delay_ms > 0 {
             sleep(Duration::from_millis(
                 delay_ms.saturating_mul(text.len() as u64),
@@ -111,6 +113,7 @@ impl TextInjector {
         enigo
             .key(modifier, Direction::Release)
             .map_err(|e| anyhow::anyhow!("Failed to release modifier: {:?}", e))?;
+        drop(enigo);
 
         sleep(Duration::from_millis(PASTE_WAIT_MS)).await;
 
