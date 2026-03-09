@@ -12,7 +12,7 @@ rust-version = "1.75"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-shell = "2"
@@ -32,6 +32,12 @@ reqwest = { version = "0.12", features = ["multipart", "json", "stream", "blocki
 async-trait = "0.1"
 futures-util = "0.3"
 sha2 = "0.10"
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+
+# Archive extraction for local models
+tar = "0.4"
+bzip2 = "0.4"
+zip = "0.6"
 
 # General
 tokio = { version = "1", features = ["full"] }
@@ -48,7 +54,7 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 once_cell = "1"
 parking_lot = "0.12"
-rdev = "0.5.3"
+rdev = { git = "https://github.com/fufesou/rdev" }
 lazy_static = "1.5.0"
 rusqlite = { version = "0.31", features = ["bundled"] }
 sqlite-vec = "0.1"
