@@ -31,7 +31,6 @@ dist-ssr
 # Tauri
 /target
 /src-tauri/target
-/src-tauri/Cargo.lock
 /src-tauri/*.log
 /src-tauri Wix*
 
