@@ -17,7 +17,7 @@
         "title": "Kalam",
         "width": 900,
         "height": 700,
-        "minWidth": 480,
+        "minWidth": 845,
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false,

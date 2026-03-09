@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Manager};
+use tauri::{App, AppHandle, Emitter, Manager};
 
 /// Icon for system tray (32x32; 64x64 not present in repo).
 const TRAY_ICON: tauri::image::Image<'static> = tauri::include_image!("icons/32x32.png");
@@ -14,10 +14,10 @@ pub struct TrayManager;
 impl TrayManager {
     pub fn setup(app: &mut App) -> anyhow::Result<()> {
         // Create menu items
-        let settings_i = MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
-        let history_i = MenuItem::with_id(app, "history", "History...", true, None::<&str>)?;
-        let snippets_i = MenuItem::with_id(app, "snippets", "Snippets...", true, None::<&str>)?;
-        let separator = MenuItem::with_id(app, "separator", "---", false, None::<&str>)?;
+        let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+        let history_i = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
+        let snippets_i = MenuItem::with_id(app, "snippets", "Snippets", true, None::<&str>)?;
+        let separator = PredefinedMenuItem::separator(app)?;
         let check_updates = MenuItem::with_id(
             app,
             "check_updates",
@@ -106,11 +106,14 @@ impl TrayManager {
     }
 }
 
-fn show_window(app: &AppHandle, _page: &str) -> anyhow::Result<()> {
+fn show_window(app: &AppHandle, page: &str) -> anyhow::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
         window.show()?;
         window.set_focus()?;
-        // Navigate to specific page in Svelte router
+        // Tell frontend to navigate when opening from tray menu (Settings, History, Snippets)
+        if page != "main" {
+            let _ = app.emit("tray-navigate", page);
+        }
     }
     Ok(())
 }

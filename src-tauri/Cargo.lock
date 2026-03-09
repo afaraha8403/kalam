@@ -2669,6 +2669,7 @@ dependencies = [
  "tauri-plugin-updater",
  "thiserror 1.0.69",
  "tokio",
+ "url",
  "uuid",
  "windows-sys 0.52.0",
 ]

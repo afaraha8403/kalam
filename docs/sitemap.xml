@@ -12,4 +12,10 @@
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
+  <url>
+    <loc>https://afaraha8403.github.io/kalam/business.html</loc>
+    <lastmod>2026-03-09</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
 </urlset>

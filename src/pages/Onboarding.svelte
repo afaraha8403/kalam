@@ -404,7 +404,7 @@
             <div class="checkboxes">
               <label class="check-row">
                 <input type="checkbox" bind:checked={termsAgreed} />
-                <span>I agree to the <a href="https://github.com/afaraha8403/kalam/blob/main/README.md" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="https://github.com/afaraha8403/kalam/blob/main/README.md#privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a></span>
+                <span>I agree to the <a href="https://afaraha8403.github.io/kalam/terms.html" target="_blank" rel="noopener noreferrer">Terms and Conditions</a> and <a href="https://afaraha8403.github.io/kalam/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a></span>
               </label>
               <label class="check-row">
                 <input type="checkbox" bind:checked={notificationsOptIn} />

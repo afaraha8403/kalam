@@ -179,6 +179,7 @@
                 <a href="#how-it-works" class="text-text-secondary hover:text-primary font-medium transition-colors">How it Works</a>
                 <a href="#faq" class="text-text-secondary hover:text-primary font-medium transition-colors">FAQ</a>
                 <a href="documentation.html" class="text-text-secondary hover:text-primary font-medium transition-colors">Documentation</a>
+                <a href="business.html" class="text-text-secondary hover:text-primary font-medium transition-colors">For business</a>
                 <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="text-navy-deep hover:text-primary transition-colors flex items-center gap-2 font-medium">
                     <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
                     <span>GitHub</span>
@@ -196,6 +197,7 @@
                     <a href="#how-it-works" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">How it Works</a>
                     <a href="#faq" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">FAQ</a>
                     <a href="documentation.html" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Documentation</a>
+                    <a href="business.html" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">For business</a>
                     <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">GitHub</a>
                 </div>
             </details>
@@ -230,14 +232,17 @@
                     The voice dictation app that doesn’t spy on you or charge you.
                 </p>
                 
-                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 sm:gap-4 max-w-sm sm:max-w-none mx-auto">
-                    <a href="https://github.com/afaraha8403/kalam/releases/latest" class="w-full sm:w-auto px-6 sm:px-8 py-3.5 sm:py-4 bg-navy-deep hover:bg-navy text-white rounded-xl font-medium text-base sm:text-lg shadow-app-md hover:shadow-app-lg transition-all hover:-translate-y-0.5 flex items-center justify-center gap-2">
-                        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                        Download Latest Release
-                    </a>
-                    <a href="https://github.com/afaraha8403/kalam" class="w-full sm:w-auto px-6 sm:px-8 py-3.5 sm:py-4 bg-white hover:bg-app-input text-navy-deep rounded-xl font-medium text-base sm:text-lg shadow-app-sm border border-gray-200 transition-all hover:-translate-y-0.5 flex items-center justify-center gap-2">
-                        View Source Code
-                    </a>
+                <div id="download-section" class="flex flex-col items-center justify-center gap-3 sm:gap-4 max-w-sm sm:max-w-none mx-auto">
+                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 sm:gap-4 w-full sm:w-auto">
+                        <a id="download-primary" href="https://github.com/afaraha8403/kalam/releases/latest" class="w-full sm:w-auto px-6 sm:px-8 py-3.5 sm:py-4 bg-navy-deep hover:bg-navy text-white rounded-xl font-medium text-base sm:text-lg shadow-app-md hover:shadow-app-lg transition-all hover:-translate-y-0.5 flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                            <span id="download-primary-text">Download Latest Release</span>
+                        </a>
+                        <a href="https://github.com/afaraha8403/kalam" class="w-full sm:w-auto px-6 sm:px-8 py-3.5 sm:py-4 bg-white hover:bg-app-input text-navy-deep rounded-xl font-medium text-base sm:text-lg shadow-app-sm border border-gray-200 transition-all hover:-translate-y-0.5 flex items-center justify-center gap-2">
+                            View Source Code
+                        </a>
+                    </div>
+                    <p id="download-secondary" class="text-text-muted text-sm text-center min-h-[1.5rem]"></p>
                 </div>
                 
                 <div class="mt-10 sm:mt-12 flex items-center justify-center gap-5 sm:gap-8 text-text-muted text-xs sm:text-sm font-medium flex-wrap px-2">
@@ -545,23 +550,125 @@
 
     <!-- Footer -->
     <footer class="bg-white border-t border-gray-200 py-8 sm:py-10 md:py-12 px-4 sm:px-6">
-        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4 sm:gap-6">
-            <div class="flex items-center gap-2 sm:gap-3">
-                <img src="favicon.svg" alt="Kalam Logo" class="w-5 h-5 sm:w-6 sm:h-6 opacity-80">
-                <span class="font-heading font-bold text-lg sm:text-xl text-navy-deep">Kalam</span>
+        <div class="max-w-6xl mx-auto">
+            <div class="flex flex-col md:flex-row justify-between items-center gap-4 sm:gap-6">
+                <div class="flex items-center gap-2 sm:gap-3">
+                    <img src="favicon.svg" alt="Kalam Logo" class="w-5 h-5 sm:w-6 sm:h-6 opacity-80">
+                    <span class="font-heading font-bold text-lg sm:text-xl text-navy-deep">Kalam</span>
+                </div>
+                <div class="flex flex-wrap justify-center gap-4 sm:gap-6 text-sm font-medium">
+                    <a href="documentation.html" class="text-text-secondary hover:text-primary transition-colors">Documentation</a>
+                    <a href="privacy.html" class="text-text-secondary hover:text-primary transition-colors">Privacy Policy</a>
+                    <a href="terms.html" class="text-text-secondary hover:text-primary transition-colors">Terms</a>
+                    <a href="business.html" class="text-text-secondary hover:text-primary transition-colors">Sponsors &amp; commercial</a>
+                    <a href="https://github.com/afaraha8403/kalam" class="text-text-secondary hover:text-primary transition-colors">GitHub</a>
+                    <a href="https://github.com/afaraha8403/kalam/issues" class="text-text-secondary hover:text-primary transition-colors">Report an Issue</a>
+                </div>
             </div>
-            
-            <div class="text-text-muted text-xs sm:text-sm text-center md:text-left order-last md:order-none">
-                &copy; 2026 Kalam Voice. Licensed under MIT.
-            </div>
-            
-            <div class="flex flex-wrap justify-center gap-4 sm:gap-6 text-sm font-medium">
-                <a href="documentation.html" class="text-text-secondary hover:text-primary transition-colors">Documentation</a>
-                <a href="https://github.com/afaraha8403/kalam" class="text-text-secondary hover:text-primary transition-colors">GitHub</a>
-                <a href="https://github.com/afaraha8403/kalam/issues" class="text-text-secondary hover:text-primary transition-colors">Report an Issue</a>
+            <div class="mt-6 pt-6 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-3 text-text-muted text-xs sm:text-sm text-center sm:text-left">
+                <p>&copy; 2026 Kalam. Noncommercial use: MIT. <a href="business.html" class="text-primary hover:underline">Commercial</a> by agreement.</p>
+                <p>Created by <a href="https://alifarahat.com" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Ali Farahat</a> &amp; <a href="https://balacode.io" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Balacode</a> — open-source voice tech for everyone.</p>
             </div>
         </div>
     </footer>
 
+    <script>
+    (function() {
+      var REPO = 'afaraha8403/kalam';
+      var RELEASES_URL = 'https://api.github.com/repos/' + REPO + '/releases?per_page=20';
+
+      function detectOS() {
+        var ua = navigator.userAgent || '';
+        var plat = navigator.platform || '';
+        if (/Win(dows|32|64|CE)/i.test(ua) || plat === 'Win32') return { os: 'windows', arch: 'x64' };
+        if (/Mac|Darwin|iPhone|iPad/i.test(ua) || plat === 'MacIntel' || plat === 'MacPPC') {
+          var isARM = /aarch64|arm64|Apple Silicon/i.test(ua) || (navigator.maxTouchPoints > 0 && plat === 'MacIntel');
+          return { os: 'mac', arch: isARM ? 'aarch64' : 'x86_64' };
+        }
+        if (/Linux|X11|Ubuntu/i.test(ua) || plat === 'Linux x86_64') return { os: 'linux', arch: 'amd64' };
+        return { os: null, arch: null };
+      }
+
+      function pickAssetForOS(assets, osInfo) {
+        if (!assets || !assets.length) return null;
+        var os = osInfo.os, arch = osInfo.arch;
+        var winExt = ['.msi', '.exe'];
+        var macExt = ['.dmg', '.app.tar.gz'];
+        var linuxExt = ['.AppImage', '.deb'];
+        var byOs = { windows: winExt, mac: macExt, linux: linuxExt };
+        var exts = os ? byOs[os] : [].concat(winExt, macExt, linuxExt);
+        var name = function(a) { return (a.name || '').toLowerCase(); };
+        for (var e = 0; e < exts.length; e++) {
+          var ext = exts[e].toLowerCase();
+          var candidates = assets.filter(function(a) { return name(a).endsWith(ext); });
+          if (candidates.length === 0) continue;
+          if (os === 'mac' && arch && candidates.length > 1) {
+            var pref = candidates.filter(function(a) { return name(a).indexOf(arch) !== -1; });
+            if (pref.length) return pref[0];
+            return candidates[0];
+          }
+          return candidates[0];
+        }
+        return assets[0];
+      }
+
+      function run() {
+        var primary = document.getElementById('download-primary');
+        var primaryText = document.getElementById('download-primary-text');
+        var secondary = document.getElementById('download-secondary');
+        if (!primary || !primaryText) return;
+
+        var osInfo = detectOS();
+        var fallbackUrl = 'https://github.com/' + REPO + '/releases/latest';
+        var fallbackLabel = 'Download Latest Release';
+
+        fetch(RELEASES_URL, { headers: { 'Accept': 'application/vnd.github.v3+json' } })
+          .then(function(r) { return r.json(); })
+          .then(function(releases) {
+            if (!Array.isArray(releases) || releases.length === 0) {
+              primary.href = fallbackUrl;
+              primaryText.textContent = fallbackLabel;
+              secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" class="text-primary hover:underline">all releases</a> for other platforms.';
+              return;
+            }
+            var stable = releases.find(function(r) { return !r.prerelease; });
+            var beta = releases.find(function(r) { return r.prerelease; });
+            var useRelease = stable || releases[0];
+            var isStable = !!stable && useRelease === stable;
+            var tag = useRelease.tag_name;
+            var releaseUrl = useRelease.html_url;
+            var assets = useRelease.assets || [];
+            var asset = pickAssetForOS(assets, osInfo);
+            var downloadUrl = asset ? asset.browser_download_url : releaseUrl;
+            var osLabel = osInfo.os === 'windows' ? 'Windows' : osInfo.os === 'mac' ? 'macOS' : osInfo.os === 'linux' ? 'Linux' : '';
+
+            primary.href = downloadUrl;
+            if (osLabel && asset) {
+              primaryText.textContent = 'Download for ' + osLabel + (isStable ? ' (v' + tag.replace(/^v/, '') + ')' : ' (beta)');
+            } else {
+              primaryText.textContent = isStable ? 'Download ' + tag : 'Download (beta)';
+            }
+
+            var parts = [];
+            if (stable && beta) {
+              parts.push('<a href="' + beta.html_url + '" class="text-primary hover:underline">Beta</a> available. ');
+            }
+            parts.push('<a href="https://github.com/' + REPO + '/releases" class="text-primary hover:underline">Other platforms &amp; releases</a>');
+            secondary.innerHTML = parts.join('');
+          })
+          .catch(function() {
+            primary.href = fallbackUrl;
+            primaryText.textContent = fallbackLabel;
+            secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" class="text-primary hover:underline">all releases</a> for other platforms.';
+          });
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', run);
+      } else {
+        run();
+      }
+    })();
+    </script>
 </body>
 </html>

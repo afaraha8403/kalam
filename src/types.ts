@@ -52,6 +52,8 @@ export interface AppConfig {
   overlay_offset_y?: number
   overlay_expand_direction?: ExpandDirection
   command_config: CommandConfig
+  /** Update channel: stable or beta (pre-releases). */
+  update_channel?: 'stable' | 'beta'
 }
 
 export interface STTConfig {

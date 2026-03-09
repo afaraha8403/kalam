@@ -45,12 +45,18 @@
   onMount(() => {
     if (isOverlay) return
     let unlistenReset: (() => void) | null = null
+    let unlistenTrayNavigate: (() => void) | null = null
     let unlistenSettings: (() => void) | null = null
     let unlistenTranscription: (() => void) | null = null
     let dbPollId: ReturnType<typeof setInterval> | null = null
     ;(async () => {
       unlistenReset = await listen('app_reset', () => {
         isFirstRun = true
+      })
+      unlistenTrayNavigate = await listen<string>('tray-navigate', (e) => {
+        if (e.payload && ['settings', 'history', 'snippets'].includes(e.payload)) {
+          navigate(e.payload)
+        }
       })
       unlistenSettings = await listen<AppConfig>('settings_updated', (e) => {
         if (e.payload) statusBarConfig = e.payload
@@ -91,6 +97,7 @@
     })()
     return () => {
       if (unlistenReset) unlistenReset()
+      if (unlistenTrayNavigate) unlistenTrayNavigate()
       if (unlistenSettings) unlistenSettings()
       if (unlistenTranscription) unlistenTranscription()
       if (dbPollId != null) clearInterval(dbPollId)

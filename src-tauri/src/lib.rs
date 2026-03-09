@@ -28,7 +28,7 @@ const WINDOW_ICON: tauri::image::Image<'static> = tauri::include_image!("icons/3
 use crate::audio::vad::VADConfig;
 use crate::audio::{play_sound, AudioState};
 use crate::config::STTConfig;
-use crate::config::{AppConfig, ConfigManager};
+use crate::config::{AppConfig, ConfigManager, UpdateChannel};
 use crate::hotkey::{parse_rdev_hotkey, start_listener, HotkeyRegistration};
 use crate::notifications::NotificationManager;
 use crate::tray::TrayManager;
@@ -427,7 +427,16 @@ pub fn run() {
         let b = tauri::Builder::default()
             .plugin(tauri_plugin_notification::init())
             .plugin(tauri_plugin_updater::Builder::new().build())
-            .plugin(tauri_plugin_shell::init());
+            .plugin(tauri_plugin_shell::init())
+            .on_window_event(|window, event| match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if window.label() == "main" {
+                        window.hide().unwrap();
+                        api.prevent_close();
+                    }
+                }
+                _ => {}
+            });
         #[cfg(windows)]
         let b = b.device_event_filter(tauri::DeviceEventFilter::Always);
         b
@@ -624,8 +633,68 @@ pub fn run() {
             commands::generate_structured_data,
             commands::test_llm_model,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            // RunEvent::Reopen (macOS dock click to show window) is not in tauri 2.10 RunEvent.
+            // Hide-on-close above fixes tray menu and taskbar restore on Windows.
+        });
+}
+
+const GITHUB_RELEASES_API: &str = "https://api.github.com/repos/afaraha8403/kalam/releases";
+const GITHUB_STABLE_LATEST_URL: &str =
+    "https://github.com/afaraha8403/kalam/releases/latest/download/latest.json";
+
+/// Resolve the update endpoint URL for the given channel. Beta uses GitHub API to find latest prerelease.
+async fn get_update_endpoint_for_channel(channel: UpdateChannel) -> anyhow::Result<String> {
+    match channel {
+        UpdateChannel::Stable => Ok(GITHUB_STABLE_LATEST_URL.to_string()),
+        UpdateChannel::Beta => {
+            let client = reqwest::Client::builder()
+                .user_agent("Kalam-Updater/1.0")
+                .build()?;
+            let releases: Vec<serde_json::Value> = client
+                .get(GITHUB_RELEASES_API)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            let tag_name = releases
+                .iter()
+                .find(|r| r["prerelease"].as_bool() == Some(true))
+                .and_then(|r| r["tag_name"].as_str())
+                .map(String::from)
+                .ok_or_else(|| anyhow::anyhow!("no prerelease found"))?;
+            Ok(format!(
+                "https://github.com/afaraha8403/kalam/releases/download/{}/latest.json",
+                tag_name
+            ))
+        }
+    }
+}
+
+/// Check for updates using the channel from app config (stable or beta).
+async fn check_update_with_channel(
+    app: &tauri::AppHandle,
+) -> anyhow::Result<Option<tauri_plugin_updater::Update>> {
+    let channel = app
+        .state::<AppState>()
+        .config
+        .lock()
+        .await
+        .get_all()
+        .update_channel
+        .clone();
+    let endpoint = get_update_endpoint_for_channel(channel).await?;
+    let url = url::Url::parse(&endpoint).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?
+        .build()
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    updater.check().await.map_err(|e| anyhow::anyhow!("{:?}", e))
 }
 
 /// Check for app updates; if available and user has show_updates enabled, show a notification.
@@ -641,11 +710,7 @@ pub async fn run_update_check(app: &tauri::AppHandle) -> anyhow::Result<()> {
     if !show {
         return Ok(());
     }
-    let updater = app.updater().map_err(|e| anyhow::anyhow!("{:?}", e))?;
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    let update = check_update_with_channel(app).await?;
     if let Some(u) = update {
         let msg = format!(
             "Update {} available. Restart the app to install.",
@@ -662,18 +727,11 @@ pub async fn run_update_check(app: &tauri::AppHandle) -> anyhow::Result<()> {
 /// User-initiated check from tray: always run check and show a notification (up to date, update available, or error).
 pub async fn run_update_check_user_initiated(app: &tauri::AppHandle) -> anyhow::Result<()> {
     let nm = &app.state::<AppState>().notification_manager;
-    let updater = match app.updater() {
+    let update = match check_update_with_channel(app).await {
         Ok(u) => u,
         Err(e) => {
             let _ = nm.error("Could not check for updates.");
-            return Err(anyhow::anyhow!("{:?}", e));
-        }
-    };
-    let update = match updater.check().await {
-        Ok(u) => u,
-        Err(e) => {
-            let _ = nm.error("Could not check for updates.");
-            return Err(anyhow::anyhow!("{:?}", e));
+            return Err(e);
         }
     };
     if let Some(u) = update {
@@ -708,8 +766,7 @@ fn get_app_version(app: tauri::AppHandle) -> String {
 /// Check for updates; returns new version if available, None if up to date, Err on failure.
 #[tauri::command]
 async fn check_for_updates(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let updater = app.updater().map_err(|e| format!("{:?}", e))?;
-    let update = updater.check().await.map_err(|e| format!("{:?}", e))?;
+    let update = check_update_with_channel(&app).await.map_err(|e| format!("{:?}", e))?;
     Ok(update.as_ref().map(|u| u.version.clone()))
 }
 

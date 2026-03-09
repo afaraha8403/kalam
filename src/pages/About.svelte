@@ -9,6 +9,7 @@
   let updateStatus: 'idle' | 'up-to-date' | 'available' | 'error' = 'idle'
   let updateVersion = ''
   let updateError = ''
+  let updateChannel: 'stable' | 'beta' = 'stable'
 
   const GITHUB_REPO_URL = 'https://github.com/afaraha8403/kalam'
 
@@ -65,7 +66,22 @@ maintainers to request a commercial license.`
     } catch {
       appVersion = '—'
     }
+    try {
+      const settings = (await invoke('get_settings')) as { update_channel?: 'stable' | 'beta' }
+      updateChannel = settings?.update_channel === 'beta' ? 'beta' : 'stable'
+    } catch {
+      updateChannel = 'stable'
+    }
   })
+
+  async function onChannelChange() {
+    try {
+      const config = (await invoke('get_settings')) as import('../types').AppConfig
+      await invoke('save_settings', { newConfig: { ...config, update_channel: updateChannel } })
+    } catch (e) {
+      console.error('Failed to save update channel:', e)
+    }
+  }
 
   async function checkUpdates() {
     updateChecking = true
@@ -89,69 +105,95 @@ maintainers to request a commercial license.`
   }
 </script>
 
-<div class="about">
-  <header>
-    <h2>About Kalam</h2>
-    <p class="version">Version {appVersion || '…'}</p>
+<div class="about-container">
+  <header class="about-header animate-in" style="--delay: 0.1s">
+    <div class="brand">
+      <div class="logo-placeholder">
+        <Icon icon="ph:microphone-stage-duotone" />
+      </div>
+      <h2>Kalam</h2>
+    </div>
+    <span class="version-badge">v{appVersion || '…'}</span>
   </header>
 
-  <section class="creator">
-    <p class="byline">By <a href="https://github.com/afaraha8403" target="_blank" rel="noopener noreferrer">Ali Farahat</a>, founder of <a href="https://balacode.io" target="_blank" rel="noopener noreferrer">Balacode.io</a>.</p>
-  </section>
-
-  <section class="github-section" class:placeholder={!GITHUB_REPO_URL}>
-    {#if GITHUB_REPO_URL}
-      <a
-        href={GITHUB_REPO_URL}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="github-link"
-      >
-        <Icon icon="ph:github-logo-duotone" class="github-icon" />
-        <span>Report issues · Learn more</span>
-      </a>
-    {:else}
-      <span class="github-link">
-        <Icon icon="ph:github-logo-duotone" class="github-icon" />
-        <span>Report issues · Learn more <em>(link coming soon)</em></span>
-      </span>
-    {/if}
-  </section>
-
-  <section class="updates">
-    <button
-      type="button"
-      class="btn-check"
-      disabled={updateChecking}
-      on:click={checkUpdates}
-    >
-      {#if updateChecking}
-        <Icon icon="ph:spinner-gap-duotone" class="spin" />
-        Checking…
-      {:else}
-        <Icon icon="ph:arrow-square-in-duotone" />
-        Check for updates
+  <div class="about-grid">
+    <!-- Creator & Community Card -->
+    <section class="about-card animate-in" style="--delay: 0.2s">
+      <div class="card-icon"><Icon icon="ph:users-three-duotone" /></div>
+      <h3>Community</h3>
+      <p class="byline">Created by <a href="https://github.com/afaraha8403" target="_blank" rel="noopener noreferrer">Ali Farahat</a>, founder of <a href="https://balacode.io" target="_blank" rel="noopener noreferrer">Balacode.io</a>.</p>
+      
+      {#if GITHUB_REPO_URL}
+        <div class="action-group" style="margin-top: auto;">
+          <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" class="action-link">
+            <Icon icon="ph:github-logo-duotone" />
+            <span>GitHub Repository</span>
+          </a>
+          <a href="https://afaraha8403.github.io/kalam/terms.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
+            <Icon icon="ph:file-text-duotone" />
+            <span>Terms &amp; Conditions</span>
+          </a>
+          <a href="https://afaraha8403.github.io/kalam/privacy.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
+            <Icon icon="ph:shield-check-duotone" />
+            <span>Privacy Policy</span>
+          </a>
+        </div>
       {/if}
-    </button>
-    {#if updateStatus === 'up-to-date'}
-      <p class="update-msg success">You're up to date.</p>
-    {:else if updateStatus === 'available'}
-      <p class="update-msg available">Update {updateVersion} available. Restart the app to install.</p>
-    {:else if updateStatus === 'error'}
-      <p class="update-msg error">{updateError}</p>
-    {/if}
-  </section>
+    </section>
 
-  <section class="license-section">
-    <button
-      type="button"
-      class="accordion"
-      class:open={licenseOpen}
-      on:click={() => (licenseOpen = !licenseOpen)}
-      aria-expanded={licenseOpen}
-    >
-      <Icon icon={licenseOpen ? 'ph:caret-down-duotone' : 'ph:caret-right-duotone'} class="accordion-caret" />
-      License
+    <!-- Support & Business Card -->
+    <section class="about-card highlight animate-in" style="--delay: 0.3s">
+      <div class="card-icon"><Icon icon="ph:heart-duotone" /></div>
+      <h3>Support Kalam</h3>
+      <p class="card-text">Keep Kalam sustainable and free. Commercial use requires a separate license.</p>
+      
+      <div class="action-group">
+        <a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener noreferrer" class="btn-primary">
+          <Icon icon="ph:heart-straight-fill" /> Sponsor
+        </a>
+        <a href="https://afaraha8403.github.io/kalam/business.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
+          Commercial License
+        </a>
+      </div>
+    </section>
+
+    <!-- Updates Card -->
+    <section class="about-card animate-in" style="--delay: 0.4s">
+      <div class="card-icon"><Icon icon="ph:arrows-clockwise-duotone" /></div>
+      <h3>Updates</h3>
+      
+      <div class="update-controls">
+        <div class="channel-selector">
+          <label for="about-update-channel">Channel</label>
+          <select id="about-update-channel" bind:value={updateChannel} on:change={onChannelChange}>
+            <option value="stable">Stable</option>
+            <option value="beta">Beta</option>
+          </select>
+        </div>
+        
+        <button type="button" class="btn-check" disabled={updateChecking} on:click={checkUpdates}>
+          {#if updateChecking}
+            <Icon icon="ph:spinner-gap-duotone" class="spin" /> Checking…
+          {:else}
+            <Icon icon="ph:arrow-square-in-duotone" /> Check Now
+          {/if}
+        </button>
+      </div>
+
+      {#if updateStatus === 'up-to-date'}
+        <div class="status-msg success"><Icon icon="ph:check-circle-duotone" /> Up to date</div>
+      {:else if updateStatus === 'available'}
+        <div class="status-msg available"><Icon icon="ph:sparkle-duotone" /> Update {updateVersion} available!</div>
+      {:else if updateStatus === 'error'}
+        <div class="status-msg error"><Icon icon="ph:warning-circle-duotone" /> {updateError}</div>
+      {/if}
+    </section>
+  </div>
+
+  <section class="license-section animate-in" style="--delay: 0.5s">
+    <button type="button" class="accordion" class:open={licenseOpen} on:click={() => (licenseOpen = !licenseOpen)} aria-expanded={licenseOpen}>
+      <span class="accordion-title"><Icon icon="ph:file-text-duotone" /> License Information</span>
+      <Icon icon="ph:caret-down-bold" class="accordion-caret" />
     </button>
     {#if licenseOpen}
       <div class="license-content">
@@ -162,194 +204,400 @@ maintainers to request a commercial license.`
 </div>
 
 <style>
-  .about {
-    max-width: 560px;
+  .about-container {
+    max-width: 800px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding-bottom: 24px;
   }
 
-  header {
-    margin-bottom: 28px;
+  .animate-in {
+    opacity: 0;
+    animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: var(--delay, 0s);
   }
 
-  header h2 {
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .about-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 24px 32px;
+    background: linear-gradient(135deg, var(--bg-card), var(--bg-app));
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .logo-placeholder {
+    width: 48px;
+    height: 48px;
+    background: var(--primary-alpha);
+    color: var(--primary);
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    box-shadow: inset 0 0 0 1px var(--primary-alpha-light);
+  }
+
+  .brand h2 {
     font-family: 'Syne', sans-serif;
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--navy-deep);
+    margin: 0;
+    letter-spacing: -0.03em;
+  }
+
+  .version-badge {
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    border-radius: var(--radius-pill);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'DM Sans', ui-monospace, monospace;
+    border: 1px solid var(--border-subtle);
+  }
+
+  .about-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+  }
+
+  .about-card {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .about-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-md);
+  }
+
+  .about-card.highlight {
+    background: linear-gradient(to bottom right, var(--bg-card), var(--primary-alpha-light));
+    border-color: var(--primary-alpha);
+  }
+
+  .card-icon {
+    width: 40px;
+    height: 40px;
+    background: var(--bg-input);
+    color: var(--navy-deep);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-size: 22px;
+    margin-bottom: 4px;
+  }
+
+  .highlight .card-icon {
+    background: var(--primary);
+    color: var(--white);
+    box-shadow: 0 4px 12px var(--primary-alpha);
+  }
+
+  .about-card h3 {
+    font-size: 18px;
     font-weight: 700;
     color: var(--navy-deep);
-    margin: 0 0 4px 0;
-    letter-spacing: -0.02em;
-  }
-
-  .version {
-    font-size: 14px;
-    color: var(--text-muted);
     margin: 0;
   }
 
-  .creator {
-    margin-bottom: 28px;
-    padding: 16px 20px;
-    background: var(--bg-card);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-subtle);
+  .byline, .card-text {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 0;
+    flex-grow: 1;
   }
 
-  .byline {
-    margin: 0 0 6px 0;
-    font-size: 15px;
-    color: var(--text-primary);
-  }
-
-  .creator a {
+  .byline a {
     color: var(--primary-dark);
     font-weight: 600;
     text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s;
   }
 
-  .creator a:hover {
-    text-decoration: underline;
+  .byline a:hover {
+    border-color: var(--primary-dark);
   }
 
-  .github-section {
-    margin-bottom: 24px;
-    padding: 12px 16px;
-    background: var(--bg-card);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-subtle);
-  }
-
-  .github-section.placeholder .github-link {
-    color: var(--text-muted);
-    cursor: default;
-  }
-
-  .github-link {
+  .action-link {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    justify-content: center;
+    gap: 8px;
     font-size: 14px;
-    color: var(--primary-dark);
+    font-weight: 600;
+    color: var(--navy-deep);
     text-decoration: none;
-    font-weight: 500;
+    padding: 10px 16px;
+    background: var(--bg-input);
+    border-radius: var(--radius-md);
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+    width: 100%;
   }
 
-  .github-link:hover:not(span) {
-    text-decoration: underline;
+  .action-link:hover {
+    background: var(--bg-card);
+    border-color: var(--border-visible);
+    box-shadow: var(--shadow-sm);
   }
 
-  .github-link em {
-    font-style: normal;
+  .action-link.secondary {
+    background: transparent;
+    border-color: var(--border-subtle);
+  }
+
+  .action-link.secondary:hover {
+    background: var(--bg-input);
+    border-color: var(--border-visible);
+  }
+
+  .action-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: auto;
+  }
+
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background: var(--primary);
+    color: var(--white);
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius-md);
+    text-decoration: none;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px var(--primary-alpha);
+    width: 100%;
+  }
+
+  .btn-primary:hover {
+    background: var(--primary-dark);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px var(--primary-alpha);
+  }
+
+  /* Update Controls */
+  .update-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--bg-input);
+    padding: 16px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    margin-top: auto;
+  }
+
+  .channel-selector {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .channel-selector label {
     font-size: 13px;
-    color: var(--text-muted);
-    font-weight: 400;
-  }
-
-  .github-icon {
-    font-size: 22px;
+    font-weight: 600;
     color: var(--text-secondary);
   }
 
-  .updates {
-    margin-bottom: 24px;
+  .channel-selector select {
+    padding: 6px 28px 6px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    background-color: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--navy-deep);
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
   }
 
   .btn-check {
-    display: inline-flex;
+    display: flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
-    padding: 10px 18px;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--primary-dark);
-    background: var(--primary-alpha);
-    border: 1px solid var(--border-subtle);
+    width: 100%;
+    padding: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-visible);
     border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--navy-deep);
     cursor: pointer;
-    transition: background 0.2s, color 0.2s;
+    transition: all 0.2s ease;
   }
 
   .btn-check:hover:not(:disabled) {
-    background: var(--primary);
-    color: white;
+    background: var(--primary-alpha-light);
+    border-color: var(--primary-alpha);
+    color: var(--primary-dark);
   }
 
   .btn-check:disabled {
-    opacity: 0.7;
+    opacity: 0.6;
     cursor: not-allowed;
   }
 
-  .btn-check :global(.spin) {
-    animation: spin 0.8s linear infinite;
+  .spin {
+    animation: spin 1s linear infinite;
   }
 
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
-  .update-msg {
-    margin: 12px 0 0 0;
-    font-size: 14px;
-  }
-
-  .update-msg.success {
-    color: var(--text-secondary);
-  }
-
-  .update-msg.available {
-    color: var(--primary-dark);
+  .status-msg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
     font-weight: 500;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    margin-top: 4px;
   }
 
-  .update-msg.error {
-    color: var(--text-secondary);
+  .status-msg.success {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--success, #10b981);
   }
 
+  .status-msg.available {
+    background: var(--primary-alpha-light);
+    color: var(--primary-dark);
+    border: 1px solid var(--primary-alpha);
+  }
+
+  .status-msg.error {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--error, #ef4444);
+  }
+
+  /* License Section */
   .license-section {
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    overflow: hidden;
     background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
   }
 
   .accordion {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text-secondary);
+    justify-content: space-between;
+    padding: 20px 24px;
     background: transparent;
     border: none;
     cursor: pointer;
-    text-align: left;
-    transition: background 0.2s, color 0.2s;
+    transition: background 0.2s ease;
   }
 
   .accordion:hover {
     background: var(--bg-input);
+  }
+
+  .accordion-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 16px;
+    font-weight: 600;
     color: var(--navy-deep);
   }
 
-  .accordion :global(.accordion-caret) {
+  .accordion-caret {
     font-size: 16px;
     color: var(--text-muted);
+    transition: transform 0.3s ease;
+  }
+
+  .accordion.open .accordion-caret {
+    transform: rotate(180deg);
   }
 
   .license-content {
     border-top: 1px solid var(--border-subtle);
-    padding: 16px;
-    max-height: 320px;
-    overflow-y: auto;
+    padding: 24px;
+    background: var(--bg-input);
   }
 
   .license-text {
     margin: 0;
     font-family: 'DM Sans', ui-monospace, monospace;
-    font-size: 12px;
-    line-height: 1.5;
+    font-size: 13px;
+    line-height: 1.6;
     color: var(--text-secondary);
     white-space: pre-wrap;
     word-break: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 12px;
+  }
+
+  .license-text::-webkit-scrollbar {
+    width: 6px;
+  }
+  .license-text::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .license-text::-webkit-scrollbar-thumb {
+    background: var(--border-visible);
+    border-radius: 3px;
+  }
+
+  @media (max-width: 640px) {
+    .about-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    
+    .about-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

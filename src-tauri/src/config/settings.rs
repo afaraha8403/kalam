@@ -58,6 +58,9 @@ pub struct AppConfig {
     /// Command mode: dedicated hotkey to create note/task/reminder from voice; optional LLM parsing.
     #[serde(default)]
     pub command_config: CommandConfig,
+    /// Update channel: stable (latest release) or beta (pre-releases).
+    #[serde(default)]
+    pub update_channel: UpdateChannel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -101,6 +104,14 @@ pub enum ExpandDirection {
     Up,
     Down,
     Center,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Beta,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -168,6 +179,7 @@ impl Default for AppConfig {
             marketing_opt_in: false,
             notifications_opt_in: false,
             command_config: CommandConfig::default(),
+            update_channel: UpdateChannel::Stable,
         }
     }
 }

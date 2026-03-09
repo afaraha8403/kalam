@@ -108,6 +108,7 @@
         if (config.command_config.hotkey === undefined) config.command_config.hotkey = null
         if (!config.command_config.api_keys) config.command_config.api_keys = {}
         if (!config.command_config.models) config.command_config.models = {}
+        if (!config.update_channel) config.update_channel = 'stable'
       }
       
       if (config?.command_config?.provider) {
@@ -789,6 +790,18 @@
         </section>
 
         <section>
+          <h3>Updates</h3>
+          <div class="form-group">
+            <label for="update-channel">Release Channel</label>
+            <select id="update-channel" bind:value={config.update_channel} on:change={scheduleSave}>
+              <option value="stable">Stable (Recommended)</option>
+              <option value="beta">Beta (Pre-releases)</option>
+            </select>
+            <p class="hint">Choose whether to receive stable updates or early beta versions.</p>
+          </div>
+        </section>
+
+        <section>
           <h3>Overlay Appearance</h3>
           
           <div class="form-group">
@@ -1345,6 +1358,9 @@
       {:else if activeTab === 'privacy'}
         <section>
           <h3>Privacy</h3>
+          <p class="hint" style="margin-bottom: 16px;">
+            Read our full <a href="https://afaraha8403.github.io/kalam/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+          </p>
           <div class="form-group">
             <label for="history-retention">History Retention</label>
             <select id="history-retention" bind:value={config.privacy.history_retention_days} on:change={scheduleSave}>
