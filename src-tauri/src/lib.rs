@@ -428,14 +428,13 @@ pub fn run() {
             .plugin(tauri_plugin_notification::init())
             .plugin(tauri_plugin_updater::Builder::new().build())
             .plugin(tauri_plugin_shell::init())
-            .on_window_event(|window, event| match event {
-                tauri::WindowEvent::CloseRequested { api, .. } => {
+            .on_window_event(|window, event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     if window.label() == "main" {
                         window.hide().unwrap();
                         api.prevent_close();
                     }
                 }
-                _ => {}
             });
         #[cfg(windows)]
         let b = b.device_event_filter(tauri::DeviceEventFilter::Always);
