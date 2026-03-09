@@ -1,2 +1,2 @@
-*.lock
+# Cargo.lock is committed for reproducible builds
 *.log
