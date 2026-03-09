@@ -758,8 +758,8 @@ fn request_macos_accessibility() -> Result<(), String> {
     let dict_ref = unsafe {
         CFDictionaryCreate(
             kCFAllocatorDefault,
-            keys.as_ptr() as *const *const c_void,
-            values.as_ptr() as *const *const c_void,
+            keys.as_ptr(),
+            values.as_ptr(),
             1,
             &kCFTypeDictionaryKeyCallBacks,
             &kCFTypeDictionaryValueCallBacks,
@@ -767,7 +767,7 @@ fn request_macos_accessibility() -> Result<(), String> {
     };
     let dict: CFDictionary<CFString, CFBoolean> =
         unsafe { CFDictionary::wrap_under_create_rule(dict_ref) };
-    let _trusted = unsafe { AXIsProcessTrustedWithOptions(dict.as_CFTypeRef() as *const c_void) };
+    let _trusted = unsafe { AXIsProcessTrustedWithOptions(dict.as_CFTypeRef()) };
     Ok(())
 }
 
