@@ -1,13 +1,12 @@
 # Build and Release
-# - Push to main: runs tests only (CI).
-# - Push to tags v*: runs tests then builds and drafts release for Windows, macOS, Linux.
+# - Runs only on push to tags v*: runs tests then builds and drafts release for Windows, macOS, Linux.
+# - CI (ci.yml) runs on push to main and tests Ubuntu, Windows, macOS.
 # For signed updates, set GitHub Secrets: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 name: Build and Release
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
 
 jobs:
@@ -19,7 +18,7 @@ jobs:
       - name: Install dependencies (Ubuntu)
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libasound2-dev patchelf
+          sudo apt-get install -y pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libasound2-dev libxdo-dev patchelf
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -92,7 +91,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libasound2-dev patchelf
+          sudo apt-get install -y pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libasound2-dev libxdo-dev patchelf
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
