@@ -1,7 +1,8 @@
 import { writable } from 'svelte/store'
 
 export interface SidebarDictationState {
-  hotkey: string
+  hotkey: string | null
+  toggleDictationHotkey: string | null
   languageToggleHotkey: string | null
   languages: string[]
   platform: string
@@ -13,11 +14,12 @@ function createStore() {
     subscribe,
     set,
     updateFromConfig: (
-      config: { hotkey: string; language_toggle_hotkey: string | null; languages: string[] },
+      config: { hotkey: string | null; toggle_dictation_hotkey: string | null; language_toggle_hotkey: string | null; languages: string[] },
       platform: string
     ) => {
       set({
         hotkey: config.hotkey,
+        toggleDictationHotkey: config.toggle_dictation_hotkey,
         languageToggleHotkey: config.language_toggle_hotkey,
         languages: config.languages ?? [],
         platform,

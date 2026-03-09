@@ -41,7 +41,7 @@ We use a PowerShell task runner (`tasks.ps1`) to simplify common development ope
 
 ```bash
 # Clone the repository
-git clone https://github.com/kalam-voice/kalam.git
+git clone https://github.com/afaraha8403/kalam.git
 cd kalam
 
 # Install dependencies

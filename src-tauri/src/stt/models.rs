@@ -109,7 +109,7 @@ pub async fn download_model_with_progress(
         let payload = DownloadProgressPayload {
             model_type: model_id.to_string(),
             downloaded_bytes: downloaded,
-            total_bytes: total_bytes,
+            total_bytes,
             percent,
         };
         let _ = app_handle.emit("model-download-progress", &payload);
@@ -124,7 +124,11 @@ pub async fn download_model_with_progress(
         let hex = format!("{:x}", digest);
         if hex != expected {
             let _ = tokio::fs::remove_file(&dest).await;
-            return Err(anyhow::anyhow!("SHA-256 mismatch: expected {}, got {}", expected, hex));
+            return Err(anyhow::anyhow!(
+                "SHA-256 mismatch: expected {}, got {}",
+                expected,
+                hex
+            ));
         }
     }
 

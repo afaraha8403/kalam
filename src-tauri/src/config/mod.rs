@@ -1,8 +1,6 @@
 pub mod privacy;
 pub mod settings;
 
-use serde_json;
-
 /// Migrate legacy language/secondary_language into languages if languages is empty.
 fn migrate_legacy_languages(config: &mut crate::config::AppConfig) {
     if !config.languages.is_empty() {
@@ -20,6 +18,26 @@ fn migrate_legacy_languages(config: &mut crate::config::AppConfig) {
     }
     if config.languages.is_empty() {
         config.languages = vec!["en".to_string()];
+    }
+}
+
+/// Migrate legacy command mode settings to provider-specific maps.
+fn migrate_legacy_command_config(config: &mut crate::config::AppConfig) {
+    if let Some(provider) = &config.command_config.provider {
+        if let Some(api_key) = config.command_config.api_key.take() {
+            config
+                .command_config
+                .api_keys
+                .entry(provider.clone())
+                .or_insert(api_key);
+        }
+        if let Some(model) = config.command_config.model.take() {
+            config
+                .command_config
+                .models
+                .entry(provider.clone())
+                .or_insert(model);
+        }
     }
 }
 use std::fs;
@@ -64,6 +82,8 @@ impl ConfigManager {
         };
 
         migrate_legacy_languages(&mut config);
+        migrate_legacy_command_config(&mut config);
+        migrate_legacy_hotkeys(&mut config);
 
         Ok(Self {
             config_path,
@@ -117,7 +137,7 @@ impl ConfigManager {
         self.config.clone()
     }
 
-    pub fn get_hotkey(&self) -> String {
+    pub fn get_hotkey(&self) -> Option<String> {
         self.config.hotkey.clone()
     }
 
@@ -143,3 +163,16 @@ impl ConfigManager {
 }
 
 pub use settings::Snippet;
+
+fn migrate_legacy_hotkeys(config: &mut AppConfig) {
+    if let Some(mode) = &config.recording_mode {
+        if matches!(mode, crate::config::RecordingMode::Toggle) {
+            // If it was toggle mode, move the hotkey to toggle_dictation_hotkey
+            if config.toggle_dictation_hotkey.is_none() {
+                config.toggle_dictation_hotkey = config.hotkey.clone();
+                config.hotkey = None;
+            }
+        }
+        config.recording_mode = None;
+    }
+}

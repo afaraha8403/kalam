@@ -14,13 +14,22 @@ const VEC_EMBEDDING_DIM: u32 = 384;
 static VEC_EXTENSION_REGISTERED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 fn ensure_vec_extension_registered() -> anyhow::Result<()> {
-    let mut guard = VEC_EXTENSION_REGISTERED.lock().map_err(|e| anyhow::anyhow!("lock: {}", e))?;
+    let mut guard = VEC_EXTENSION_REGISTERED
+        .lock()
+        .map_err(|e| anyhow::anyhow!("lock: {}", e))?;
     if *guard {
         return Ok(());
     }
     unsafe {
-        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
-            sqlite_vec::sqlite3_vec_init as *const (),
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *const i8,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> i32,
+        >(
+            sqlite_vec::sqlite3_vec_init as *const ()
         )));
     }
     *guard = true;
@@ -101,7 +110,207 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         }
     }
 
+    // Dictionary table for custom vocabulary (sent as prompt to cloud STT)
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS dictionary (
+            id TEXT PRIMARY KEY,
+            term TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        "#,
+    )?;
+
+    // Daily stats: one row per calendar day (aggregates for streak, words, latency)
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS daily_stats (
+            date TEXT PRIMARY KEY,
+            transcriptions_count INTEGER NOT NULL DEFAULT 0,
+            words_count INTEGER NOT NULL DEFAULT 0,
+            latency_sum_ms INTEGER NOT NULL DEFAULT 0,
+            latency_count INTEGER NOT NULL DEFAULT 0,
+            latency_last_ms INTEGER,
+            updated_at TEXT NOT NULL
+        );
+        "#,
+    )?;
+
     Ok(())
+}
+
+/// Entry for the personal dictionary (custom words/phrases for cloud transcription).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DictionaryEntry {
+    pub id: String,
+    pub term: String,
+    pub created_at: String,
+}
+
+/// Get all dictionary entries ordered by created_at ascending.
+pub fn get_dictionary_entries(conn: &Connection) -> anyhow::Result<Vec<DictionaryEntry>> {
+    let mut stmt =
+        conn.prepare("SELECT id, term, created_at FROM dictionary ORDER BY created_at ASC")?;
+    let rows = stmt.query_map([], |row| {
+        Ok(DictionaryEntry {
+            id: row.get(0)?,
+            term: row.get(1)?,
+            created_at: row.get(2)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.into())
+}
+
+/// Add a dictionary term; returns the new entry id.
+pub fn add_dictionary_entry(conn: &Connection, term: &str) -> anyhow::Result<String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let created_at = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO dictionary (id, term, created_at) VALUES (?1, ?2, ?3)",
+        rusqlite::params![id, term, created_at],
+    )?;
+    Ok(id)
+}
+
+/// Remove a dictionary entry by id.
+pub fn delete_dictionary_entry(conn: &Connection, id: &str) -> anyhow::Result<()> {
+    conn.execute(
+        "DELETE FROM dictionary WHERE id = ?1",
+        rusqlite::params![id],
+    )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Daily stats (one row per calendar day)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DailyStatsRow {
+    pub date: String,
+    pub transcriptions_count: i64,
+    pub words_count: i64,
+    pub latency_avg_ms: Option<i64>,
+    pub latency_last_ms: Option<i64>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AggregateStats {
+    pub streak_days: i64,
+    pub total_words: i64,
+    pub time_saved_hours: f64,
+    pub last_latency_ms: Option<u32>,
+    pub today_avg_latency_ms: Option<u32>,
+}
+
+/// Upsert daily_stats for the given date: increment transcriptions, add words, update latency (running avg + last).
+pub fn record_transcription_stats(
+    conn: &Connection,
+    date: &str,
+    words_count: u32,
+    latency_ms: u32,
+) -> anyhow::Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        r#"
+        INSERT INTO daily_stats (date, transcriptions_count, words_count, latency_sum_ms, latency_count, latency_last_ms, updated_at)
+        VALUES (?1, 1, ?2, ?3, 1, ?4, ?5)
+        ON CONFLICT(date) DO UPDATE SET
+            transcriptions_count = transcriptions_count + 1,
+            words_count = words_count + ?2,
+            latency_sum_ms = latency_sum_ms + ?3,
+            latency_count = latency_count + 1,
+            latency_last_ms = ?4,
+            updated_at = ?5
+        "#,
+        rusqlite::params![date, words_count as i64, latency_ms as i64, latency_ms as i64, now],
+    )?;
+    Ok(())
+}
+
+/// Get daily stats for a date (ISO date string YYYY-MM-DD). None = today.
+pub fn get_daily_stats(
+    conn: &Connection,
+    date: Option<&str>,
+) -> anyhow::Result<Option<DailyStatsRow>> {
+    let date = date
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+    let row = conn.query_row(
+        "SELECT date, transcriptions_count, words_count, latency_sum_ms, latency_count, latency_last_ms, updated_at FROM daily_stats WHERE date = ?1",
+        rusqlite::params![date],
+        |row| {
+            let latency_sum: i64 = row.get(3)?;
+            let latency_count: i64 = row.get(4)?;
+            Ok(DailyStatsRow {
+                date: row.get(0)?,
+                transcriptions_count: row.get(1)?,
+                words_count: row.get(2)?,
+                latency_avg_ms: if latency_count > 0 { Some(latency_sum / latency_count) } else { None },
+                latency_last_ms: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        },
+    );
+    match row {
+        Ok(r) => Ok(Some(r)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Streak = consecutive days (including today) with at least one transcription, going backward from today.
+fn streak_from_daily_stats(conn: &Connection) -> anyhow::Result<i64> {
+    let mut stmt = conn.prepare("SELECT date FROM daily_stats ORDER BY date DESC")?;
+    let dates: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let mut streak: i64 = 0;
+    let mut expect = today;
+    for d in &dates {
+        if d != &expect {
+            break;
+        }
+        streak += 1;
+        expect = chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d")
+            .ok()
+            .and_then(|dt| dt.pred_opt())
+            .map(|prev| prev.format("%Y-%m-%d").to_string())
+            .unwrap_or_default();
+        if expect.is_empty() {
+            break;
+        }
+    }
+    Ok(streak)
+}
+
+/// Aggregate stats for dashboard: streak, total words, time saved (40 WPM), last and today avg latency.
+pub fn get_aggregate_stats(conn: &Connection) -> anyhow::Result<AggregateStats> {
+    let total_words: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(words_count), 0) FROM daily_stats",
+        [],
+        |row| row.get(0),
+    )?;
+    let streak_days = streak_from_daily_stats(conn)?;
+    let time_saved_hours = (total_words as f64) / 40.0 / 60.0;
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let (last_latency_ms, today_avg_latency_ms) = match get_daily_stats(conn, Some(&today))? {
+        Some(row) => (
+            row.latency_last_ms.map(|n| n as u32),
+            row.latency_avg_ms.map(|n| n as u32),
+        ),
+        None => (None, None),
+    };
+    Ok(AggregateStats {
+        streak_days,
+        total_words,
+        time_saved_hours,
+        last_latency_ms,
+        today_avg_latency_ms,
+    })
 }
 
 /// Embedding dimension used by vec_entries. Must match the virtual table definition.
@@ -198,14 +407,26 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<crate::models::Entry> {
     let updated_at = DateTime::parse_from_rfc3339(&updated_at)
         .map(|d| d.with_timezone(&chrono::Utc))
         .unwrap_or_else(|_| chrono::Utc::now());
-    let due_date = due_date
-        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
-    let reminder_at = reminder_at
-        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
-    let archived_at = archived_at
-        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
-    let deleted_at = deleted_at
-        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&chrono::Utc)));
+    let due_date = due_date.and_then(|s| {
+        DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|d| d.with_timezone(&chrono::Utc))
+    });
+    let reminder_at = reminder_at.and_then(|s| {
+        DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|d| d.with_timezone(&chrono::Utc))
+    });
+    let archived_at = archived_at.and_then(|s| {
+        DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|d| d.with_timezone(&chrono::Utc))
+    });
+    let deleted_at = deleted_at.and_then(|s| {
+        DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|d| d.with_timezone(&chrono::Utc))
+    });
     Ok(crate::models::Entry {
         id,
         entry_type,
@@ -243,7 +464,7 @@ pub fn get_entries_with_reminder(
          WHERE (entry_type = 'reminder') OR (entry_type = 'note' AND reminder_at IS NOT NULL AND deleted_at IS NULL)
          ORDER BY reminder_at ASC LIMIT ?1 OFFSET ?2",
     )?;
-    let rows = stmt.query_map(rusqlite::params![limit, offset], |row| row_to_entry(row))?;
+    let rows = stmt.query_map(rusqlite::params![limit, offset], row_to_entry)?;
     let mut out = Vec::new();
     for row in rows {
         out.push(row?);
@@ -266,7 +487,7 @@ pub fn get_entries_for_reminders_view(
          ORDER BY COALESCE(is_completed, 0), reminder_at IS NULL, reminder_at ASC, updated_at DESC
          LIMIT ?1 OFFSET ?2",
     )?;
-    let rows = stmt.query_map(rusqlite::params![limit, offset], |row| row_to_entry(row))?;
+    let rows = stmt.query_map(rusqlite::params![limit, offset], row_to_entry)?;
     let mut out = Vec::new();
     for row in rows {
         out.push(row?);
@@ -290,10 +511,7 @@ pub fn get_entries_by_type(
             "trash" => " AND deleted_at IS NOT NULL",
             _ => " AND deleted_at IS NULL AND archived_at IS NULL",
         };
-        (
-            where_scope,
-            " ORDER BY is_pinned DESC, updated_at DESC",
-        )
+        (where_scope, " ORDER BY is_pinned DESC, updated_at DESC")
     } else {
         ("", " ORDER BY updated_at DESC")
     };
@@ -304,12 +522,48 @@ pub fn get_entries_by_type(
         where_extra, order_by
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params![entry_type, limit, offset], |row| row_to_entry(row))?;
+    let rows = stmt.query_map(rusqlite::params![entry_type, limit, offset], row_to_entry)?;
     let mut out = Vec::new();
     for row in rows {
         out.push(row?);
     }
     Ok(out)
+}
+
+/// Tasks due on the given ISO date (YYYY-MM-DD). Incomplete tasks only.
+pub fn get_tasks_due_on(
+    conn: &Connection,
+    iso_date: &str,
+    limit: i64,
+) -> anyhow::Result<Vec<crate::models::Entry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
+         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
+         FROM entries WHERE entry_type = 'task' AND COALESCE(is_completed, 0) = 0 AND date(due_date) = ?1
+         ORDER BY due_date ASC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![iso_date, limit], row_to_entry)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.into())
+}
+
+/// Reminders (or notes/tasks with reminder_at) due on the given ISO date. Order: reminder_at ASC.
+pub fn get_reminders_due_on(
+    conn: &Connection,
+    iso_date: &str,
+    limit: i64,
+) -> anyhow::Result<Vec<crate::models::Entry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
+         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
+         FROM entries
+         WHERE (entry_type = 'reminder' OR (entry_type IN ('note','task') AND reminder_at IS NOT NULL))
+         AND deleted_at IS NULL AND date(reminder_at) = ?1
+         ORDER BY reminder_at ASC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![iso_date, limit], row_to_entry)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.into())
 }
 
 /// Search notes with optional text query and label filter. Scope: "active" | "archived" | "trash".
@@ -340,7 +594,10 @@ pub fn search_notes(
             where_scope
         );
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params![&pattern, &pattern, &label, limit, offset], |row| row_to_entry(row))?;
+        let rows = stmt.query_map(
+            rusqlite::params![&pattern, &pattern, &label, limit, offset],
+            row_to_entry,
+        )?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     } else {
         let sql = format!(
@@ -351,7 +608,10 @@ pub fn search_notes(
             where_scope
         );
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params![&pattern, &pattern, limit, offset], |row| row_to_entry(row))?;
+        let rows = stmt.query_map(
+            rusqlite::params![&pattern, &pattern, limit, offset],
+            row_to_entry,
+        )?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
     Ok(out)
@@ -366,7 +626,8 @@ pub fn get_note_labels(conn: &Connection, scope: Option<&str>) -> anyhow::Result
         _ => "", // "all" or unknown: no scope filter
     };
     let sql = if where_scope.is_empty() {
-        "SELECT DISTINCT value FROM entries, json_each(entries.tags) WHERE entry_type = 'note'".to_string()
+        "SELECT DISTINCT value FROM entries, json_each(entries.tags) WHERE entry_type = 'note'"
+            .to_string()
     } else {
         format!(
             "SELECT DISTINCT value FROM entries, json_each(entries.tags) WHERE entry_type = 'note' AND {}",
@@ -385,14 +646,16 @@ pub fn get_note_labels(conn: &Connection, scope: Option<&str>) -> anyhow::Result
 
 /// Permanently delete all trashed notes (entry_type = 'note' AND deleted_at IS NOT NULL). Returns count deleted.
 pub fn empty_trash(conn: &Connection) -> anyhow::Result<i64> {
-    let ids: Vec<String> = conn.prepare(
-        "SELECT id FROM entries WHERE entry_type = 'note' AND deleted_at IS NOT NULL",
-    )?
-    .query_map([], |row| row.get(0))?
-    .collect::<Result<Vec<_>, _>>()?;
+    let ids: Vec<String> = conn
+        .prepare("SELECT id FROM entries WHERE entry_type = 'note' AND deleted_at IS NOT NULL")?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
     let count = ids.len() as i64;
     for id in &ids {
-        let _ = conn.execute("DELETE FROM vec_entries WHERE entry_id = ?1", rusqlite::params![id]);
+        let _ = conn.execute(
+            "DELETE FROM vec_entries WHERE entry_id = ?1",
+            rusqlite::params![id],
+        );
         conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])?;
     }
     Ok(count)
@@ -406,14 +669,17 @@ pub fn get_entry(conn: &Connection, id: &str) -> anyhow::Result<Option<crate::mo
          FROM entries WHERE id = ?1",
     )?;
     let mut rows = stmt.query(rusqlite::params![id])?;
-    Ok(rows.next()?.map(|row| row_to_entry(&row)).transpose()?)
+    Ok(rows.next()?.map(|row| row_to_entry(row)).transpose()?)
 }
 
 /// Update an existing entry. Returns true if a row was updated.
 pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Result<bool> {
     let attachments = serde_json::to_string(&e.attachments).unwrap_or_else(|_| "[]".to_string());
     let tags = serde_json::to_string(&e.tags).unwrap_or_else(|_| "[]".to_string());
-    let subtasks = e.subtasks.as_ref().and_then(|s| serde_json::to_string(s).ok());
+    let subtasks = e
+        .subtasks
+        .as_ref()
+        .and_then(|s| serde_json::to_string(s).ok());
     let created_at = e.created_at.to_rfc3339();
     let updated_at = e.updated_at.to_rfc3339();
     let due_date = e.due_date.as_ref().map(|d| d.to_rfc3339());
@@ -456,22 +722,32 @@ pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
 /// Delete an entry and its embedding.
 pub fn delete_entry(conn: &Connection, id: &str) -> anyhow::Result<bool> {
     let n = conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])?;
-    let _ = conn.execute("DELETE FROM vec_entries WHERE entry_id = ?1", rusqlite::params![id]);
+    let _ = conn.execute(
+        "DELETE FROM vec_entries WHERE entry_id = ?1",
+        rusqlite::params![id],
+    );
     Ok(n > 0)
 }
 
 /// Semantic search: return entry IDs ordered by similarity to the query embedding. For now uses stub embeddings.
-pub fn search_similar(conn: &Connection, _query_embedding: &[f32], limit: i64) -> anyhow::Result<Vec<String>> {
+pub fn search_similar(
+    conn: &Connection,
+    _query_embedding: &[f32],
+    limit: i64,
+) -> anyhow::Result<Vec<String>> {
     if _query_embedding.is_empty() {
         let mut stmt = conn.prepare("SELECT entry_id FROM vec_entries LIMIT ?1")?;
         let rows = stmt.query_map(rusqlite::params![limit], |row| row.get::<_, String>(0))?;
         return Ok(rows.collect::<Result<Vec<_>, _>>()?);
     }
-    let json_array = serde_json::to_string(_query_embedding).map_err(|e| anyhow::anyhow!("{:?}", e))?;
+    let json_array =
+        serde_json::to_string(_query_embedding).map_err(|e| anyhow::anyhow!("{:?}", e))?;
     let mut stmt = conn.prepare(
         "SELECT entry_id FROM vec_entries WHERE embedding MATCH vec_f32(?1) ORDER BY distance LIMIT ?2",
     )?;
-    let rows = stmt.query_map(rusqlite::params![json_array, limit], |row| row.get::<_, String>(0))?;
+    let rows = stmt.query_map(rusqlite::params![json_array, limit], |row| {
+        row.get::<_, String>(0)
+    })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 

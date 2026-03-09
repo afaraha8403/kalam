@@ -3,25 +3,53 @@
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
   import Icon from '@iconify/svelte'
-  import type { HistoryEntry } from '../types'
+  import type { HistoryEntry, AggregateStats, Entry } from '../types'
+
+  export let navigate: (page: string) => void = () => {}
 
   let unlistenTranscription: (() => void) | null = null
 
-  // Gamification Stats (Static for now)
-  let stats = {
-    streak: 4,
-    totalWords: 12450,
-    avgWpm: 145,
-    timeSavedHours: 5.1 // Assuming 40 WPM typing speed
+  // Dashboard stats from daily_stats (loaded via get_aggregate_stats)
+  let stats: AggregateStats | null = null
+  let statsLoading = true
+
+  // Tasks and reminders due today
+  let tasksDueToday: Entry[] = []
+  let remindersDueToday: Entry[] = []
+  let todayIso = ''
+
+  // History State (recent only on home; full list on History page)
+  const RECENT_HISTORY_LIMIT = 5
+  let entries: HistoryEntry[] = []
+  let loading = true
+
+  function getTodayIso(): string {
+    const d = new Date()
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
   }
 
-  // History State
-  let entries: HistoryEntry[] = []
-  let searchQuery = ''
-  let loading = true
-  let exporting = false
+  async function loadStats() {
+    statsLoading = true
+    try {
+      stats = (await invoke('get_aggregate_stats')) as AggregateStats
+    } catch (e) {
+      console.error('Failed to load aggregate stats:', e)
+    } finally {
+      statsLoading = false
+    }
+  }
 
-  // Group entries by day
+  async function loadTasksAndRemindersToday() {
+    todayIso = getTodayIso()
+    try {
+      tasksDueToday = (await invoke('get_tasks_due_on', { date: todayIso, limit: 10 })) as Entry[]
+      remindersDueToday = (await invoke('get_reminders_due_on', { date: todayIso, limit: 10 })) as Entry[]
+    } catch (e) {
+      console.error('Failed to load tasks/reminders:', e)
+    }
+  }
+
+  // Group entries by day (for recent history)
   $: groupedEntries = entries.reduce((acc, entry) => {
     const date = new Date(entry.created_at)
     const today = new Date()
@@ -45,8 +73,12 @@
   }, {} as Record<string, HistoryEntry[]>)
 
   onMount(async () => {
+    todayIso = getTodayIso()
+    await loadStats()
+    await loadTasksAndRemindersToday()
     await loadHistory()
     unlistenTranscription = await listen('transcription-saved', () => {
+      loadStats()
       loadHistory()
     })
   })
@@ -58,61 +90,11 @@
   async function loadHistory() {
     loading = true
     try {
-      entries = await invoke('get_history', { limit: 100, offset: 0 })
+      entries = await invoke('get_history', { limit: RECENT_HISTORY_LIMIT, offset: 0 })
     } catch (e) {
       console.error('Failed to load history:', e)
     } finally {
       loading = false
-    }
-  }
-
-  let searchTimeout: ReturnType<typeof setTimeout>;
-  function handleSearch() {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(async () => {
-      if (!searchQuery.trim()) {
-        await loadHistory()
-        return
-      }
-      loading = true
-      try {
-        entries = await invoke('search_history', { query: searchQuery })
-      } catch (e) {
-        console.error('Search failed:', e)
-      } finally {
-        loading = false
-      }
-    }, 300);
-  }
-
-  async function clearHistory() {
-    if (!confirm('Are you sure you want to clear all history? This cannot be undone.')) {
-      return
-    }
-
-    try {
-      await invoke('clear_history')
-      entries = []
-    } catch (e) {
-      console.error('Failed to clear history:', e)
-    }
-  }
-
-  async function exportHistory(format: 'json' | 'csv' | 'txt') {
-    exporting = true
-    try {
-      const data = await invoke('export_history', { format })
-      const blob = new Blob([data as string], { type: 'text/plain' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `kalam-history.${format}`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      console.error('Export failed:', e)
-    } finally {
-      exporting = false
     }
   }
 
@@ -126,106 +108,123 @@
 </script>
 
 <div class="home-view">
-  <!-- Gamification Stats Row -->
+  <!-- Dashboard Stats Row -->
   <section class="stats-grid">
-    <!-- Streak -->
-    <div class="stat-card streak-card">
-      <div class="stat-icon-wrapper">
-        <Icon icon="ph:fire-duotone" class="stat-icon" />
+    {#if statsLoading}
+      <div class="stat-card loading-card">
+        <span class="stat-loading">Loading stats…</span>
       </div>
-      <div class="stat-content">
-        <span class="stat-label">Current Streak</span>
-        <div class="stat-value-row">
-          <span class="stat-value">{stats.streak}</span>
-          <span class="stat-unit">Days</span>
+    {:else}
+      <!-- Streak -->
+      <div class="stat-card streak-card">
+        <div class="stat-icon-wrapper">
+          <Icon icon="ph:fire-duotone" class="stat-icon" />
+        </div>
+        <div class="stat-content">
+          <span class="stat-label">Current Streak</span>
+          <div class="stat-value-row">
+            <span class="stat-value">{stats?.streak_days ?? 0}</span>
+            <span class="stat-unit">Days</span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- Time Saved -->
-    <div class="stat-card time-card">
-      <div class="stat-icon-wrapper">
-        <Icon icon="ph:clock-duotone" class="stat-icon" />
-      </div>
-      <div class="stat-content">
-        <span class="stat-label">Time Saved</span>
-        <div class="stat-value-row">
-          <span class="stat-value">{stats.timeSavedHours}</span>
-          <span class="stat-unit">hrs</span>
+      <!-- Time Saved -->
+      <div class="stat-card time-card">
+        <div class="stat-icon-wrapper">
+          <Icon icon="ph:clock-duotone" class="stat-icon" />
         </div>
-        <span class="stat-subtext">vs. typing at 40 WPM</span>
+        <div class="stat-content">
+          <span class="stat-label">Time Saved</span>
+          <div class="stat-value-row">
+            <span class="stat-value">{(stats?.time_saved_hours ?? 0).toFixed(1)}</span>
+            <span class="stat-unit">hrs</span>
+          </div>
+          <span class="stat-subtext">vs. typing at 40 WPM</span>
+        </div>
       </div>
-    </div>
 
-    <!-- Total Words -->
-    <div class="stat-card words-card">
-      <div class="stat-icon-wrapper">
-        <Icon icon="ph:text-aa-duotone" class="stat-icon" />
-      </div>
-      <div class="stat-content">
-        <span class="stat-label">Words Spoken</span>
-        <div class="stat-value-row">
-          <span class="stat-value">{stats.totalWords.toLocaleString()}</span>
+      <!-- Total Words -->
+      <div class="stat-card words-card">
+        <div class="stat-icon-wrapper">
+          <Icon icon="ph:text-aa-duotone" class="stat-icon" />
+        </div>
+        <div class="stat-content">
+          <span class="stat-label">Words Spoken</span>
+          <div class="stat-value-row">
+            <span class="stat-value">{(stats?.total_words ?? 0).toLocaleString()}</span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- WPM -->
-    <div class="stat-card speed-card">
-      <div class="stat-icon-wrapper">
-        <Icon icon="ph:lightning-duotone" class="stat-icon" />
-      </div>
-      <div class="stat-content">
-        <span class="stat-label">Average Speed</span>
-        <div class="stat-value-row">
-          <span class="stat-value">{stats.avgWpm}</span>
-          <span class="stat-unit">WPM</span>
+      <!-- Latency (today's avg) -->
+      <div class="stat-card speed-card">
+        <div class="stat-icon-wrapper">
+          <Icon icon="ph:lightning-duotone" class="stat-icon" />
+        </div>
+        <div class="stat-content">
+          <span class="stat-label">Latency (avg today)</span>
+          <div class="stat-value-row">
+            <span class="stat-value">{stats?.today_avg_latency_ms != null ? `${stats.today_avg_latency_ms}` : '—'}</span>
+            <span class="stat-unit">{stats?.today_avg_latency_ms != null ? 'ms' : ''}</span>
+          </div>
         </div>
       </div>
+    {/if}
+  </section>
+
+  <!-- Tasks & Reminders due today -->
+  <section class="dashboard-row">
+    <div class="dashboard-widget">
+      <header class="widget-header">
+        <Icon icon="ph:check-square-duotone" class="widget-icon" />
+        <h2>Tasks due today</h2>
+        {#if tasksDueToday.length > 0}
+          <button class="link-btn" on:click={() => navigate('tasks')}>See all</button>
+        {/if}
+      </header>
+      {#if tasksDueToday.length === 0}
+        <p class="widget-empty">No tasks due today</p>
+      {:else}
+        <ul class="widget-list">
+          {#each tasksDueToday.slice(0, 5) as task (task.id)}
+            <li class="widget-item">
+              <span class="widget-item-title">{task.title || task.content?.slice(0, 40) || 'Task'}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+    <div class="dashboard-widget">
+      <header class="widget-header">
+        <Icon icon="ph:bell-duotone" class="widget-icon" />
+        <h2>Reminders today</h2>
+        {#if remindersDueToday.length > 0}
+          <button class="link-btn" on:click={() => navigate('reminders')}>See all</button>
+        {/if}
+      </header>
+      {#if remindersDueToday.length === 0}
+        <p class="widget-empty">No reminders today</p>
+      {:else}
+        <ul class="widget-list">
+          {#each remindersDueToday.slice(0, 5) as rem (rem.id)}
+            <li class="widget-item">
+              <span class="widget-item-title">{rem.title || rem.content?.slice(0, 40) || 'Reminder'}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
   </section>
 
-  <!-- History Section -->
+  <!-- Recent History (full history on History page) -->
   <section class="history-section">
     <header class="section-header">
       <div class="title-wrapper">
         <Icon icon="ph:clock-counter-clockwise-duotone" class="header-icon" />
-        <h2>History</h2>
+        <h2>Recent</h2>
       </div>
-      
-      <div class="header-actions">
-        <div class="search-wrapper">
-          <Icon icon="ph:magnifying-glass-duotone" class="search-icon" />
-          <input
-            type="text"
-            placeholder="Search history..."
-            bind:value={searchQuery}
-            on:input={handleSearch}
-          />
-        </div>
-
-        <div class="export-dropdown">
-          <button class="btn-ghost" disabled={exporting}>
-            <Icon icon="ph:export-duotone" />
-            <span>{exporting ? 'Exporting...' : 'Export'}</span>
-          </button>
-          <div class="dropdown-menu">
-            <button on:click={() => exportHistory('json')}>
-              <Icon icon="ph:file-json-duotone" /> JSON
-            </button>
-            <button on:click={() => exportHistory('csv')}>
-              <Icon icon="ph:file-csv-duotone" /> CSV
-            </button>
-            <button on:click={() => exportHistory('txt')}>
-              <Icon icon="ph:file-text-duotone" /> Text
-            </button>
-          </div>
-        </div>
-
-        <button class="btn-ghost danger" on:click={clearHistory} title="Clear All History">
-          <Icon icon="ph:trash-duotone" />
-        </button>
-      </div>
+      <button class="link-btn" on:click={() => navigate('history')}>See all →</button>
     </header>
 
     {#if loading}
@@ -238,8 +237,8 @@
         <div class="empty-icon-wrapper">
           <Icon icon="ph:microphone-stage-duotone" class="empty-icon" />
         </div>
-        <h3>No transcriptions found</h3>
-        <p>{searchQuery ? 'Try a different search term.' : 'Press Ctrl+Win to start dictating!'}</p>
+        <h3>No transcriptions yet</h3>
+        <p>Press Ctrl+Win to start dictating!</p>
       </div>
     {:else}
       <div class="timeline">
@@ -385,6 +384,98 @@
     font-size: 12px;
     color: var(--text-muted);
     margin-top: 4px;
+  }
+
+  .loading-card {
+    grid-column: 1 / -1;
+    justify-content: center;
+    align-items: center;
+    min-height: 100px;
+  }
+
+  .stat-loading {
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+
+  /* Dashboard widgets: tasks & reminders today */
+  .dashboard-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 24px;
+  }
+
+  .dashboard-widget {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 20px;
+    padding: 24px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
+  }
+
+  .widget-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  .widget-header h2 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--navy-deep);
+    margin: 0;
+    flex: 1;
+  }
+
+  .widget-icon {
+    font-size: 22px;
+    color: var(--primary);
+  }
+
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--primary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+
+  .link-btn:hover {
+    text-decoration: underline;
+  }
+
+  .widget-empty {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  .widget-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .widget-item {
+    font-size: 14px;
+    color: var(--navy-deep);
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .widget-item:last-child {
+    border-bottom: none;
+  }
+
+  .widget-item-title {
+    font-weight: 500;
   }
 
   /* History Section */

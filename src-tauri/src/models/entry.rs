@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum EntryType {
@@ -11,6 +12,7 @@ pub enum EntryType {
     Snippet,
 }
 
+#[allow(dead_code)]
 impl EntryType {
     pub fn as_str(&self) -> &'static str {
         match self {

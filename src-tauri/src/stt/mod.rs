@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
 pub mod groq;
-pub mod openai;
+pub mod lifecycle;
 pub mod models;
+pub mod openai;
 pub mod provider;
 pub mod sensevoice;
-pub mod lifecycle;
 
 use crate::audio::vad::{VADConfig, VADProcessor};
 use crate::stt::provider::STTProvider;
@@ -32,18 +32,21 @@ impl STTManager {
 /// Chunks are built from VAD segments with 0.5s overlap; each chunk is sent with
 /// the previous chunk's text as prompt for consistent capitalization/context.
 /// If `language_hint` is Some (e.g. "en"), the provider may use it for the API.
+/// If `vocabulary` is Some (e.g. dictionary terms), it is used as prompt for the first chunk only (cloud STT).
 pub fn transcribe_chunked(
     provider: &dyn STTProvider,
     audio: &[f32],
     sample_rate: u32,
     vad_config: &VADConfig,
     language_hint: Option<&str>,
+    vocabulary: Option<&str>,
 ) -> anyhow::Result<TranscriptionResult> {
     let mut vad = VADProcessor::new(vad_config.clone())?;
     let segments = vad.process(audio);
 
     if segments.is_empty() {
-        return provider.transcribe_blocking(audio, sample_rate, None, language_hint);
+        let prompt = vocabulary;
+        return provider.transcribe_blocking(audio, sample_rate, prompt, language_hint);
     }
 
     let mut combined_text = String::new();
@@ -51,6 +54,7 @@ pub fn transcribe_chunked(
     let mut confidence_sum = 0.0f32;
     let mut count = 0usize;
     let mut language = String::new();
+    let mut combined_prompt_buf = String::new();
 
     for (start, end) in segments {
         let chunk_start = start.saturating_sub(CHUNK_OVERLAP_SAMPLES);
@@ -58,7 +62,28 @@ pub fn transcribe_chunked(
         if chunk.len() < 1600 {
             continue;
         }
-        let prompt = prev_text.as_deref();
+        // First chunk: vocabulary only. Later chunks: prev_text + vocabulary so custom words apply every segment.
+        let prompt: Option<&str> = match (prev_text.as_deref(), vocabulary) {
+            (None, Some(v)) => Some(v),
+            (Some(prev), None) => Some(prev),
+            (Some(prev), Some(v)) => {
+                combined_prompt_buf.clear();
+                combined_prompt_buf.push_str(prev);
+                combined_prompt_buf.push_str(", ");
+                combined_prompt_buf.push_str(v);
+                if combined_prompt_buf.len() > 800 {
+                    let keep_from = combined_prompt_buf.len().saturating_sub(800);
+                    let tail: String = combined_prompt_buf.chars().skip(keep_from).collect();
+                    combined_prompt_buf = tail.trim_start_matches([',', ' ']).to_string();
+                }
+                if combined_prompt_buf.is_empty() {
+                    None
+                } else {
+                    Some(combined_prompt_buf.as_str())
+                }
+            }
+            (None, None) => None,
+        };
         let result = provider.transcribe_blocking(chunk, sample_rate, prompt, language_hint)?;
         let t = result.text.trim();
         if !t.is_empty() {
@@ -77,8 +102,16 @@ pub fn transcribe_chunked(
 
     Ok(TranscriptionResult {
         text: combined_text,
-        confidence: if count > 0 { confidence_sum / count as f32 } else { 0.9 },
-        language: if language.is_empty() { "unknown".to_string() } else { language },
+        confidence: if count > 0 {
+            confidence_sum / count as f32
+        } else {
+            0.9
+        },
+        language: if language.is_empty() {
+            "unknown".to_string()
+        } else {
+            language
+        },
     })
 }
 

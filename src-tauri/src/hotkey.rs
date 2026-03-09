@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use rdev::{listen, Event, EventType, Key};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 lazy_static! {
     static ref CTRL_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -10,6 +10,16 @@ lazy_static! {
     static ref META_PRESSED: AtomicBool = AtomicBool::new(false);
     /// Set when dictation hotkey is active (used on Windows to suppress Start Menu on Win key release).
     pub(crate) static ref HOTKEY_ACTIVE: AtomicBool = AtomicBool::new(false);
+    /// When true, global hotkey callbacks are not fired (e.g. while user is setting a hotkey in UI).
+    static ref HOTKEYS_PAUSED: AtomicBool = AtomicBool::new(false);
+
+    /// Global registry of hotkeys that can be updated dynamically
+    pub static ref HOTKEY_REGISTRATIONS: Arc<Mutex<Vec<HotkeyRegistration>>> = Arc::new(Mutex::new(Vec::new()));
+}
+
+/// Pause or resume global hotkey handling. Used when the user is capturing a new hotkey in settings.
+pub fn set_hotkeys_paused(paused: bool) {
+    HOTKEYS_PAUSED.store(paused, Ordering::SeqCst);
 }
 
 /// One hotkey registration with its own active state and callbacks.
@@ -54,7 +64,9 @@ pub fn parse_rdev_hotkey(hotkey_str: &str) -> anyhow::Result<RdevHotkey> {
 
     let has_any_modifier = hotkey.ctrl || hotkey.alt || hotkey.shift || hotkey.meta;
     if hotkey.main_key.is_none() && !has_any_modifier {
-        return Err(anyhow::anyhow!("Hotkey must have at least one key or modifier"));
+        return Err(anyhow::anyhow!(
+            "Hotkey must have at least one key or modifier"
+        ));
     }
 
     Ok(hotkey)
@@ -138,18 +150,48 @@ pub fn start_listener(registrations: Vec<HotkeyRegistration>) {
         crate::hotkey_win::start_win_key_suppression();
     }
 
-    let regs = Arc::new(registrations);
+    {
+        let mut regs = HOTKEY_REGISTRATIONS.lock().unwrap();
+        *regs = registrations;
+    }
+
+    // Only start the listener thread once
+    static LISTENER_STARTED: AtomicBool = AtomicBool::new(false);
+    if LISTENER_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
 
     std::thread::spawn(move || {
         if let Err(error) = listen(move |event| {
-            handle_event_multi(event, regs.clone());
+            handle_event_multi(event);
         }) {
             log::error!("Error in rdev listener: {:?}", error);
         }
     });
 }
 
-fn handle_event_multi(event: Event, regs: Arc<Vec<HotkeyRegistration>>) {
+pub fn update_registrations(registrations: Vec<HotkeyRegistration>) {
+    let any_meta = registrations.iter().any(|r| r.target.meta);
+    #[cfg(windows)]
+    if any_meta {
+        crate::hotkey_win::start_win_key_suppression();
+    }
+
+    let mut regs = HOTKEY_REGISTRATIONS.lock().unwrap();
+    *regs = registrations;
+}
+
+fn handle_event_multi(event: Event) {
+    if HOTKEYS_PAUSED.load(Ordering::SeqCst) {
+        if let EventType::KeyPress(k) = event.event_type {
+            update_modifiers(k, true);
+        }
+        if let EventType::KeyRelease(k) = event.event_type {
+            update_modifiers(k, false);
+        }
+        return;
+    }
+
     let key = match event.event_type {
         EventType::KeyPress(k) => {
             update_modifiers(k, true);
@@ -164,6 +206,7 @@ fn handle_event_multi(event: Event, regs: Arc<Vec<HotkeyRegistration>>) {
 
     match event.event_type {
         EventType::KeyPress(_) => {
+            let regs = HOTKEY_REGISTRATIONS.lock().unwrap();
             for (idx, reg) in regs.iter().enumerate() {
                 let activated = match reg.target.main_key {
                     Some(main_key) => {
@@ -188,6 +231,7 @@ fn handle_event_multi(event: Event, regs: Arc<Vec<HotkeyRegistration>>) {
             }
         }
         EventType::KeyRelease(_) => {
+            let regs = HOTKEY_REGISTRATIONS.lock().unwrap();
             for (idx, reg) in regs.iter().enumerate() {
                 if !reg.active.load(Ordering::SeqCst) {
                     continue;
@@ -213,8 +257,14 @@ fn handle_event_multi(event: Event, regs: Arc<Vec<HotkeyRegistration>>) {
 fn is_modifier_key(key: Key) -> bool {
     matches!(
         key,
-        Key::ControlLeft | Key::ControlRight | Key::Alt | Key::AltGr |
-        Key::ShiftLeft | Key::ShiftRight | Key::MetaLeft | Key::MetaRight
+        Key::ControlLeft
+            | Key::ControlRight
+            | Key::Alt
+            | Key::AltGr
+            | Key::ShiftLeft
+            | Key::ShiftRight
+            | Key::MetaLeft
+            | Key::MetaRight
     )
 }
 

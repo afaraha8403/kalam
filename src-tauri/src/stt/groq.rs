@@ -2,8 +2,8 @@
 
 use reqwest::blocking::multipart::{Form, Part};
 
-use super::TranscriptionResult;
 use super::provider::STTProvider;
+use super::TranscriptionResult;
 
 pub struct GroqProvider {
     api_key: String,
@@ -38,23 +38,36 @@ impl STTProvider for GroqProvider {
             .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
             .collect();
 
-        log::info!("Creating WAV: {} samples at {}Hz", samples_i16.len(), sample_rate);
+        log::info!(
+            "Creating WAV: {} samples at {}Hz",
+            samples_i16.len(),
+            sample_rate
+        );
         let wav_data = create_wav(&samples_i16, sample_rate, 1)?;
 
         let mut form = Form::new()
-            .part("file", Part::bytes(wav_data)
-                .file_name("audio.wav")
-                .mime_str("audio/wav")?)
+            .part(
+                "file",
+                Part::bytes(wav_data)
+                    .file_name("audio.wav")
+                    .mime_str("audio/wav")?,
+            )
             .text("model", self.model.clone())
             .text("response_format", "verbose_json");
         if let Some(lang) = language_hint {
             form = form.text("language", lang.to_string());
         }
         if let Some(p) = prompt {
+            log::info!(
+                "Groq transcription prompt ({} chars): {:?}",
+                p.len(),
+                p.chars().take(100).collect::<String>()
+            );
             form = form.text("prompt", p.to_string());
         }
 
-        let response = self.client
+        let response = self
+            .client
             .post("https://api.groq.com/openai/v1/audio/transcriptions")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
@@ -70,7 +83,11 @@ impl STTProvider for GroqProvider {
 
         Ok(TranscriptionResult {
             text: result.text,
-            confidence: result.segments.first().map(|s| s.avg_logprob as f32).unwrap_or(0.9),
+            confidence: result
+                .segments
+                .first()
+                .map(|s| s.avg_logprob as f32)
+                .unwrap_or(0.9),
             language: result.language.unwrap_or_else(|| "unknown".to_string()),
         })
     }
@@ -86,11 +103,11 @@ impl STTProvider for GroqProvider {
 
 pub async fn validate_key(api_key: &str) -> anyhow::Result<bool> {
     log::info!("Validating Groq API key...");
-    
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
-    
+
     let response = client
         .get("https://api.groq.com/openai/v1/models")
         .header("Authorization", format!("Bearer {}", api_key))
@@ -99,13 +116,17 @@ pub async fn validate_key(api_key: &str) -> anyhow::Result<bool> {
 
     let status = response.status();
     log::info!("Groq API response status: {}", status);
-    
+
     if !status.is_success() {
         let error_text = response.text().await.unwrap_or_default();
-        log::error!("Groq API key validation failed: {} - {}", status, error_text);
+        log::error!(
+            "Groq API key validation failed: {} - {}",
+            status,
+            error_text
+        );
         return Err(anyhow::anyhow!("API returned {}: {}", status, error_text));
     }
-    
+
     log::info!("Groq API key validation successful");
     Ok(true)
 }

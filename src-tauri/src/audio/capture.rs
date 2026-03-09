@@ -49,7 +49,7 @@ impl AudioCapture {
 
     pub fn set_device(&mut self, device_id: &str) -> anyhow::Result<()> {
         let host = cpal::default_host();
-        
+
         // Get the new device
         let new_device = if device_id == "default" || device_id.is_empty() || device_id == "null" {
             host.default_input_device()
@@ -58,7 +58,7 @@ impl AudioCapture {
             // Try to find the device by matching IDs
             let input_devices = host.input_devices()?;
             let mut found_device = None;
-            
+
             for (index, device) in input_devices.enumerate() {
                 let expected_id = format!("device_{}", index);
                 if expected_id == device_id {
@@ -66,18 +66,19 @@ impl AudioCapture {
                     break;
                 }
             }
-            
-            found_device.or_else(|| host.default_input_device())
+
+            found_device
+                .or_else(|| host.default_input_device())
                 .ok_or_else(|| anyhow::anyhow!("Device '{}' not found", device_id))?
         };
-        
+
         // Get the config for the new device
         let new_config = new_device.default_input_config()?;
         log::info!("Switched to device with config: {:?}", new_config);
-        
+
         self.device = new_device;
         self.config = new_config;
-        
+
         Ok(())
     }
 
@@ -100,11 +101,12 @@ impl AudioCapture {
             Ok(devices) => devices.count(),
             Err(_) => return false,
         };
-        if count <= n {
-            if self.set_device("default").is_ok() {
-                log::info!("Audio device {} disconnected, fell back to default", device_id);
-                return true;
-            }
+        if count <= n && self.set_device("default").is_ok() {
+            log::info!(
+                "Audio device {} disconnected, fell back to default",
+                device_id
+            );
+            return true;
         }
         false
     }
@@ -129,9 +131,15 @@ impl AudioCapture {
 
         // Build and start the stream
         let stream = match sample_format {
-            SampleFormat::F32 => self.build_stream_f32(is_recording.clone(), audio_buffer.clone(), channels)?,
-            SampleFormat::I16 => self.build_stream_i16(is_recording.clone(), audio_buffer.clone(), channels)?,
-            SampleFormat::U16 => self.build_stream_u16(is_recording.clone(), audio_buffer.clone(), channels)?,
+            SampleFormat::F32 => {
+                self.build_stream_f32(is_recording.clone(), audio_buffer.clone(), channels)?
+            }
+            SampleFormat::I16 => {
+                self.build_stream_i16(is_recording.clone(), audio_buffer.clone(), channels)?
+            }
+            SampleFormat::U16 => {
+                self.build_stream_u16(is_recording.clone(), audio_buffer.clone(), channels)?
+            }
             _ => return Err(anyhow::anyhow!("Unsupported sample format")),
         };
 
@@ -180,8 +188,7 @@ impl AudioCapture {
         let sum: f32 = slice.iter().map(|s| s * s).sum();
         let rms = (sum / slice.len() as f32).sqrt();
         // Scale so normal speech (~0.02–0.1 RMS) gives ~20–80%; shouting can hit 100%
-        let normalized = (rms * 10.0).min(1.0);
-        normalized
+        (rms * 10.0).min(1.0)
     }
 
     /// Stop recording and return (level 0-1, samples, sample_rate) for test playback.
@@ -300,7 +307,9 @@ impl AudioCapture {
                         })
                         .collect()
                 } else {
-                    data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).collect()
+                    data.iter()
+                        .map(|&s| (s as f32 - 32768.0) / 32768.0)
+                        .collect()
                 };
 
                 if let Ok(mut buf) = audio_buffer.lock() {

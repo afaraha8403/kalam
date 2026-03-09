@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use tauri_plugin_shell::{process::CommandChild, ShellExt};
 use tokio::sync::Mutex;
-use tauri_plugin_shell::{ShellExt, process::CommandChild};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum ModelStatus {
@@ -68,10 +68,11 @@ impl LocalModelManager {
             _ => return Err(anyhow::anyhow!("Unsupported local model")),
         };
 
-        // For now, we'll start it in a generic way. 
+        // For now, we'll start it in a generic way.
         // In a real implementation, it should start a WebSocket or HTTP server.
         // E.g. sherpa-onnx-offline-websocket-server
-        let (mut rx, child) = self.app_handle
+        let (mut rx, child) = self
+            .app_handle
             .shell()
             .sidecar(sidecar_name)
             .map_err(|e| anyhow::anyhow!("Sidecar not found: {}", e))?
@@ -91,7 +92,7 @@ impl LocalModelManager {
         let statuses_clone = self.statuses.clone();
         let processes_clone = self.processes.clone();
         let model_id_clone = model_id.to_string();
-        
+
         tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
                 match event {
@@ -122,7 +123,9 @@ impl LocalModelManager {
     pub async fn stop_model(&self, model_id: &str) -> anyhow::Result<()> {
         let mut processes = self.processes.lock().await;
         if let Some(child) = processes.remove(model_id) {
-            child.kill().map_err(|e| anyhow::anyhow!("Failed to kill sidecar: {}", e))?;
+            child
+                .kill()
+                .map_err(|e| anyhow::anyhow!("Failed to kill sidecar: {}", e))?;
             self.set_status(model_id, ModelStatus::Stopped).await;
         }
         Ok(())
@@ -135,7 +138,7 @@ impl LocalModelManager {
 
     pub async fn delete_model(&self, model_id: &str) -> anyhow::Result<()> {
         self.stop_model(model_id).await?;
-        
+
         let manifest = crate::stt::models::known_models()
             .into_iter()
             .find(|m| m.id == model_id)
@@ -149,7 +152,7 @@ impl LocalModelManager {
                 tokio::fs::remove_file(model_path).await?;
             }
         }
-        
+
         self.set_status(model_id, ModelStatus::NotInstalled).await;
         Ok(())
     }

@@ -17,12 +17,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/kalam-voice/kalam.git"
+    "url": "https://github.com/afaraha8403/kalam.git"
   },
-  "homepage": "https://github.com/kalam-voice/kalam#readme",
+  "homepage": "https://github.com/afaraha8403/kalam#readme",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/kalam-voice/kalam/issues"
+    "url": "https://github.com/afaraha8403/kalam/issues"
   },
   "scripts": {
     "dev": "vite",
@@ -31,6 +31,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "tauri:build:unsigned": "tauri build --no-sign",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:unit": "vitest run",
     "kill": "node scripts/kill-project.js"
@@ -44,7 +45,8 @@
     "@tauri-apps/plugin-updater": "^2.0.0",
     "dompurify": "^3.3.2",
     "marked": "^17.0.4",
-    "posthog-js": "^1.359.0"
+    "posthog-js": "^1.359.0",
+    "rrule": "^2.8.1"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^3.0.0",

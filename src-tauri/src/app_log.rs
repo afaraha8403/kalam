@@ -163,9 +163,8 @@ pub fn get_snapshot() -> String {
 /// Export all logs from the database as CSV. Returns the CSV string and the suggested filename.
 pub fn export_logs_csv() -> anyhow::Result<(String, String)> {
     let conn = db::open_db()?;
-    let mut stmt = conn.prepare(
-        "SELECT id, level, message, module, timestamp FROM logs ORDER BY timestamp ASC",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT id, level, message, module, timestamp FROM logs ORDER BY timestamp ASC")?;
     let mut csv = String::from("id,level,message,module,timestamp\n");
     let rows = stmt.query_map([], |row| {
         Ok((
@@ -184,6 +183,9 @@ pub fn export_logs_csv() -> anyhow::Result<(String, String)> {
             id, level, message_escaped, module, timestamp
         ));
     }
-    let filename = format!("kalam-logs-{}.csv", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+    let filename = format!(
+        "kalam-logs-{}.csv",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    );
     Ok((csv, filename))
 }

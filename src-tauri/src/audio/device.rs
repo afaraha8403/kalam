@@ -25,7 +25,7 @@ pub fn list_devices() -> anyhow::Result<Vec<AudioDevice>> {
             .unwrap_or_else(|_| format!("Input device {}", index + 1));
         let is_default = default_name
             .as_ref()
-            .map_or(false, |default| default.trim() == name.trim());
+            .is_some_and(|default| default.trim() == name.trim());
         let id = if is_default {
             "default".to_string()
         } else {

@@ -4,64 +4,240 @@
   import type { Entry } from '../../types'
   import Icon from '@iconify/svelte'
   import { selectedTaskId } from '../../lib/taskDetailStore'
+  import { RRule, rrulestr } from 'rrule'
+  import SidePanel from '../ui/SidePanel.svelte'
+  import SearchFilterBar from '../ui/SearchFilterBar.svelte'
 
   export let onNavigateToPage: ((page: 'notes' | 'tasks') => void) | undefined = undefined
 
   let entries: Entry[] = []
   let loading = true
   let error: string | null = null
-  let newContent = ''
-  let newReminderAt = ''
-  let newRrulePreset = 'none'
-  let isComposerExpanded = false
-  let editingEntry: Entry | null = null
-  let editContent = ''
-  let editReminderAt = ''
-  let editRrulePreset: string = 'none'
+  let searchQuery = ''
 
-  const RRULE_PRESETS: { value: string; label: string; rrule: string | null }[] = [
-    { value: 'none', label: 'None', rrule: null },
-    { value: 'daily', label: 'Daily', rrule: 'FREQ=DAILY' },
-    { value: 'weekly', label: 'Weekly', rrule: 'FREQ=WEEKLY' },
-    { value: 'monthly', label: 'Monthly', rrule: 'FREQ=MONTHLY' }
+  // Panel State
+  let isPanelOpen = false
+  let panelMode: 'add' | 'edit' = 'add'
+  let panelReminderId: string | null = null
+  let draftContent = ''
+  let draftReminderAt = ''
+  let draftRruleRaw: string | null = null
+  let draftRrulePreset = 'none'
+
+  // Custom RRule Modal State
+  let showCustomModal = false
+  let customFreq = 'WEEKLY'
+  let customInterval = 1
+  let customDays: string[] = []
+  let customEndType = 'never'
+  let customUntil = ''
+  let customCount = 1
+  let previousPreset = 'none'
+
+  const DAYS_OF_WEEK = [
+    { value: 'SU', label: 'S' },
+    { value: 'MO', label: 'M' },
+    { value: 'TU', label: 'T' },
+    { value: 'WE', label: 'W' },
+    { value: 'TH', label: 'T' },
+    { value: 'FR', label: 'F' },
+    { value: 'SA', label: 'S' }
   ]
 
-  function openEdit(entry: Entry) {
+  $: draftPresets = getDynamicPresets(draftReminderAt, draftRruleRaw)
+
+  function getDynamicPresets(dateStr: string | null, currentRaw: string | null) {
+    const base = [
+      { value: 'none', label: 'Does not repeat', rrule: null },
+      { value: 'daily', label: 'Daily', rrule: 'FREQ=DAILY' },
+    ]
+    if (!dateStr) {
+      base.push({ value: 'weekly', label: 'Weekly', rrule: 'FREQ=WEEKLY' })
+      base.push({ value: 'monthly', label: 'Monthly', rrule: 'FREQ=MONTHLY' })
+      base.push({ value: 'yearly', label: 'Annually', rrule: 'FREQ=YEARLY' })
+      base.push({ value: 'weekday', label: 'Every weekday (Monday to Friday)', rrule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' })
+    } else {
+      const d = new Date(dateStr)
+      if (!isNaN(d.getTime())) {
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+        const rruleDays = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA']
+        const dayName = days[d.getDay()]
+        const rruleDay = rruleDays[d.getDay()]
+        
+        const date = d.getDate()
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+        const monthName = monthNames[d.getMonth()]
+        
+        const weekOfMonth = Math.ceil(date / 7)
+        const isLast = (date + 7) > new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()
+        const prefix = isLast ? -1 : weekOfMonth
+        const weekStr = isLast ? 'last' : ['first', 'second', 'third', 'fourth', 'fifth'][weekOfMonth - 1]
+
+        base.push({ value: 'weekly', label: `Weekly on ${dayName}`, rrule: `FREQ=WEEKLY;BYDAY=${rruleDay}` })
+        base.push({ value: 'monthly', label: `Monthly on the ${weekStr} ${dayName}`, rrule: `FREQ=MONTHLY;BYDAY=${prefix}${rruleDay}` })
+        base.push({ value: 'yearly', label: `Annually on ${monthName} ${date}`, rrule: `FREQ=YEARLY;BYMONTH=${d.getMonth() + 1};BYMONTHDAY=${date}` })
+        base.push({ value: 'weekday', label: 'Every weekday (Monday to Friday)', rrule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' })
+      }
+    }
+    
+    if (currentRaw && !base.find(p => p.rrule === currentRaw)) {
+      base.push({ value: 'custom_saved', label: formatRRule(currentRaw), rrule: currentRaw })
+    }
+    
+    base.push({ value: 'custom', label: 'Custom...', rrule: 'custom' })
+    return base
+  }
+
+  function handlePresetChange() {
+    const preset = draftPresets.find(p => p.value === draftRrulePreset)
+    
+    if (preset?.value === 'custom') {
+      openCustomModal()
+    } else {
+      draftRruleRaw = preset?.rrule ?? null
+    }
+  }
+
+  function openCustomModal() {
+    previousPreset = draftRrulePreset
+    
+    customFreq = 'WEEKLY'
+    customInterval = 1
+    customDays = []
+    customEndType = 'never'
+    customUntil = ''
+    customCount = 1
+
+    if (draftRruleRaw) {
+      try {
+        const rule = rrulestr(draftRruleRaw)
+        const opts = rule.options
+        customFreq = ['YEARLY', 'MONTHLY', 'WEEKLY', 'DAILY', 'HOURLY', 'MINUTELY', 'SECONDLY'][opts.freq] || 'WEEKLY'
+        customInterval = opts.interval || 1
+        if (opts.byweekday) {
+          const rruleDays = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU']
+          customDays = opts.byweekday.map((d: any) => rruleDays[d.weekday])
+        }
+        if (opts.until) {
+          customEndType = 'until'
+          customUntil = opts.until.toISOString().slice(0, 10)
+        } else if (opts.count) {
+          customEndType = 'count'
+          customCount = opts.count
+        }
+      } catch (e) {
+        console.error('Failed to parse existing rrule for custom modal', e)
+      }
+    } else {
+      const d = new Date(draftReminderAt || Date.now())
+      const rruleDays = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA']
+      customDays = [rruleDays[d.getDay()]]
+    }
+    
+    showCustomModal = true
+  }
+
+  function cancelCustomModal() {
+    draftRrulePreset = previousPreset
+    showCustomModal = false
+  }
+
+  function saveCustomModal() {
+    const parts = [`FREQ=${customFreq}`]
+    if (customInterval > 1) parts.push(`INTERVAL=${customInterval}`)
+    if (customFreq === 'WEEKLY' && customDays.length > 0) {
+      parts.push(`BYDAY=${customDays.join(',')}`)
+    }
+    if (customEndType === 'until' && customUntil) {
+      const d = new Date(customUntil)
+      const untilStr = d.toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z'
+      parts.push(`UNTIL=${untilStr}`)
+    } else if (customEndType === 'count' && customCount > 0) {
+      parts.push(`COUNT=${customCount}`)
+    }
+
+    const rruleStr = parts.join(';')
+    
+    draftRruleRaw = rruleStr
+    draftRrulePreset = 'custom_saved'
+    
+    showCustomModal = false
+  }
+
+  function formatRRule(rruleStr: string | null) {
+    if (!rruleStr) return ''
+    try {
+      const rule = rrulestr(rruleStr)
+      const text = rule.toText()
+      if (!text) return rruleStr
+      return text.charAt(0).toUpperCase() + text.slice(1)
+    } catch (e) {
+      return rruleStr
+    }
+  }
+
+  function openAddPanel() {
+    panelMode = 'add'
+    panelReminderId = null
+    draftContent = ''
+    draftReminderAt = ''
+    draftRruleRaw = null
+    draftRrulePreset = 'none'
+    isPanelOpen = true
+  }
+
+  function openEditPanel(entry: Entry) {
     if (entry.entry_type !== 'reminder') return
-    editingEntry = entry
-    editContent = entry.content
-    editReminderAt = entry.reminder_at
+    panelMode = 'edit'
+    panelReminderId = entry.id
+    draftContent = entry.content
+    draftReminderAt = entry.reminder_at
       ? new Date(entry.reminder_at).toISOString().slice(0, 16)
       : ''
-    const preset = RRULE_PRESETS.find((p) => p.rrule === entry.rrule || (p.rrule === null && !entry.rrule))
-    editRrulePreset = preset?.value ?? 'none'
-  }
-
-  function closeEdit() {
-    editingEntry = null
-    editContent = ''
-    editReminderAt = ''
-    editRrulePreset = 'none'
-  }
-
-  async function saveEdit() {
-    if (!editingEntry || editingEntry.entry_type !== 'reminder') return
-    const content = editContent.trim()
-    if (!content) return
-    const preset = RRULE_PRESETS.find((p) => p.value === editRrulePreset)
-    const rrule = preset?.rrule ?? null
-    const reminderAt = editReminderAt.trim() || null
-    const updated: Entry = {
-      ...editingEntry,
-      content,
-      reminder_at: reminderAt,
-      rrule,
-      updated_at: new Date().toISOString()
+    draftRruleRaw = entry.rrule
+    
+    const presets = getDynamicPresets(draftReminderAt, draftRruleRaw)
+    const preset = presets.find((p) => p.rrule === entry.rrule || (p.rrule === null && !entry.rrule))
+    if (preset && preset.value !== 'custom') {
+      draftRrulePreset = preset.value
+    } else if (entry.rrule) {
+      draftRrulePreset = 'custom_saved'
+    } else {
+      draftRrulePreset = 'none'
     }
+    isPanelOpen = true
+  }
+
+  function closePanel() {
+    isPanelOpen = false
+    panelReminderId = null
+  }
+
+  async function savePanel() {
+    const content = draftContent.trim()
+    if (!content) return
+
+    const reminderAt = draftReminderAt.trim() || null
+
     try {
-      await updateEntry(updated)
-      entries = entries.map((e) => (e.id === updated.id ? updated : e))
-      closeEdit()
+      if (panelMode === 'add') {
+        const entry = newEntry('reminder', content, { reminder_at: reminderAt, rrule: draftRruleRaw })
+        await createEntry(entry)
+        entries = [entry, ...entries]
+      } else if (panelMode === 'edit' && panelReminderId) {
+        const original = entries.find(e => e.id === panelReminderId)
+        if (!original) return
+        const updated: Entry = {
+          ...original,
+          content,
+          reminder_at: reminderAt,
+          rrule: draftRruleRaw,
+          updated_at: new Date().toISOString()
+        }
+        await updateEntry(updated)
+        entries = entries.map((e) => (e.id === updated.id ? updated : e))
+      }
+      closePanel()
       await load()
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
@@ -81,28 +257,6 @@
     }
   }
 
-  async function addReminder() {
-    const content = newContent.trim()
-    if (!content) return
-    const reminderAt = newReminderAt.trim() || null
-    const preset = RRULE_PRESETS.find((p) => p.value === newRrulePreset)
-    const rrule = preset?.rrule ?? null
-    const entry = newEntry('reminder', content, { reminder_at: reminderAt, rrule })
-    try {
-      await createEntry(entry)
-      newContent = ''
-      newReminderAt = ''
-      newRrulePreset = 'none'
-      isComposerExpanded = false
-      entries = [entry, ...entries]
-      error = null
-      await load()
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e)
-      await load()
-    }
-  }
-
   async function toggleComplete(entry: Entry) {
     try {
       const updated = { ...entry, is_completed: !entry.is_completed, updated_at: new Date().toISOString() }
@@ -117,6 +271,7 @@
   async function remove(id: string) {
     try {
       entries = entries.filter(e => e.id !== id)
+      if (panelReminderId === id) closePanel()
       await deleteEntry(id)
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
@@ -124,7 +279,6 @@
     }
   }
 
-  /** Snooze: set reminder_at to 1 hour from now. */
   async function snooze(entry: Entry) {
     const inOneHour = new Date(Date.now() + 60 * 60 * 1000).toISOString()
     const updated = { ...entry, reminder_at: inOneHour, updated_at: new Date().toISOString() }
@@ -138,7 +292,6 @@
     }
   }
 
-  /** Clear reminder_at on a note or task so it leaves the Reminders list. */
   async function clearReminder(entry: Entry) {
     if (entry.entry_type === 'reminder') return
     try {
@@ -181,21 +334,16 @@
     }
   }
 
-  function expandComposer() {
-    isComposerExpanded = true
-  }
+  $: filteredEntries = entries.filter(e => {
+    const matchesSearch = (e.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          (e.content || '').toLowerCase().includes(searchQuery.toLowerCase())
+    return matchesSearch
+  })
 
-  function collapseComposer() {
-    if (!newContent.trim() && !newReminderAt) {
-      isComposerExpanded = false
-    }
-  }
-
-  /** Active: standalone reminders not completed, or any note/task with reminder. */
-  $: activeReminders = entries.filter(
+  $: activeReminders = filteredEntries.filter(
     (e) => (e.entry_type === 'reminder' ? !e.is_completed : true)
   )
-  $: completedReminders = entries.filter(
+  $: completedReminders = filteredEntries.filter(
     (e) => e.entry_type === 'reminder' && !!e.is_completed
   )
 
@@ -242,50 +390,14 @@
       </div>
       <p class="subtitle">Never forget an important detail or follow-up.</p>
     </div>
+    <div class="header-actions">
+      <button class="btn-primary" on:click={openAddPanel}>
+        <Icon icon="ph:plus-bold" /> Add Reminder
+      </button>
+    </div>
   </header>
 
-  <div class="composer-container" class:expanded={isComposerExpanded}>
-    <div class="composer-card">
-      <div class="input-wrapper">
-        <Icon icon="ph:plus-bold" class="input-icon" />
-        <input 
-          type="text" 
-          bind:value={newContent} 
-          placeholder="Remind me to..." 
-          class="content-input"
-          on:focus={expandComposer}
-          on:keydown={(e) => e.key === 'Enter' && addReminder()}
-        />
-      </div>
-      
-      {#if isComposerExpanded}
-        <div class="composer-details">
-          <div class="datetime-wrapper">
-            <Icon icon="ph:calendar-plus-duotone" class="detail-icon" />
-            <input 
-              type="datetime-local" 
-              bind:value={newReminderAt} 
-              class="datetime-input" 
-            />
-          </div>
-          <div class="datetime-wrapper">
-            <Icon icon="ph:arrows-clockwise-duotone" class="detail-icon" />
-            <select class="datetime-input rrule-select" bind:value={newRrulePreset} aria-label="Repeat">
-              {#each RRULE_PRESETS as preset}
-                <option value={preset.value}>{preset.label}</option>
-              {/each}
-            </select>
-          </div>
-        </div>
-        <div class="composer-actions">
-          <button type="button" class="btn-ghost" on:click={() => { newContent=''; newReminderAt=''; newRrulePreset='none'; isComposerExpanded=false; }}>Cancel</button>
-          <button type="button" class="btn-primary" on:click={addReminder} disabled={!newContent.trim()}>
-            <Icon icon="ph:bell-plus-bold" /> Add Reminder
-          </button>
-        </div>
-      {/if}
-    </div>
-  </div>
+  <SearchFilterBar bind:searchQuery placeholder="Search reminders..." />
 
   {#if error}
     <div class="state-container error-state">
@@ -306,6 +418,14 @@
       </div>
       <h3>No reminders</h3>
       <p>You're all clear! Add a new reminder above to get notified.</p>
+    </div>
+  {:else if filteredEntries.length === 0}
+    <div class="state-container empty-state">
+      <div class="empty-icon-wrapper">
+        <Icon icon="ph:magnifying-glass-duotone" class="empty-icon" />
+      </div>
+      <h3>No results found</h3>
+      <p>Try adjusting your search query.</p>
     </div>
   {:else}
     <div class="reminder-sections">
@@ -335,7 +455,7 @@
                         {#if entry.rrule}
                           <span class="reminder-repeat">
                             <Icon icon="ph:arrows-clockwise-duotone" />
-                            {entry.rrule}
+                            {formatRRule(entry.rrule)}
                           </span>
                         {/if}
                       </div>
@@ -344,7 +464,7 @@
                       <button class="action-btn" on:click={() => snooze(entry)} title="Snooze 1 hour">
                         <Icon icon="ph:clock-countdown-duotone" />
                       </button>
-                      <button class="action-btn" on:click={() => openEdit(entry)} title="Edit reminder">
+                      <button class="action-btn" on:click={() => openEditPanel(entry)} title="Edit reminder">
                         <Icon icon="ph:pencil-simple-duotone" />
                       </button>
                       <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete reminder">
@@ -441,26 +561,104 @@
     </div>
   {/if}
 
-  {#if editingEntry}
-    <div class="edit-modal-backdrop" role="presentation" on:click={closeEdit} on:keydown={(e) => e.key === 'Escape' && closeEdit()}>
-      <div class="edit-modal" role="dialog" aria-labelledby="edit-reminder-title" on:click|stopPropagation on:keydown|stopPropagation>
-        <h3 id="edit-reminder-title" class="edit-modal-title">Edit reminder</h3>
+  <SidePanel 
+    isOpen={isPanelOpen} 
+    title={panelMode === 'add' ? 'Add Reminder' : 'Edit Reminder'} 
+    on:close={closePanel}
+  >
+    <div slot="body" class="panel-form">
+      <div class="field">
+        <label for="edit-content">Content</label>
+        <input id="edit-content" type="text" class="edit-input" bind:value={draftContent} placeholder="Remind me to..." />
+      </div>
+      <div class="field">
+        <label for="edit-datetime">Date & time</label>
+        <input id="edit-datetime" type="datetime-local" class="edit-input" bind:value={draftReminderAt} />
+      </div>
+      <div class="field">
+        <label for="edit-rrule">Repeat</label>
+        <select id="edit-rrule" class="edit-select" bind:value={draftRrulePreset} on:change={handlePresetChange}>
+          {#each draftPresets as preset}
+            <option value={preset.value}>{preset.label}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+    <div slot="footer">
+      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
+      <button class="btn-primary" on:click={savePanel} disabled={!draftContent.trim()}>
+        <Icon icon="ph:check-bold" /> Save
+      </button>
+    </div>
+  </SidePanel>
+
+  {#if showCustomModal}
+    <div class="edit-modal-backdrop" role="button" tabindex="0" aria-label="Close modal" on:click={cancelCustomModal} on:keydown={(e) => e.key === 'Escape' && cancelCustomModal()}>
+      <div class="edit-modal custom-rrule-modal" role="dialog" aria-labelledby="custom-rrule-title" tabindex="-1" on:click|stopPropagation on:keydown|stopPropagation>
+        <h3 id="custom-rrule-title" class="edit-modal-title">Custom recurrence</h3>
         <div class="edit-modal-body">
-          <label class="edit-label" for="edit-content">Content</label>
-          <input id="edit-content" type="text" class="edit-input" bind:value={editContent} placeholder="Remind me to..." />
-          <label class="edit-label" for="edit-datetime">Date & time</label>
-          <input id="edit-datetime" type="datetime-local" class="edit-input" bind:value={editReminderAt} />
-          <label class="edit-label" for="edit-rrule">Repeat</label>
-          <select id="edit-rrule" class="edit-select" bind:value={editRrulePreset}>
-            {#each RRULE_PRESETS as preset}
-              <option value={preset.value}>{preset.label}</option>
-            {/each}
-          </select>
+          <div class="form-row">
+            <label class="edit-label" for="custom-interval">Repeat every</label>
+            <div class="interval-group">
+              <input id="custom-interval" type="number" min="1" class="edit-input num-input" bind:value={customInterval} />
+              <select class="edit-select" bind:value={customFreq}>
+                <option value="DAILY">day{customInterval > 1 ? 's' : ''}</option>
+                <option value="WEEKLY">week{customInterval > 1 ? 's' : ''}</option>
+                <option value="MONTHLY">month{customInterval > 1 ? 's' : ''}</option>
+                <option value="YEARLY">year{customInterval > 1 ? 's' : ''}</option>
+              </select>
+            </div>
+          </div>
+
+          {#if customFreq === 'WEEKLY'}
+            <div class="form-row">
+              <label class="edit-label" for="custom-repeat-days">Repeat on</label>
+              <div id="custom-repeat-days" class="days-group" role="group">
+                {#each DAYS_OF_WEEK as day}
+                  <button 
+                    type="button" 
+                    class="day-btn" 
+                    class:selected={customDays.includes(day.value)}
+                    on:click={() => {
+                      if (customDays.includes(day.value)) {
+                        customDays = customDays.filter(d => d !== day.value)
+                      } else {
+                        customDays = [...customDays, day.value]
+                      }
+                    }}
+                  >
+                    {day.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          <div class="form-row">
+            <label class="edit-label" for="custom-ends">Ends</label>
+            <div id="custom-ends" class="ends-group" role="group">
+              <label class="radio-label">
+                <input type="radio" name="endType" value="never" bind:group={customEndType} />
+                Never
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="endType" value="until" bind:group={customEndType} />
+                On
+                <input type="date" class="edit-input inline-input" bind:value={customUntil} disabled={customEndType !== 'until'} />
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="endType" value="count" bind:group={customEndType} />
+                After
+                <input type="number" min="1" class="edit-input inline-input num-input" bind:value={customCount} disabled={customEndType !== 'count'} />
+                occurrences
+              </label>
+            </div>
+          </div>
         </div>
         <div class="edit-modal-actions">
-          <button type="button" class="btn-ghost" on:click={closeEdit}>Cancel</button>
-          <button type="button" class="btn-primary" on:click={saveEdit} disabled={!editContent.trim()}>
-            <Icon icon="ph:check-bold" /> Save
+          <button type="button" class="btn-ghost" on:click={cancelCustomModal}>Cancel</button>
+          <button type="button" class="btn-primary" on:click={saveCustomModal}>
+            Done
           </button>
         </div>
       </div>
@@ -485,7 +683,11 @@
 
   /* Header */
   .page-header {
-    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 16px;
   }
 
   .header-content {
@@ -519,95 +721,9 @@
     padding-left: 34px;
   }
 
-  /* Composer */
-  .composer-container {
-    position: relative;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .composer-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 16px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
-    overflow: hidden;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    display: flex;
-    flex-direction: column;
-  }
-
-  .composer-container.expanded .composer-card {
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.02);
-    border-color: var(--primary);
-    transform: translateY(-2px);
-  }
-
-  .input-wrapper {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  .input-icon {
-    position: absolute;
-    left: 20px;
-    font-size: 20px;
-    color: var(--primary);
-    pointer-events: none;
-  }
-
-  .content-input {
-    width: 100%;
-    border: none;
-    padding: 16px 20px 16px 52px;
-    font-size: 16px;
-    color: var(--text-primary);
-    background: transparent;
-    font-family: inherit;
-  }
-
-  .content-input:focus {
-    outline: none;
-  }
-
-  .composer-details {
-    padding: 0 20px 16px 52px;
+  .header-actions {
     display: flex;
     gap: 12px;
-  }
-
-  .datetime-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--bg-input);
-    padding: 8px 12px;
-    border-radius: 10px;
-    border: 1px solid var(--border-subtle);
-  }
-
-  .detail-icon {
-    color: var(--text-muted);
-    font-size: 18px;
-  }
-
-  .datetime-input {
-    border: none;
-    background: transparent;
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 14px;
-    font-weight: 500;
-    outline: none;
-  }
-
-  .composer-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: 12px 16px;
-    background: var(--bg-app);
-    border-top: 1px solid var(--border-subtle);
   }
 
   .btn-primary {
@@ -924,11 +1040,40 @@
     color: var(--error);
   }
 
-  .rrule-select {
-    min-width: 100px;
+  /* Panel Form */
+  .panel-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
   }
 
-  /* Edit modal */
+  .field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+
+  .edit-input,
+  .edit-select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+  }
+
+  .edit-input:focus, .edit-select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-alpha);
+  }
+
+  /* Custom RRule Modal */
   .edit-modal-backdrop {
     position: fixed;
     inset: 0;
@@ -936,7 +1081,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 100;
+    z-index: 110; /* above side panel */
     padding: 20px;
   }
 
@@ -971,17 +1116,6 @@
     color: var(--text-secondary);
   }
 
-  .edit-input,
-  .edit-select {
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border-subtle);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: 14px;
-    font-family: inherit;
-  }
-
   .edit-modal-actions {
     display: flex;
     justify-content: flex-end;
@@ -990,15 +1124,81 @@
     border-top: 1px solid var(--border-subtle);
   }
 
+  .form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .interval-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .num-input {
+    width: 70px;
+  }
+
+  .days-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .day-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .day-btn:hover {
+    background: var(--bg-hover);
+  }
+
+  .day-btn.selected {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+  }
+
+  .ends-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .radio-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .inline-input {
+    padding: 6px 10px;
+    margin-left: 8px;
+  }
+
   @media (max-width: 768px) {
     .reminder-actions {
       opacity: 1;
     }
     .subtitle {
       padding-left: 0;
-    }
-    .composer-details {
-      padding-left: 20px;
     }
   }
 </style>

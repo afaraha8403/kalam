@@ -79,8 +79,10 @@ impl VADProcessor {
     }
 
     fn process_energy(&self, audio: &[f32]) -> Vec<(usize, usize)> {
-        let min_speech_samples = (self.config.min_speech_duration_sec * SAMPLE_RATE as f64) as usize;
-        let silence_timeout_samples = (self.config.silence_timeout_sec * SAMPLE_RATE as f64) as usize;
+        let min_speech_samples =
+            (self.config.min_speech_duration_sec * SAMPLE_RATE as f64) as usize;
+        let silence_timeout_samples =
+            (self.config.silence_timeout_sec * SAMPLE_RATE as f64) as usize;
         let speech_padding_samples = (self.config.speech_padding_sec * SAMPLE_RATE as f64) as usize;
 
         let mut segments = Vec::new();
@@ -96,18 +98,16 @@ impl VADProcessor {
                 if start.is_none() {
                     start = Some(i);
                 }
-            } else {
-                if let Some(s) = start {
-                    silence_run += 1;
-                    if silence_run >= silence_timeout_samples {
-                        let duration = i.saturating_sub(s);
-                        if duration >= min_speech_samples {
-                            let end = (i + speech_padding_samples).min(audio.len());
-                            segments.push((s, end));
-                        }
-                        start = None;
-                        silence_run = 0;
+            } else if let Some(s) = start {
+                silence_run += 1;
+                if silence_run >= silence_timeout_samples {
+                    let duration = i.saturating_sub(s);
+                    if duration >= min_speech_samples {
+                        let end = (i + speech_padding_samples).min(audio.len());
+                        segments.push((s, end));
                     }
+                    start = None;
+                    silence_run = 0;
                 }
             }
         }

@@ -5,16 +5,17 @@
   import { listen } from '@tauri-apps/api/event'
   import type { AppConfig, WaveformStyle, ExpandDirection } from '../types'
 
-  const KINDS = ['Hidden', 'Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error'] as const
+  const KINDS = ['Hidden', 'Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error', 'Status'] as const
   type OverlayEvent =
     | { kind: 'Hidden' }
     | { kind: 'Collapsed' }
     | { kind: 'Listening' }
     | { kind: 'ShortPress' }
-    | { kind: 'Recording'; level: number }
+    | { kind: 'Recording'; level: number; is_command: boolean }
     | { kind: 'Processing' }
     | { kind: 'Success' }
     | { kind: 'Error'; message: string }
+    | { kind: 'Status'; message: string; highlight?: string }
 
   let state: OverlayEvent = { kind: 'Hidden' }
   let prevLevel = 0
@@ -28,13 +29,15 @@
     const k = (p as { kind?: string }).kind
     if (typeof k !== 'string' || !KINDS.includes(k as typeof KINDS[number])) return false
     if (k === 'Recording') {
-      const rec = p as { level?: unknown }
+      const rec = p as { level?: unknown, is_command?: unknown }
       if (rec.level !== undefined && typeof rec.level !== 'number') return false
+      if (rec.is_command !== undefined && typeof rec.is_command !== 'boolean') return false
     }
     return true
   }
 
   $: rawLevel = state.kind === 'Recording' ? Number(state.level) || 0 : 0
+  $: isCommand = state.kind === 'Recording' ? Boolean(state.is_command) : false
 
   $: isExpanded = state.kind !== 'Collapsed' && state.kind !== 'Hidden'
 
@@ -197,6 +200,7 @@
   onMount(() => {
     let unlisten: (() => void) | null = null
     let unlistenSettings: (() => void) | null = null
+    let statusTimeout: ReturnType<typeof setTimeout> | null = null
 
     // Load initial settings
     invoke('get_settings').then((config) => {
@@ -209,6 +213,8 @@
       }
       if (cfg.hotkey) {
         hotkeyStr = cfg.hotkey
+      } else if (cfg.toggle_dictation_hotkey) {
+        hotkeyStr = cfg.toggle_dictation_hotkey
       }
     }).catch(console.error)
 
@@ -222,6 +228,8 @@
       }
       if (e.payload?.hotkey) {
         hotkeyStr = e.payload.hotkey
+      } else if (e.payload?.toggle_dictation_hotkey) {
+        hotkeyStr = e.payload.toggle_dictation_hotkey
       }
     }).then((fn) => {
       unlistenSettings = fn
@@ -229,13 +237,24 @@
 
     getCurrentWebviewWindow().listen<OverlayEvent>('overlay-state', (e) => {
       const p = e?.payload
-      if (isValidPayload(p)) state = p
+      if (isValidPayload(p)) {
+        state = p
+        
+        if (statusTimeout) clearTimeout(statusTimeout)
+        
+        if (p.kind === 'Status' || p.kind === 'Error' || p.kind === 'Success') {
+          statusTimeout = setTimeout(() => {
+            state = { kind: 'Collapsed' }
+          }, 3000)
+        }
+      }
     }).then((fn) => {
       unlisten = fn
     })
     return () => {
       unlisten?.()
       unlistenSettings?.()
+      if (statusTimeout) clearTimeout(statusTimeout)
     }
   })
 </script>
@@ -255,7 +274,7 @@
     {#if state.kind === 'Collapsed'}
       <!-- idle: just the pill shape itself, but with hover text -->
       <div class="hover-hint">
-        <span class="label">Hold <span class="hotkey-highlight">{hotkeyStr}</span> to start dictating</span>
+        <span class="label">Press <span class="hotkey-highlight">{hotkeyStr}</span> to dictate</span>
       </div>
     {:else if state.kind === 'Listening'}
       <div class="content listening">
@@ -266,6 +285,15 @@
       <div class="content hint">
         <span class="label">Hold longer to dictate</span>
       </div>
+    {:else if state.kind === 'Status'}
+      <div class="content status-message">
+        <span class="label">
+          {state.message}
+          {#if state.highlight}
+            <span class="highlight-text">{state.highlight}</span>
+          {/if}
+        </span>
+      </div>
     {:else if state.kind === 'Recording'}
       <div class="content waveform">
         <svg class="wave-svg" viewBox="0 0 {WAVE_POINTS} 24" preserveAspectRatio="none">
@@ -274,6 +302,11 @@
               <stop offset="0%" stop-color="#4fc1ff" stop-opacity="0.4" />
               <stop offset="50%" stop-color="#4fc1ff" stop-opacity="1" />
               <stop offset="100%" stop-color="#4fc1ff" stop-opacity="0.4" />
+            </linearGradient>
+            <linearGradient id="wave-grad-command" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#fb7185" stop-opacity="0.4" />
+              <stop offset="50%" stop-color="#fb7185" stop-opacity="1" />
+              <stop offset="100%" stop-color="#fb7185" stop-opacity="0.4" />
             </linearGradient>
             <filter id="wave-glow" x="-20%" y="-20%" width="140%" height="140%">
               <feGaussianBlur in="SourceGraphic" stdDeviation="0.8" result="blur" />
@@ -285,25 +318,25 @@
           </defs>
           <g>
             {#if waveformStyle === 'DoubleHelix'}
-              <polyline class="wave-line" points={waveData.points} fill="none" stroke="url(#wave-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" />
-              <polyline class="wave-line" points={waveData.points2} fill="none" stroke="url(#wave-grad)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" opacity="0.5" />
+              <polyline class="wave-line" points={waveData.points} fill="none" stroke={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" />
+              <polyline class="wave-line" points={waveData.points2} fill="none" stroke={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" opacity="0.5" />
             {:else if waveformStyle === 'Liquid'}
-              <polygon class="wave-line" points={waveData.points} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="0.8" />
+              <polygon class="wave-line" points={waveData.points} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke="none" filter="url(#wave-glow)" opacity="0.8" />
             {:else if waveformStyle === 'Waves'}
-              <polygon class="wave-line" points={waveData.points3} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="0.4" />
-              <polygon class="wave-line" points={waveData.points2} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="0.7" />
-              <polygon class="wave-line" points={waveData.points} fill="url(#wave-grad)" stroke="none" filter="url(#wave-glow)" opacity="1.0" />
+              <polygon class="wave-line" points={waveData.points3} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke="none" filter="url(#wave-glow)" opacity="0.4" />
+              <polygon class="wave-line" points={waveData.points2} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke="none" filter="url(#wave-glow)" opacity="0.7" />
+              <polygon class="wave-line" points={waveData.points} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke="none" filter="url(#wave-glow)" opacity="1.0" />
             {:else if waveformStyle === 'Bars'}
               {#each waveData.bars as bar}
-                <rect x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill="url(#wave-grad)" rx="1.5" filter="url(#wave-glow)" />
+                <rect x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} rx="1.5" filter="url(#wave-glow)" />
               {/each}
             {:else}
               <polyline
                 class="wave-line"
                 class:filled={waveformStyle === 'Symmetric'}
                 points={waveData.points}
-                fill={waveformStyle === 'Symmetric' ? "url(#wave-grad)" : "none"}
-                stroke={waveformStyle === 'Symmetric' ? "none" : "url(#wave-grad)"}
+                fill={waveformStyle === 'Symmetric' ? (isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)") : "none"}
+                stroke={waveformStyle === 'Symmetric' ? "none" : (isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)")}
                 stroke-width="1.5"
                 stroke-linecap="round"
                 stroke-linejoin="round"
@@ -326,10 +359,11 @@
         </svg>
       </div>
     {:else if state.kind === 'Error'}
-      <div class="content status-icon error-icon">
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <div class="content status-message error-message">
+        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" style="margin-right: 6px; flex-shrink: 0;">
           <path d="M5 5L13 13M13 5L5 13" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
+        <span class="label" style="color: #fca5a5 !important;">{state.message || 'Error'}</span>
       </div>
     {/if}
   </div>
@@ -385,8 +419,8 @@
     box-sizing: border-box;
     will-change: width, height, opacity;
     transition:
-      width 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
-      height 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
+      width 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+      height 0.4s cubic-bezier(0.16, 1, 0.3, 1),
       box-shadow 0.4s ease,
       opacity 0.3s ease;
     overflow: hidden;
@@ -405,10 +439,10 @@
     border: 1px solid rgba(255, 255, 255, 0.6) !important;
     cursor: default;
     transition:
-      width 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
-      height 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
-      box-shadow 0.2s ease,
-      opacity 0.2s ease;
+      width 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+      height 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 0.3s ease,
+      opacity 0.3s ease;
   }
 
   .blip.collapsed:hover {
@@ -419,7 +453,7 @@
   }
 
   .blip.expanded {
-    width: 200px;
+    width: 250px;
     min-width: 200px;
     height: 48px;
     min-height: 48px;
@@ -451,7 +485,7 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    animation: content-in 0.25s ease-out both;
+    animation: content-in 0.25s ease-out 0.1s both;
     width: auto;
     height: auto;
     max-width: 100%;
@@ -480,6 +514,23 @@
   .hint .label {
     font-size: 12px;
     color: rgba(255, 255, 255, 0.55) !important;
+  }
+
+  /* ── Status Message ── */
+  .status-message .label {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.9) !important;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 230px;
+  }
+
+  .highlight-text {
+    color: #4ade80;
+    font-weight: 600;
+    margin-left: 2px;
   }
 
   .hover-hint {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
+  import { invoke } from '@tauri-apps/api/core'
 
   export let value = ''
   export let onChange: (hotkey: string) => void
@@ -83,6 +84,7 @@
       e.preventDefault()
       e.stopPropagation()
     }
+    invoke('set_hotkeys_paused', { paused: true }).catch(() => {})
     isCapturing = true
     currentKeys = new Set()
     keysPressed = new Set()
@@ -97,6 +99,7 @@
   }
 
   function stopCapture() {
+    invoke('set_hotkeys_paused', { paused: false }).catch(() => {})
     isCapturing = false
     currentKeys = new Set()
     keysPressed = new Set()

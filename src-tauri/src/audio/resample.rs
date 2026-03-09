@@ -37,14 +37,8 @@ impl Resampler {
             oversampling_factor: 256,
             window: WindowFunction::BlackmanHarris2,
         };
-        let inner = SincFixedIn::<f32>::new(
-            ratio,
-            2.0,
-            params,
-            INPUT_BLOCK_LEN,
-            CHANNELS,
-        )
-        .map_err(|e| anyhow::anyhow!("Resampler init: {}", e))?;
+        let inner = SincFixedIn::<f32>::new(ratio, 2.0, params, INPUT_BLOCK_LEN, CHANNELS)
+            .map_err(|e| anyhow::anyhow!("Resampler init: {}", e))?;
 
         Ok(Self {
             inner: Some(inner),
@@ -102,10 +96,6 @@ pub fn resample_to_16k_mono(input: &[f32], input_sample_rate: u32) -> anyhow::Re
     if input_sample_rate == TARGET_SAMPLE_RATE {
         return Ok(input.to_vec());
     }
-    let mut r = Resampler::new(
-        input_sample_rate as usize,
-        TARGET_SAMPLE_RATE as usize,
-        1,
-    )?;
+    let mut r = Resampler::new(input_sample_rate as usize, TARGET_SAMPLE_RATE as usize, 1)?;
     r.process(input)
 }

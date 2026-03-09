@@ -2,8 +2,12 @@
 
 use super::TranscriptionResult;
 use crate::config::{STTConfig, STTMode};
-use std::pin::Pin;
 use std::future::Future;
+use std::pin::Pin;
+
+/// Future returned by STTProviderFactory::create.
+pub type CreateProviderFuture<'a> =
+    Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn STTProvider>>> + Send + 'a>>;
 
 pub struct STTProviderFactory;
 
@@ -18,14 +22,18 @@ pub fn create_provider_sync(config: &STTConfig) -> anyhow::Result<Box<dyn STTPro
                     .api_key
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
-                Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?) as Box<dyn STTProvider>)
+                Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?)
+                    as Box<dyn STTProvider>)
             }
             "openai" => {
                 let api_key = config
                     .api_key
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("OpenAI API key not set"))?;
-                Ok(Box::new(super::openai::OpenAIProvider::new(api_key.clone())?) as Box<dyn STTProvider>)
+                Ok(
+                    Box::new(super::openai::OpenAIProvider::new(api_key.clone())?)
+                        as Box<dyn STTProvider>,
+                )
             }
             _ => Err(anyhow::anyhow!("Unknown provider: {}", config.provider)),
         },
@@ -40,26 +48,32 @@ impl STTProviderFactory {
     pub fn create(
         config: &STTConfig,
         app_handle: Option<tauri::AppHandle>,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Box<dyn STTProvider>>> + Send + '_>> {
+    ) -> CreateProviderFuture<'_> {
         let config = config.clone();
         let app_handle = app_handle.clone();
         Box::pin(async move {
             match config.mode {
-                crate::config::STTMode::Cloud => {
-                    match config.provider.as_str() {
-                        "groq" => {
-                            let api_key = config.api_key.as_ref()
-                                .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
-                            Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?) as Box<dyn STTProvider>)
-                        }
-                        "openai" => {
-                            let api_key = config.api_key.as_ref()
-                                .ok_or_else(|| anyhow::anyhow!("OpenAI API key not set"))?;
-                            Ok(Box::new(super::openai::OpenAIProvider::new(api_key.clone())?) as Box<dyn STTProvider>)
-                        }
-                        _ => Err(anyhow::anyhow!("Unknown provider: {}", config.provider)),
+                crate::config::STTMode::Cloud => match config.provider.as_str() {
+                    "groq" => {
+                        let api_key = config
+                            .api_key
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
+                        Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?)
+                            as Box<dyn STTProvider>)
                     }
-                }
+                    "openai" => {
+                        let api_key = config
+                            .api_key
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("OpenAI API key not set"))?;
+                        Ok(
+                            Box::new(super::openai::OpenAIProvider::new(api_key.clone())?)
+                                as Box<dyn STTProvider>,
+                        )
+                    }
+                    _ => Err(anyhow::anyhow!("Unknown provider: {}", config.provider)),
+                },
                 crate::config::STTMode::Local => {
                     let handle = app_handle
                         .ok_or_else(|| anyhow::anyhow!("App handle required for Local STT"))?;
@@ -78,8 +92,7 @@ impl STTProviderFactory {
                         ));
                     }
                     Ok(Box::new(super::sensevoice::SenseVoiceProvider::new(
-                        handle,
-                        model_path,
+                        handle, model_path,
                     )) as Box<dyn STTProvider>)
                 }
                 crate::config::STTMode::Hybrid | crate::config::STTMode::Auto => {

@@ -40,7 +40,7 @@ fn ensure_key() -> anyhow::Result<[u8; 32]> {
     }
     let mut key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut key);
-    fs::write(&path, &key)?;
+    fs::write(&path, key)?;
     Ok(key)
 }
 
@@ -194,7 +194,10 @@ pub async fn search(query: &str) -> anyhow::Result<Vec<HistoryEntry>> {
 pub async fn clear() -> anyhow::Result<()> {
     let conn = db::open_db()?;
     conn.execute("DELETE FROM entries WHERE entry_type = 'history'", [])?;
-    conn.execute("DELETE FROM vec_entries WHERE entry_id NOT IN (SELECT id FROM entries)", [])?;
+    conn.execute(
+        "DELETE FROM vec_entries WHERE entry_id NOT IN (SELECT id FROM entries)",
+        [],
+    )?;
     Ok(())
 }
 
@@ -240,8 +243,13 @@ fn migrate_json_to_legacy_if_needed() -> anyhow::Result<()> {
         return Ok(());
     }
     let contents = fs::read_to_string(&json_path)?;
-    let store: serde_json::Value = serde_json::from_str(&contents).unwrap_or(serde_json::Value::Null);
-    let entries = store.get("entries").and_then(|e| e.as_array()).cloned().unwrap_or_default();
+    let store: serde_json::Value =
+        serde_json::from_str(&contents).unwrap_or(serde_json::Value::Null);
+    let entries = store
+        .get("entries")
+        .and_then(|e| e.as_array())
+        .cloned()
+        .unwrap_or_default();
     let key = ensure_key()?;
     for e in entries {
         let text = e.get("text").and_then(|t| t.as_str()).unwrap_or("");
@@ -287,9 +295,8 @@ pub fn migrate_legacy_to_unified() -> anyhow::Result<()> {
     let key = ensure_key()?;
     let legacy_conn = open_legacy_db()?;
     let rows: Vec<_> = {
-        let mut stmt = legacy_conn.prepare(
-            "SELECT id, text_blob, created_at FROM history ORDER BY created_at ASC",
-        )?;
+        let mut stmt = legacy_conn
+            .prepare("SELECT id, text_blob, created_at FROM history ORDER BY created_at ASC")?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,

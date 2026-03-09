@@ -114,5 +114,5 @@ jobs:
           releaseName: 'Kalam ${{ github.ref_name }}'
           releaseBody: 'See the assets to download this version.'
           releaseDraft: true
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, 'beta') }}
           args: ${{ matrix.args }}

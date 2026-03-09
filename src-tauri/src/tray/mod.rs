@@ -25,7 +25,6 @@ impl TrayManager {
             true,
             None::<&str>,
         )?;
-        let about_i = MenuItem::with_id(app, "about", "About", true, None::<&str>)?;
         let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
         let menu = Menu::with_items(
@@ -36,7 +35,6 @@ impl TrayManager {
                 &snippets_i,
                 &separator,
                 &check_updates,
-                &about_i,
                 &quit_i,
             ],
         )?;
@@ -66,13 +64,10 @@ impl TrayManager {
                 "check_updates" => {
                     let app_handle = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Err(e) = crate::run_update_check(&app_handle).await {
+                        if let Err(e) = crate::run_update_check_user_initiated(&app_handle).await {
                             log::warn!("Update check failed: {}", e);
                         }
                     });
-                }
-                "about" => {
-                    // Show about dialog
                 }
                 "quit" => {
                     app.exit(0);

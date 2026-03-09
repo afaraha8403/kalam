@@ -101,7 +101,7 @@
         <Icon icon="ph:microphone-stage-duotone" class="empty-icon" />
       </div>
       <h3>No transcriptions found</h3>
-      <p>{searchQuery ? 'Try a different search term.' : 'Use the dictation hotkey to start recording.'}</p>
+      <p>{searchQuery ? 'Try a different search term.' : 'Use a dictation hotkey to start dictating.'}</p>
     </div>
   {:else}
     <div class="timeline">

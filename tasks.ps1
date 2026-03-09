@@ -81,11 +81,12 @@ function Show-Help {
     Write-Host ""
     Write-Host "  Usage: ./tasks.ps1 <command> [args]"
     Write-Host ""
-    Write-Host "  BUILD & RUN" -ForegroundColor Yellow
-    Write-Host "  -----------"
-    Write-Host "    dev               - Run in development mode (Tauri)"
-    Write-Host "    build             - Build the Tauri app"
-    Write-Host "    deps              - Install npm dependencies"
+  Write-Host "  BUILD & RUN" -ForegroundColor Yellow
+  Write-Host "  -----------"
+  Write-Host "    dev               - Run in development mode (Tauri)"
+  Write-Host "    build             - Build the Tauri app (unsigned; no signing key needed)"
+  Write-Host "    build-signed      - Build with updater signing (requires TAURI_SIGNING_PRIVATE_KEY)"
+  Write-Host "    deps              - Install npm dependencies"
     Write-Host ""
     Write-Host "  TESTING & QUALITY" -ForegroundColor Yellow
     Write-Host "  -----------------"
@@ -122,7 +123,12 @@ switch ($Command) {
     }
 
     "build" {
-        Write-Host "Building Tauri app..." -ForegroundColor Cyan
+        Write-Host "Building Tauri app (unsigned)..." -ForegroundColor Cyan
+        npm run tauri:build:unsigned
+    }
+
+    "build-signed" {
+        Write-Host "Building Tauri app (signed; requires TAURI_SIGNING_PRIVATE_KEY)..." -ForegroundColor Cyan
         npm run tauri build
     }
 

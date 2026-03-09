@@ -10,9 +10,20 @@ export type WaveformStyle = 'Line' | 'Symmetric' | 'Heartbeat' | 'Snake' | 'Doub
 export type OverlayPosition = 'BottomCenter' | 'BottomLeft' | 'BottomRight' | 'TopCenter' | 'TopLeft' | 'TopRight' | 'CenterLeft' | 'CenterRight' | 'Center'
 export type ExpandDirection = 'Up' | 'Down' | 'Center'
 
+export type CommandModeProvider = 'groq' | 'openrouter' | 'gemini' | 'openai' | 'anthropic'
+
+export interface CommandConfig {
+  enabled: boolean
+  hotkey: string | null
+  provider: CommandModeProvider | null
+  api_keys: Record<string, string>
+  models: Record<string, string>
+}
+
 export interface AppConfig {
-  hotkey: string
-  recording_mode: 'Hold' | 'Toggle'
+  hotkey: string | null
+  toggle_dictation_hotkey: string | null
+  recording_mode?: 'Hold' | 'Toggle' | null
   /** Master switch: when false, hotkeys and transcription are disabled. */
   dictation_enabled: boolean
   audio_device: string | null
@@ -40,6 +51,7 @@ export interface AppConfig {
   overlay_offset_x?: number
   overlay_offset_y?: number
   overlay_expand_direction?: ExpandDirection
+  command_config: CommandConfig
 }
 
 export interface STTConfig {
@@ -98,6 +110,20 @@ export interface HistoryEntry {
   mode: string
   language: string
   duration_ms: number | null
+}
+
+export interface AggregateStats {
+  streak_days: number
+  total_words: number
+  time_saved_hours: number
+  last_latency_ms: number | null
+  today_avg_latency_ms: number | null
+}
+
+export interface DictionaryEntry {
+  id: string
+  term: string
+  created_at: string
 }
 
 // Unified entry (notes, tasks, reminders, history) for SQLite + vector DB

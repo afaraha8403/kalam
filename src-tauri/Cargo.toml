@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Kalam — open-source voice dictation. Free alternative to Whisperflow."
 authors = ["Kalam Team"]
 license = "MIT"
-repository = "https://github.com/kalam-voice/kalam"
+repository = "https://github.com/afaraha8403/kalam"
 edition = "2021"
 rust-version = "1.75"
 

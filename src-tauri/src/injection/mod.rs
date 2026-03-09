@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
+use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::time::Duration;
 use tokio::time::sleep;
-use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
 use crate::config::{FormattingConfig, InjectionMethod};
 
@@ -17,7 +17,8 @@ impl TextInjector {
 
     /// Inject text using default config (for backward compatibility).
     pub async fn inject(&self, text: &str) -> anyhow::Result<()> {
-        self.inject_with_config(text, &FormattingConfig::default()).await
+        self.inject_with_config(text, &FormattingConfig::default())
+            .await
     }
 
     /// Inject text using the provided formatting config (method, threshold, retries).
@@ -75,7 +76,10 @@ impl TextInjector {
             .text(text)
             .map_err(|e| anyhow::anyhow!("Failed to type text: {:?}", e))?;
         if delay_ms > 0 {
-            sleep(Duration::from_millis(delay_ms.saturating_mul(text.len() as u64))).await;
+            sleep(Duration::from_millis(
+                delay_ms.saturating_mul(text.len() as u64),
+            ))
+            .await;
         }
         Ok(())
     }
@@ -98,11 +102,14 @@ impl TextInjector {
         #[cfg(not(target_os = "macos"))]
         let modifier = Key::Control;
 
-        enigo.key(modifier, Direction::Press)
+        enigo
+            .key(modifier, Direction::Press)
             .map_err(|e| anyhow::anyhow!("Failed to press modifier: {:?}", e))?;
-        enigo.key(Key::Unicode('v'), Direction::Click)
+        enigo
+            .key(Key::Unicode('v'), Direction::Click)
             .map_err(|e| anyhow::anyhow!("Failed to press v: {:?}", e))?;
-        enigo.key(modifier, Direction::Release)
+        enigo
+            .key(modifier, Direction::Release)
             .map_err(|e| anyhow::anyhow!("Failed to release modifier: {:?}", e))?;
 
         sleep(Duration::from_millis(PASTE_WAIT_MS)).await;
@@ -122,11 +129,14 @@ impl TextInjector {
         let modifier = Key::Meta;
         #[cfg(not(target_os = "macos"))]
         let modifier = Key::Control;
-        enigo.key(modifier, Direction::Press)
+        enigo
+            .key(modifier, Direction::Press)
             .map_err(|e| anyhow::anyhow!("enigo: {:?}", e))?;
-        enigo.key(Key::Unicode('z'), Direction::Click)
+        enigo
+            .key(Key::Unicode('z'), Direction::Click)
             .map_err(|e| anyhow::anyhow!("enigo: {:?}", e))?;
-        enigo.key(modifier, Direction::Release)
+        enigo
+            .key(modifier, Direction::Release)
             .map_err(|e| anyhow::anyhow!("enigo: {:?}", e))?;
         Ok(())
     }
@@ -136,7 +146,8 @@ impl TextInjector {
         let mut enigo = Enigo::new(&Settings::default())
             .map_err(|e| anyhow::anyhow!("Failed to init enigo: {:?}", e))?;
         for _ in 0..n {
-            enigo.key(Key::Backspace, Direction::Click)
+            enigo
+                .key(Key::Backspace, Direction::Click)
                 .map_err(|e| anyhow::anyhow!("enigo: {:?}", e))?;
         }
         Ok(())

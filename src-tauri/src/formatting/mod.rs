@@ -31,11 +31,8 @@ pub fn format_text(
 
     let mut actions = Vec::new();
     if config.voice_commands {
-        let (text_out, cmd_actions) = apply_voice_commands_with_actions(
-            &result,
-            last_injected_len,
-            last_injected_text,
-        );
+        let (text_out, cmd_actions) =
+            apply_voice_commands_with_actions(&result, last_injected_len, last_injected_text);
         result = text_out;
         actions = cmd_actions;
     }
@@ -73,7 +70,11 @@ fn add_punctuation(text: &str) -> String {
     let mut result = text.to_string();
 
     // Add period if text looks like a sentence (starts with capital, no ending punctuation)
-    if !result.ends_with(|c: char| c == '.' || c == '?' || c == '!') {
+    if !result
+        .chars()
+        .last()
+        .is_some_and(|c| ['.', '?', '!'].contains(&c))
+    {
         // Check if it looks like a complete sentence
         if result
             .chars()
@@ -166,8 +167,7 @@ fn apply_voice_commands_with_actions(
             let backspace_count = last_injected_text
                 .and_then(|s| {
                     let trim = s.trim_end();
-                    trim.rfind(|c| c == '.' || c == '!' || c == '?')
-                        .map(|i| trim.len() - i - 1)
+                    trim.rfind(['.', '!', '?']).map(|i| trim.len() - i - 1)
                 })
                 .unwrap_or(last_injected_len);
             if backspace_count > 0 {

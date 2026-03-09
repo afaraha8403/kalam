@@ -10,8 +10,7 @@
   let updateVersion = ''
   let updateError = ''
 
-  // Set when repo is public, e.g. 'https://github.com/kalam-voice/kalam'
-  const GITHUB_REPO_URL = ''
+  const GITHUB_REPO_URL = 'https://github.com/afaraha8403/kalam'
 
   const LICENSE_TEXT = `Dual License: MIT (Noncommercial) + Commercial by Permission
 

@@ -3,5 +3,4 @@
 mod entry;
 mod log;
 
-pub use entry::{Entry, EntryType, Subtask};
-pub use log::AppLogRow;
+pub use entry::{Entry, Subtask};

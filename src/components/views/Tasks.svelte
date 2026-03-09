@@ -7,15 +7,24 @@
   import { selectedTaskId as selectedTaskIdStore } from '../../lib/taskDetailStore'
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
+  import SidePanel from '../ui/SidePanel.svelte'
+  import SearchFilterBar from '../ui/SearchFilterBar.svelte'
 
   export let navigate: ((page: string) => void) | undefined = undefined
 
   let entries: Entry[] = []
   let loading = true
   let error: string | null = null
-  let newTitle = ''
-  /** Task id for the detail panel. Synced from store when navigating from Reminders. */
+  
+  let searchQuery = ''
+  let filterMode: 'all' | 'active' | 'completed' = 'all'
+
+  // Panel State
+  let isPanelOpen = false
+  let panelMode: 'add' | 'edit' = 'add'
   let panelTaskId: string | null = null
+  let draftEntry: Partial<Entry> = {}
+  
   let detailsPreviewActive = false
 
   async function load() {
@@ -31,20 +40,56 @@
     }
   }
 
-  async function addTask() {
-    const title = newTitle.trim()
-    if (!title) return
-    const entry = newEntry('task', '', { title })
+  function openAddPanel() {
+    panelMode = 'add'
+    panelTaskId = null
+    draftEntry = {
+      title: '',
+      content: '',
+      due_date: null,
+      reminder_at: null,
+      subtasks: []
+    }
+    isPanelOpen = true
+  }
+
+  function openEditPanel(task: Entry) {
+    panelMode = 'edit'
+    panelTaskId = task.id
+    draftEntry = { ...task }
+    isPanelOpen = true
+  }
+
+  function closePanel() {
+    isPanelOpen = false
+    panelTaskId = null
+  }
+
+  async function savePanel() {
+    if (!draftEntry.title?.trim()) {
+      error = "Title is required"
+      return
+    }
+
     try {
-      await createEntry(entry)
-      newTitle = ''
-      entries = [entry, ...entries]
+      if (panelMode === 'add') {
+        const entry = newEntry('task', draftEntry.content || '', { 
+          title: draftEntry.title,
+          due_date: draftEntry.due_date,
+          reminder_at: draftEntry.reminder_at,
+          subtasks: draftEntry.subtasks
+        })
+        await createEntry(entry)
+        entries = [entry, ...entries]
+      } else if (panelMode === 'edit' && panelTaskId) {
+        const updated = { ...draftEntry, id: panelTaskId, updated_at: new Date().toISOString() } as Entry
+        await updateEntry(updated)
+        entries = entries.map(e => e.id === updated.id ? updated : e)
+      }
+      closePanel()
       error = null
-      panelTaskId = entry.id
-      await load()
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
-      await load()
     }
   }
 
@@ -62,7 +107,7 @@
   async function remove(id: string) {
     try {
       entries = entries.filter(e => e.id !== id)
-      if (panelTaskId === id) panelTaskId = null
+      if (panelTaskId === id) closePanel()
       await deleteEntry(id)
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
@@ -106,90 +151,52 @@
     return isNaN(d.getTime()) ? null : d.toISOString()
   }
 
-  $: panelEntry = panelTaskId ? (entries.find((e) => e.id === panelTaskId) ?? null) : null
-
-  async function savePanelEntry(updates: Partial<Entry>) {
-    if (!panelEntry) return
-    const updated = { ...panelEntry, ...updates, updated_at: new Date().toISOString() }
-    entries = entries.map((e) => (e.id === updated.id ? updated : e))
-    try {
-      await updateEntry(updated)
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e)
-      await load()
-    }
-  }
-
-  function onPanelTitleBlur(e: Event) {
-    const el = e.currentTarget as HTMLInputElement
-    const v = el?.value?.trim() ?? ''
-    if (panelEntry && v !== (panelEntry.title ?? '')) savePanelEntry({ title: v || null })
-  }
-
-  function onPanelDetailsBlur(e: Event) {
-    const el = e.currentTarget as HTMLTextAreaElement
-    const v = el?.value ?? ''
-    if (panelEntry && v !== panelEntry.content) savePanelEntry({ content: v })
-  }
-
   function getInputValue(e: Event): string {
     const el = e.currentTarget as HTMLInputElement | HTMLTextAreaElement | null
     return el?.value ?? ''
   }
 
-  function onDueDateChange(e: Event) {
-    const v = getInputValue(e)
-    if (panelEntry) savePanelEntry({ due_date: toISOStartOfDay(v) })
+  function addSubtask() {
+    draftEntry.subtasks = [...(draftEntry.subtasks || []), { title: '', is_completed: false }]
   }
 
-  function onReminderChange(e: Event) {
-    const v = getInputValue(e)
-    if (panelEntry) savePanelEntry({ reminder_at: toISODateTime(v) })
+  function toggleSubtask(index: number) {
+    if (!draftEntry.subtasks) return
+    draftEntry.subtasks = draftEntry.subtasks.map((s, i) => 
+      i === index ? { ...s, is_completed: !s.is_completed } : s
+    )
   }
 
-  function onSubtaskTitleBlur(entry: Entry, index: number, e: Event) {
-    const v = getInputValue(e)
-    const list = [...(entry.subtasks ?? [])]
-    if (list[index] && list[index].title !== v) {
-      list[index] = { ...list[index], title: v }
-      updateSubtasks(entry, list)
-    }
-  }
-
-  function updateSubtasks(entry: Entry, next: Subtask[]) {
-    savePanelEntry({ subtasks: next })
-  }
-
-  function addSubtask(entry: Entry) {
-    const list = entry.subtasks ?? []
-    updateSubtasks(entry, [...list, { title: '', is_completed: false }])
-  }
-
-  function toggleSubtask(entry: Entry, index: number) {
-    const list = entry.subtasks ?? []
-    const next = list.map((s, i) => (i === index ? { ...s, is_completed: !s.is_completed } : s))
-    updateSubtasks(entry, next)
-  }
-
-  function removeSubtask(entry: Entry, index: number) {
-    const list = entry.subtasks ?? []
-    updateSubtasks(entry, list.filter((_, i) => i !== index))
+  function removeSubtask(index: number) {
+    if (!draftEntry.subtasks) return
+    draftEntry.subtasks = draftEntry.subtasks.filter((_, i) => i !== index)
   }
 
   function renderDetailsMarkdown(content: string): string {
-    if (!content.trim()) return ''
+    if (!content?.trim()) return ''
     const raw = marked.parse(content, { async: false }) as string
     return DOMPurify.sanitize(raw)
   }
 
-  $: activeTasks = entries.filter((e) => !e.is_completed)
-  $: completedTasks = entries.filter((e) => e.is_completed)
+  $: filteredEntries = entries.filter(e => {
+    const matchesSearch = (e.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          (e.content || '').toLowerCase().includes(searchQuery.toLowerCase())
+    if (!matchesSearch) return false
+    
+    if (filterMode === 'active') return !e.is_completed
+    if (filterMode === 'completed') return e.is_completed
+    return true
+  })
+
+  $: activeTasks = filteredEntries.filter((e) => !e.is_completed)
+  $: completedTasks = filteredEntries.filter((e) => e.is_completed)
 
   onMount(() => {
     load()
     const unsub = selectedTaskIdStore.subscribe((id) => {
       if (id) {
-        panelTaskId = id
+        const task = entries.find(e => e.id === id)
+        if (task) openEditPanel(task)
         selectedTaskIdStore.set(null)
       }
     })
@@ -206,24 +213,23 @@
       </div>
       <p class="subtitle">Stay on top of what needs to be done.</p>
     </div>
+    <div class="header-actions">
+      {#if navigate}
+        <button type="button" class="btn-ghost" on:click={() => navigate('home')} title="Home">Home</button>
+      {/if}
+      <button class="btn-primary" on:click={openAddPanel}>
+        <Icon icon="ph:plus-bold" /> Add Task
+      </button>
+    </div>
   </header>
 
-  <div class="add-task-container">
-    <div class="input-wrapper">
-      <Icon icon="ph:plus-bold" class="input-icon" />
-      <input 
-        type="text" 
-        bind:value={newTitle} 
-        placeholder="Add a new task..." 
-        on:keydown={(e) => e.key === 'Enter' && addTask()}
-      />
-      {#if newTitle.trim()}
-        <button class="add-btn" on:click={addTask} transition:fade>
-          Add
-        </button>
-      {/if}
-    </div>
-  </div>
+  <SearchFilterBar bind:searchQuery placeholder="Search tasks...">
+    <svelte:fragment slot="filters">
+      <button class="filter-chip" class:active={filterMode === 'all'} on:click={() => filterMode = 'all'}>All</button>
+      <button class="filter-chip" class:active={filterMode === 'active'} on:click={() => filterMode = 'active'}>Active</button>
+      <button class="filter-chip" class:active={filterMode === 'completed'} on:click={() => filterMode = 'completed'}>Completed</button>
+    </svelte:fragment>
+  </SearchFilterBar>
 
   {#if error}
     <div class="state-container error-state">
@@ -244,6 +250,14 @@
       </div>
       <h3>All caught up!</h3>
       <p>You have no tasks. Enjoy your day or add a new one above.</p>
+    </div>
+  {:else if filteredEntries.length === 0}
+    <div class="state-container empty-state">
+      <div class="empty-icon-wrapper">
+        <Icon icon="ph:magnifying-glass-duotone" class="empty-icon" />
+      </div>
+      <h3>No results found</h3>
+      <p>Try adjusting your search or filters.</p>
     </div>
   {:else}
     <div class="task-sections">
@@ -279,7 +293,7 @@
                 </div>
               </div>
               <div class="task-actions">
-                <button class="action-btn open" on:click={() => (panelTaskId = entry.id)} title="Open details">
+                <button class="action-btn open" on:click={() => openEditPanel(entry)} title="Open details">
                   <Icon icon="ph:caret-right-duotone" />
                 </button>
                 <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete task">
@@ -309,6 +323,9 @@
                   <span class="task-title">{entry.title || entry.content}</span>
                 </div>
                 <div class="task-actions">
+                  <button class="action-btn open" on:click={() => openEditPanel(entry)} title="Open details">
+                    <Icon icon="ph:caret-right-duotone" />
+                  </button>
                   <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete task">
                     <Icon icon="ph:trash-duotone" />
                   </button>
@@ -321,102 +338,102 @@
     </div>
   {/if}
 
-  {#if panelTaskId && panelEntry}
-    <div class="panel-backdrop" on:click={() => (panelTaskId = null)} role="button" tabindex="-1" aria-label="Close panel"></div>
-    <div class="task-detail-panel">
-      <div class="panel-header">
-        <button class="panel-close" on:click={() => (panelTaskId = null)} title="Close">
-          <Icon icon="ph:x-bold" />
-        </button>
-        <h3>Task details</h3>
+  <SidePanel 
+    isOpen={isPanelOpen} 
+    title={panelMode === 'add' ? 'Add Task' : 'Edit Task'} 
+    on:close={closePanel}
+  >
+    <div slot="body" class="panel-form">
+      <div class="field">
+        <label for="task-detail-title">Title</label>
+        <input
+          id="task-detail-title"
+          type="text"
+          bind:value={draftEntry.title}
+          placeholder="Task title"
+        />
+        {#if (draftEntry.title ?? '').trim() === ''}
+          <span class="field-hint">Title is required</span>
+        {/if}
       </div>
-      <div class="panel-body">
-        <div class="field">
-          <label for="task-detail-title">Title</label>
+      <div class="field">
+        <label for="task-details">Details (markdown)</label>
+        <div class="details-tabs">
+          <button type="button" class:active={!detailsPreviewActive} on:click={() => (detailsPreviewActive = false)}>Edit</button>
+          <button type="button" class:active={detailsPreviewActive} on:click={() => (detailsPreviewActive = true)}>Preview</button>
+        </div>
+        {#if !detailsPreviewActive}
+          <textarea
+            id="task-details"
+            class="details-textarea"
+            bind:value={draftEntry.content}
+            placeholder="Add details (markdown supported)"
+            rows="6"
+          ></textarea>
+        {:else}
+          <div class="details-preview" data-details-preview>
+            {@html renderDetailsMarkdown(draftEntry.content || '')}
+          </div>
+        {/if}
+      </div>
+      <div class="field row">
+        <div class="field-half">
+          <label for="task-due">Due date</label>
           <input
-            id="task-detail-title"
-            type="text"
-            value={panelEntry.title ?? ''}
-            on:blur={onPanelTitleBlur}
-            placeholder="Task title"
+            id="task-due"
+            type="date"
+            value={draftEntry.due_date ? draftEntry.due_date.slice(0, 10) : ''}
+            on:change={(e) => draftEntry.due_date = toISOStartOfDay(getInputValue(e))}
           />
-          {#if (panelEntry.title ?? '').trim() === ''}
-            <span class="field-hint">Title is required</span>
-          {/if}
         </div>
-        <div class="field">
-          <label>Details (markdown)</label>
-          <div class="details-tabs">
-            <button type="button" class:active={!detailsPreviewActive} on:click={() => (detailsPreviewActive = false)}>Edit</button>
-            <button type="button" class:active={detailsPreviewActive} on:click={() => (detailsPreviewActive = true)}>Preview</button>
-          </div>
-          {#if !detailsPreviewActive}
-            <textarea
-              class="details-textarea"
-              value={panelEntry.content}
-              on:blur={onPanelDetailsBlur}
-              placeholder="Add details (markdown supported)"
-              rows="6"
-            ></textarea>
-          {:else}
-            <div class="details-preview" data-details-preview>
-              {@html renderDetailsMarkdown(panelEntry.content)}
+        <div class="field-half">
+          <label for="task-reminder">Reminder</label>
+          <input
+            id="task-reminder"
+            type="datetime-local"
+            value={formatDateTimeLocal(draftEntry.reminder_at || null)}
+            on:change={(e) => draftEntry.reminder_at = toISODateTime(getInputValue(e))}
+          />
+        </div>
+      </div>
+      <div class="field">
+        <label for="task-subtasks-list">Subtasks</label>
+        <div id="task-subtasks-list" class="subtasks-list" role="group">
+          {#each draftEntry.subtasks ?? [] as subtask, i}
+            <div class="subtask-row">
+              <button type="button" class="subtask-checkbox" on:click={() => toggleSubtask(i)} aria-label="Toggle subtask">
+                <div class="check-circle" class:checked={subtask.is_completed}>
+                  {#if subtask.is_completed}
+                    <Icon icon="ph:check-bold" class="check-icon" />
+                  {/if}
+                </div>
+              </button>
+              <input
+                type="text"
+                class="subtask-input"
+                bind:value={subtask.title}
+                placeholder="Subtask"
+              />
+              <button type="button" class="action-btn delete subtask-delete" on:click={() => removeSubtask(i)} title="Remove subtask">
+                <Icon icon="ph:trash-duotone" />
+              </button>
             </div>
-          {/if}
-        </div>
-        <div class="field row">
-          <div class="field-half">
-            <label for="task-due">Due date</label>
-            <input
-              id="task-due"
-              type="date"
-              value={panelEntry.due_date ? panelEntry.due_date.slice(0, 10) : ''}
-              on:change={onDueDateChange}
-            />
-          </div>
-          <div class="field-half">
-            <label for="task-reminder">Reminder</label>
-            <input
-              id="task-reminder"
-              type="datetime-local"
-              value={formatDateTimeLocal(panelEntry.reminder_at)}
-              on:change={onReminderChange}
-            />
-          </div>
-        </div>
-        <div class="field">
-          <label>Subtasks</label>
-          <div class="subtasks-list">
-            {#each panelEntry.subtasks ?? [] as subtask, i}
-              <div class="subtask-row">
-                <button type="button" class="subtask-checkbox" on:click={() => toggleSubtask(panelEntry, i)} aria-label="Toggle subtask">
-                  <div class="check-circle" class:checked={subtask.is_completed}>
-                    {#if subtask.is_completed}
-                      <Icon icon="ph:check-bold" class="check-icon" />
-                    {/if}
-                  </div>
-                </button>
-                <input
-                  type="text"
-                  class="subtask-input"
-                  value={subtask.title}
-                  on:blur={(e) => onSubtaskTitleBlur(panelEntry, i, e)}
-                  placeholder="Subtask"
-                />
-                <button type="button" class="action-btn delete subtask-delete" on:click={() => removeSubtask(panelEntry, i)} title="Remove subtask">
-                  <Icon icon="ph:trash-duotone" />
-                </button>
-              </div>
-            {/each}
-            <button type="button" class="add-subtask-btn" on:click={() => addSubtask(panelEntry)}>
-              <Icon icon="ph:plus-duotone" />
-              Add subtask
-            </button>
-          </div>
+          {/each}
+          <button type="button" class="add-subtask-btn" on:click={addSubtask}>
+            <Icon icon="ph:plus-duotone" />
+            Add subtask
+          </button>
         </div>
       </div>
     </div>
-  {/if}
+    
+    <div slot="footer">
+      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
+      <button class="btn-primary" on:click={savePanel} disabled={!draftEntry.title?.trim()}>
+        <Icon icon="ph:check-bold" /> Save
+      </button>
+    </div>
+  </SidePanel>
 </div>
 
 <style>
@@ -436,7 +453,11 @@
 
   /* Header */
   .page-header {
-    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 16px;
   }
 
   .header-content {
@@ -470,58 +491,44 @@
     padding-left: 34px;
   }
 
-  /* Add Task Input */
-  .add-task-container {
-    position: relative;
+  .header-actions {
+    display: flex;
+    gap: 12px;
   }
 
-  .input-wrapper {
-    position: relative;
+  .btn-primary {
     display: flex;
     align-items: center;
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 16px;
-    padding: 4px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .input-wrapper:focus-within {
-    border-color: var(--primary);
-    box-shadow: 0 0 0 4px var(--primary-alpha), 0 8px 24px rgba(0, 0, 0, 0.04);
-    transform: translateY(-2px);
-  }
-
-  .input-icon {
-    position: absolute;
-    left: 16px;
-    font-size: 20px;
-    color: var(--primary);
-    pointer-events: none;
-  }
-
-  .input-wrapper input {
-    width: 100%;
-    padding: 16px 20px 16px 48px;
-    background: transparent;
-    border: none;
-    color: var(--text-primary);
-    font-size: 16px;
-    font-family: inherit;
-  }
-
-  .input-wrapper input:focus {
-    outline: none;
-  }
-
-  .add-btn {
-    position: absolute;
-    right: 8px;
+    gap: 8px;
+    padding: 12px 24px;
     background: var(--primary);
     color: white;
     border: none;
-    padding: 8px 16px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 12px var(--primary-alpha);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px var(--primary-alpha);
+    background: var(--primary-dark);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .btn-ghost {
+    padding: 12px 20px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: none;
     border-radius: 10px;
     font-size: 14px;
     font-weight: 600;
@@ -529,8 +536,27 @@
     transition: all 0.2s;
   }
 
-  .add-btn:hover {
-    background: var(--primary-dark);
+  .btn-ghost:hover {
+    background: var(--bg-input);
+    color: var(--navy-deep);
+  }
+
+  .filter-chip {
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .filter-chip:hover,
+  .filter-chip.active {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
   }
 
   /* Task List */
@@ -775,66 +801,8 @@
     color: var(--error);
   }
 
-  /* Detail panel */
-  .panel-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.3);
-    z-index: 100;
-    cursor: pointer;
-  }
-
-  .task-detail-panel {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: min(420px, 100vw);
-    background: var(--bg-card);
-    border-left: 1px solid var(--border-subtle);
-    z-index: 101;
-    display: flex;
-    flex-direction: column;
-    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
-  }
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .panel-close {
-    width: 36px;
-    height: 36px;
-    border: none;
-    background: transparent;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    color: var(--text-muted);
-  }
-
-  .panel-close:hover {
-    background: var(--bg-input);
-    color: var(--navy-deep);
-  }
-
-  .panel-header h3 {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--navy-deep);
-    margin: 0;
-  }
-
-  .panel-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 20px;
+  /* Panel Form */
+  .panel-form {
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -860,6 +828,12 @@
     font-family: inherit;
     background: var(--bg-input, #f8f9fa);
     color: var(--text-primary);
+  }
+
+  .field input:focus, .field textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-alpha);
   }
 
   .field-hint {
@@ -998,9 +972,6 @@
     }
     .subtitle {
       padding-left: 0;
-    }
-    .task-detail-panel {
-      width: 100vw;
     }
   }
 </style>

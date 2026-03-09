@@ -39,11 +39,13 @@ export async function searchNotes(params: {
   offset?: number
 }): Promise<Entry[]> {
   return invoke<Entry[]>('search_notes', {
-    query: params.query ?? undefined,
-    label: params.label ?? undefined,
-    scope: params.scope,
-    limit: params.limit ?? 100,
-    offset: params.offset ?? 0
+    args: {
+      query: params.query ?? undefined,
+      label: params.label ?? undefined,
+      scope: params.scope,
+      limit: params.limit ?? 100,
+      offset: params.offset ?? 0
+    }
   })
 }
 

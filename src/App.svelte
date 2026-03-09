@@ -4,17 +4,17 @@
   import { listen } from '@tauri-apps/api/event'
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
   import { initTelemetry } from './lib/telemetry'
-  import { sidebarDictationStore, displayHotkey } from './lib/sidebarDictation'
+  import { sidebarDictationStore } from './lib/sidebarDictation'
   import Settings from './pages/Settings.svelte'
   import Home from './pages/Home.svelte'
   import Snippets from './pages/Snippets.svelte'
-  import About from './pages/About.svelte'
   import Onboarding from './pages/Onboarding.svelte'
   import Overlay from './components/Overlay.svelte'
   import History from './components/views/History.svelte'
   import Notes from './components/views/Notes.svelte'
   import Tasks from './components/views/Tasks.svelte'
   import Reminders from './components/views/Reminders.svelte'
+  import StatusBar from './components/StatusBar.svelte'
   import Icon from '@iconify/svelte'
   import type { AppConfig } from './types'
 
@@ -37,13 +37,26 @@
   let currentPage = 'home'
   let isFirstRun = true
   let dictationEnabled = true
+  let statusBarConfig: AppConfig | null = null
+  let dbStatus: { ok: boolean } | null = null
+  let statusBarPlatform = ''
+  let lastLatencyMs: number | null = null
 
   onMount(() => {
     if (isOverlay) return
     let unlistenReset: (() => void) | null = null
+    let unlistenSettings: (() => void) | null = null
+    let unlistenTranscription: (() => void) | null = null
+    let dbPollId: ReturnType<typeof setInterval> | null = null
     ;(async () => {
       unlistenReset = await listen('app_reset', () => {
         isFirstRun = true
+      })
+      unlistenSettings = await listen<AppConfig>('settings_updated', (e) => {
+        if (e.payload) statusBarConfig = e.payload
+      })
+      unlistenTranscription = await listen<{ latency_ms?: number }>('transcription-saved', (e) => {
+        if (e.payload?.latency_ms != null) lastLatencyMs = e.payload.latency_ms
       })
       try {
         const config = (await invoke('get_settings')) as AppConfig
@@ -51,13 +64,36 @@
         dictationEnabled = config.dictation_enabled ?? true
         initTelemetry(config.privacy?.telemetry_enabled ?? false)
         const platform = (await invoke('get_platform')) as string
+        statusBarConfig = config
+        statusBarPlatform = platform
         sidebarDictationStore.updateFromConfig(config, platform)
+        try {
+          dbStatus = (await invoke('get_db_status')) as { ok: boolean }
+        } catch {
+          dbStatus = { ok: false }
+        }
+        try {
+          const stats = (await invoke('get_aggregate_stats')) as { last_latency_ms?: number | null }
+          if (stats.last_latency_ms != null) lastLatencyMs = stats.last_latency_ms
+        } catch {
+          // ignore
+        }
+        dbPollId = setInterval(async () => {
+          try {
+            dbStatus = (await invoke('get_db_status')) as { ok: boolean }
+          } catch {
+            dbStatus = { ok: false }
+          }
+        }, 30000)
       } catch {
         isFirstRun = true
       }
     })()
     return () => {
       if (unlistenReset) unlistenReset()
+      if (unlistenSettings) unlistenSettings()
+      if (unlistenTranscription) unlistenTranscription()
+      if (dbPollId != null) clearInterval(dbPollId)
     }
   })
 
@@ -71,7 +107,14 @@
       const config = (await invoke('get_settings')) as AppConfig
       dictationEnabled = config.dictation_enabled ?? true
       const platform = (await invoke('get_platform')) as string
+      statusBarConfig = config
+      statusBarPlatform = platform
       sidebarDictationStore.updateFromConfig(config, platform)
+      try {
+        dbStatus = (await invoke('get_db_status')) as { ok: boolean }
+      } catch {
+        dbStatus = { ok: false }
+      }
     } catch {
       // keep store as-is
     }
@@ -95,7 +138,8 @@
 {:else if isFirstRun}
   <Onboarding on:complete={handleOnboardingComplete} />
 {:else}
-  <main class="app">
+  <div class="app-shell">
+    <main class="app">
     <nav class="sidebar">
       <div class="logo">
         <img src="/logo/kalam-logo-icon.svg" alt="Kalam" class="logo-icon" />
@@ -141,13 +185,6 @@
       </ul>
       
       <div class="sidebar-bottom">
-        <div class="footer">
-          <p>Press <kbd>{$sidebarDictationStore ? displayHotkey($sidebarDictationStore.hotkey, $sidebarDictationStore.platform) : 'Ctrl+Win'}</kbd> to dictate</p>
-          {#if $sidebarDictationStore && $sidebarDictationStore.languages.length >= 2 && $sidebarDictationStore.languageToggleHotkey}
-            <p>Press <kbd>{displayHotkey($sidebarDictationStore.languageToggleHotkey, $sidebarDictationStore.platform)}</kbd> to switch language</p>
-          {/if}
-        </div>
-
         <div class="dictation-control" title="Turn dictation and hotkeys on or off">
           <div class="dictation-info">
             <Icon icon="ph:microphone-stage-duotone" class="nav-icon" />
@@ -160,12 +197,6 @@
         </div>
         
         <ul class="nav-links settings-link">
-          <li class:active={currentPage === 'about'}>
-            <button on:click={() => navigate('about')} title="About">
-              <Icon icon="ph:info-duotone" class="nav-icon" />
-              <span class="nav-text">About</span>
-            </button>
-          </li>
           <li class:active={currentPage === 'settings'}>
             <button on:click={() => navigate('settings')} title="Settings">
               <Icon icon="ph:gear-duotone" class="nav-icon" />
@@ -178,13 +209,11 @@
 
     <div class="content">
       {#if currentPage === 'home'}
-        <Home />
+        <Home navigate={navigate} />
       {:else if currentPage === 'settings'}
         <Settings />
       {:else if currentPage === 'snippets'}
         <Snippets />
-      {:else if currentPage === 'about'}
-        <About />
       {:else if currentPage === 'history'}
         <History />
       {:else if currentPage === 'notes'}
@@ -196,6 +225,8 @@
       {/if}
     </div>
   </main>
+  <StatusBar config={statusBarConfig} dbStatus={dbStatus} platform={statusBarPlatform} lastLatencyMs={lastLatencyMs} />
+  </div>
 {/if}
 
 <style>
@@ -211,13 +242,22 @@
     color: var(--text-primary);
   }
 
-  .app {
+  .app-shell {
     display: flex;
+    flex-direction: column;
     min-height: 100vh;
     height: 100vh;
     background: var(--bg-app);
-    padding: 16px;
+  }
+
+  .app {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
     gap: 16px;
+    padding: 16px;
+    background: var(--bg-app);
   }
 
   .sidebar {
@@ -261,7 +301,7 @@
     background: var(--bg-content);
     border-radius: var(--radius-xl);
     box-shadow: var(--shadow-md);
-    padding: 48px 56px;
+    padding: 20px 24px;
     position: relative;
   }
 
@@ -506,7 +546,7 @@
     }
 
     .content {
-      padding: 24px 20px;
+      padding: 12px 16px;
     }
   }
 

@@ -3,12 +3,21 @@
   import { invoke } from '@tauri-apps/api/core'
   import Icon from '@iconify/svelte'
   import type { Snippet } from '../types'
+  import SidePanel from '../components/ui/SidePanel.svelte'
+  import SearchFilterBar from '../components/ui/SearchFilterBar.svelte'
 
   let snippets: Snippet[] = []
   let newTrigger = ''
   let newExpansion = ''
   let loading = true
   let editing: string | null = null
+  let isPanelOpen = false
+  let searchQuery = ''
+
+  $: filteredSnippets = snippets.filter(s => 
+    s.trigger.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    s.expansion.toLowerCase().includes(searchQuery.toLowerCase())
+  )
 
   onMount(async () => {
     await loadSnippets()
@@ -25,6 +34,13 @@
     }
   }
 
+  function openAddPanel() {
+    editing = null
+    newTrigger = ''
+    newExpansion = ''
+    isPanelOpen = true
+  }
+
   async function addSnippet() {
     if (!newTrigger.trim() || !newExpansion.trim()) return
 
@@ -34,8 +50,7 @@
         expansion: newExpansion
       })
       await loadSnippets()
-      newTrigger = ''
-      newExpansion = ''
+      isPanelOpen = false
     } catch (e) {
       console.error('Failed to add snippet:', e)
     }
@@ -54,6 +69,7 @@
     editing = snippet.trigger
     newTrigger = snippet.trigger
     newExpansion = snippet.expansion
+    isPanelOpen = true
   }
 
   async function saveEdit() {
@@ -66,18 +82,14 @@
         expansion: newExpansion
       })
       await loadSnippets()
-      editing = null
-      newTrigger = ''
-      newExpansion = ''
+      isPanelOpen = false
     } catch (e) {
       console.error('Failed to save edit:', e)
     }
   }
 
-  function cancelEdit() {
-    editing = null
-    newTrigger = ''
-    newExpansion = ''
+  function closePanel() {
+    isPanelOpen = false
   }
 </script>
 
@@ -90,62 +102,14 @@
       </div>
       <p class="subtitle">Create magical shortcuts for your most used phrases.</p>
     </div>
+    <div class="header-actions">
+      <button class="btn-primary" on:click={openAddPanel}>
+        <Icon icon="ph:plus-bold" /> Add Snippet
+      </button>
+    </div>
   </header>
 
-  <div class="composer-card" class:is-editing={editing}>
-    <div class="composer-header">
-      <Icon icon={editing ? "ph:pencil-simple-duotone" : "ph:plus-circle-duotone"} class="composer-icon" />
-      <h3>{editing ? 'Edit Snippet' : 'Create New Snippet'}</h3>
-    </div>
-    
-    <div class="composer-body">
-      <div class="input-group trigger-group">
-        <label for="trigger-phrase">Trigger</label>
-        <div class="input-wrapper">
-          <Icon icon="ph:lightning-duotone" class="input-icon" />
-          <input
-            id="trigger-phrase"
-            type="text"
-            bind:value={newTrigger}
-            placeholder="e.g. @@email"
-            autocomplete="off"
-          />
-        </div>
-      </div>
-      
-      <div class="arrow-divider">
-        <Icon icon="ph:arrow-right-bold" />
-      </div>
-
-      <div class="input-group expansion-group">
-        <label for="expanded-text">Expansion</label>
-        <div class="input-wrapper">
-          <Icon icon="ph:text-aa-duotone" class="input-icon" />
-          <input
-            id="expanded-text"
-            type="text"
-            bind:value={newExpansion}
-            placeholder="e.g. hello@example.com"
-            autocomplete="off"
-            on:keydown={(e) => e.key === 'Enter' && (editing ? saveEdit() : addSnippet())}
-          />
-        </div>
-      </div>
-    </div>
-
-    <div class="composer-actions">
-      {#if editing}
-        <button class="btn-ghost" on:click={cancelEdit}>Cancel</button>
-        <button class="btn-primary" on:click={saveEdit}>
-          <Icon icon="ph:check-bold" /> Save Changes
-        </button>
-      {:else}
-        <button class="btn-primary" on:click={addSnippet} disabled={!newTrigger.trim() || !newExpansion.trim()}>
-          <Icon icon="ph:plus-bold" /> Add Snippet
-        </button>
-      {/if}
-    </div>
-  </div>
+  <SearchFilterBar bind:searchQuery placeholder="Search snippets..." />
 
   {#if loading}
     <div class="state-container">
@@ -158,11 +122,19 @@
         <Icon icon="ph:magic-wand-duotone" class="empty-icon" />
       </div>
       <h3>No snippets yet</h3>
-      <p>Create your first shortcut above to save time typing.</p>
+      <p>Create your first shortcut to save time typing.</p>
+    </div>
+  {:else if filteredSnippets.length === 0}
+    <div class="state-container empty-state">
+      <div class="empty-icon-wrapper">
+        <Icon icon="ph:magnifying-glass-duotone" class="empty-icon" />
+      </div>
+      <h3>No results found</h3>
+      <p>Try adjusting your search query.</p>
     </div>
   {:else}
     <div class="snippets-grid">
-      {#each snippets as snippet}
+      {#each filteredSnippets as snippet}
         <div class="snippet-card">
           <div class="snippet-trigger">
             <span class="badge">{snippet.trigger}</span>
@@ -182,6 +154,53 @@
       {/each}
     </div>
   {/if}
+
+  <SidePanel 
+    isOpen={isPanelOpen} 
+    title={editing ? 'Edit Snippet' : 'Create New Snippet'} 
+    on:close={closePanel}
+  >
+    <div slot="body" class="panel-form">
+      <div class="input-group">
+        <label for="trigger-phrase">Trigger</label>
+        <div class="input-wrapper">
+          <Icon icon="ph:lightning-duotone" class="input-icon" />
+          <input
+            id="trigger-phrase"
+            type="text"
+            bind:value={newTrigger}
+            placeholder="e.g. @@email"
+            autocomplete="off"
+          />
+        </div>
+      </div>
+      
+      <div class="input-group">
+        <label for="expanded-text">Expansion</label>
+        <div class="input-wrapper">
+          <Icon icon="ph:text-aa-duotone" class="input-icon" />
+          <textarea
+            id="expanded-text"
+            bind:value={newExpansion}
+            placeholder="e.g. hello@example.com"
+            autocomplete="off"
+            rows="5"
+          ></textarea>
+        </div>
+      </div>
+    </div>
+    
+    <div slot="footer">
+      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
+      <button class="btn-primary" on:click={editing ? saveEdit : addSnippet} disabled={!newTrigger.trim() || !newExpansion.trim()}>
+        {#if editing}
+          <Icon icon="ph:check-bold" /> Save Changes
+        {:else}
+          <Icon icon="ph:plus-bold" /> Add Snippet
+        {/if}
+      </button>
+    </div>
+  </SidePanel>
 </div>
 
 <style>
@@ -201,7 +220,11 @@
 
   /* Header */
   .page-header {
-    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 16px;
   }
 
   .header-content {
@@ -235,76 +258,22 @@
     padding-left: 34px;
   }
 
-  /* Composer Card */
-  .composer-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 20px;
-    padding: 28px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.02);
-    position: relative;
-    overflow: hidden;
-    transition: all 0.3s ease;
-  }
-
-  .composer-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 4px;
-    background: linear-gradient(90deg, var(--primary), #a855f7);
-    opacity: 0.5;
-  }
-
-  .composer-card.is-editing::before {
-    background: linear-gradient(90deg, #f59e0b, #f97316);
-    opacity: 1;
-  }
-
-  .composer-header {
+  .header-actions {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 24px;
+    gap: 12px;
   }
 
-  .composer-icon {
-    font-size: 20px;
-    color: var(--primary);
-  }
-  
-  .is-editing .composer-icon {
-    color: #f59e0b;
-  }
-
-  .composer-header h3 {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--navy-deep);
-    margin: 0;
-  }
-
-  .composer-body {
+  /* Form inside Panel */
+  .panel-form {
     display: flex;
-    align-items: flex-end;
+    flex-direction: column;
     gap: 20px;
-    margin-bottom: 24px;
   }
 
   .input-group {
     display: flex;
     flex-direction: column;
     gap: 8px;
-  }
-
-  .trigger-group {
-    flex: 0 0 240px;
-  }
-
-  .expansion-group {
-    flex: 1;
   }
 
   label {
@@ -318,18 +287,19 @@
   .input-wrapper {
     position: relative;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
   }
 
   .input-icon {
     position: absolute;
     left: 16px;
+    top: 14px;
     font-size: 18px;
     color: var(--text-muted);
     pointer-events: none;
   }
 
-  input {
+  input, textarea {
     width: 100%;
     padding: 14px 16px 14px 44px;
     background: var(--bg-input);
@@ -342,34 +312,20 @@
     transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .trigger-group input {
-    font-family: 'DM Sans', monospace;
-    color: var(--primary-dark);
+  textarea {
+    resize: vertical;
+    min-height: 120px;
   }
 
-  input:focus {
+  input:focus, textarea:focus {
     outline: none;
     background: var(--bg-card);
     border-color: var(--primary);
     box-shadow: 0 0 0 4px var(--primary-alpha);
   }
 
-  input:hover:not(:focus) {
+  input:hover:not(:focus), textarea:hover:not(:focus) {
     background: var(--bg-input-hover);
-  }
-
-  .arrow-divider {
-    color: var(--border-visible);
-    font-size: 20px;
-    padding-bottom: 14px;
-  }
-
-  .composer-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
-    padding-top: 20px;
-    border-top: 1px solid var(--border-subtle);
   }
 
   .btn-primary {
@@ -577,20 +533,6 @@
   }
 
   @media (max-width: 768px) {
-    .composer-body {
-      flex-direction: column;
-      align-items: stretch;
-      gap: 16px;
-    }
-
-    .trigger-group {
-      flex: none;
-    }
-
-    .arrow-divider {
-      display: none;
-    }
-
     .subtitle {
       padding-left: 0;
     }

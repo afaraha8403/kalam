@@ -44,7 +44,7 @@ impl SenseVoiceProvider {
             }
             Ok::<(), anyhow::Error>(())
         })?;
-        
+
         Ok(())
     }
 }
@@ -73,11 +73,17 @@ impl STTProvider for SenseVoiceProvider {
         {
             Ok(response) if response.status().is_success() => response.text()?,
             Ok(response) => {
-                log::warn!("Local server returned {}. Falling back to one-shot sidecar.", response.status());
+                log::warn!(
+                    "Local server returned {}. Falling back to one-shot sidecar.",
+                    response.status()
+                );
                 run_sidecar_sync(self.app_handle.clone(), &self.model_path, &wav)?
             }
             Err(e) => {
-                log::warn!("Local server request failed: {}. Falling back to one-shot sidecar.", e);
+                log::warn!(
+                    "Local server request failed: {}. Falling back to one-shot sidecar.",
+                    e
+                );
                 run_sidecar_sync(self.app_handle.clone(), &self.model_path, &wav)?
             }
         };

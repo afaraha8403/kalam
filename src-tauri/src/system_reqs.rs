@@ -10,18 +10,21 @@ pub struct HardwareCheckResult {
 pub fn check_model_requirements(model_id: &str) -> HardwareCheckResult {
     let mut sys = System::new_all();
     sys.refresh_memory();
-    
+
     // Total memory is in bytes
     let total_memory_bytes = sys.total_memory();
     let total_memory_gb = total_memory_bytes as f64 / 1_073_741_824.0;
-    
+
     match model_id {
         "sensevoice" => {
             // SenseVoice needs > 2GB RAM
             if total_memory_gb < 2.0 {
                 HardwareCheckResult {
                     can_run: false,
-                    reason: Some(format!("Requires at least 2GB RAM (You have {:.1}GB)", total_memory_gb)),
+                    reason: Some(format!(
+                        "Requires at least 2GB RAM (You have {:.1}GB)",
+                        total_memory_gb
+                    )),
                 }
             } else {
                 HardwareCheckResult {
@@ -35,7 +38,10 @@ pub fn check_model_requirements(model_id: &str) -> HardwareCheckResult {
             if total_memory_gb < 4.0 {
                 HardwareCheckResult {
                     can_run: false,
-                    reason: Some(format!("Requires at least 4GB RAM (You have {:.1}GB)", total_memory_gb)),
+                    reason: Some(format!(
+                        "Requires at least 4GB RAM (You have {:.1}GB)",
+                        total_memory_gb
+                    )),
                 }
             } else {
                 HardwareCheckResult {
@@ -47,6 +53,6 @@ pub fn check_model_requirements(model_id: &str) -> HardwareCheckResult {
         _ => HardwareCheckResult {
             can_run: true,
             reason: None,
-        }
+        },
     }
 }

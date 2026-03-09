@@ -27,9 +27,9 @@
   let selectedProvider: 'groq' | 'openai' = 'groq'
   let selectedMode: 'Cloud' | 'Hybrid' | 'Local' = 'Hybrid'
   let hotkey = 'Ctrl+Win'
-  let languages: string[] = ['en']
+  let toggleHotkey = ''
   let addLanguageCode = ''
-  let recordingMode: 'Hold' | 'Toggle' = 'Hold'
+  let languages: string[] = ['en']
   let platform: 'windows' | 'darwin' | 'linux' = 'windows'
   let demoTranscription = ''
   let demoTextarea: HTMLTextAreaElement
@@ -72,11 +72,13 @@
       if (config.stt_config?.api_key) apiKey = config.stt_config.api_key
       if (config.stt_config?.provider) selectedProvider = config.stt_config.provider as 'groq' | 'openai'
       if (config.stt_config?.mode) selectedMode = config.stt_config.mode as 'Cloud' | 'Hybrid' | 'Local'
-      if (config.recording_mode) recordingMode = config.recording_mode
       if (config.hotkey) {
         hotkey = platform === 'windows' && config.hotkey === 'Ctrl+Super' ? 'Ctrl+Win' : config.hotkey
       } else {
         hotkey = platform === 'windows' ? 'Ctrl+Win' : 'Ctrl+Super'
+      }
+      if (config.toggle_dictation_hotkey) {
+        toggleHotkey = config.toggle_dictation_hotkey
       }
       if (config.languages?.length) languages = [...config.languages]
       if (config.user_email) userEmail = config.user_email
@@ -93,8 +95,8 @@
       config.stt_config.provider = selectedProvider
       config.stt_config.mode = selectedMode
       config.hotkey = hotkey
+      config.toggle_dictation_hotkey = toggleHotkey || null
       config.languages = languages.length ? [...languages] : ['en']
-      config.recording_mode = recordingMode
       config.user_email = userEmail.trim() || null
       config.marketing_opt_in = false
       config.notifications_opt_in = notificationsOptIn
@@ -234,8 +236,8 @@
       config.stt_config.provider = selectedProvider
       config.stt_config.mode = selectedMode
       config.hotkey = hotkey
+      config.toggle_dictation_hotkey = toggleHotkey || null
       config.languages = languages.length ? [...languages] : ['en']
-      config.recording_mode = recordingMode
       config.user_email = userEmail.trim() || null
       config.marketing_opt_in = false
       config.notifications_opt_in = notificationsOptIn
@@ -257,13 +259,7 @@
     skipError = ''
     skipInProgress = true
     try {
-      const core = await import('@tauri-apps/api/core')
-      const invokeFn = core?.invoke
-      if (typeof invokeFn !== 'function') {
-        skipError = 'App is not ready. Try again in a moment.'
-        return
-      }
-      await invokeFn('skip_onboarding_with_defaults')
+      await invoke('skip_onboarding_with_defaults')
       dispatch('complete')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -408,7 +404,7 @@
             <div class="checkboxes">
               <label class="check-row">
                 <input type="checkbox" bind:checked={termsAgreed} />
-                <span>I agree to the <a href="https://github.com/BalaHeadache/kalam/blob/main/README.md" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="https://github.com/BalaHeadache/kalam/blob/main/README.md#privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a></span>
+                <span>I agree to the <a href="https://github.com/afaraha8403/kalam/blob/main/README.md" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="https://github.com/afaraha8403/kalam/blob/main/README.md#privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a></span>
               </label>
               <label class="check-row">
                 <input type="checkbox" bind:checked={notificationsOptIn} />
@@ -586,22 +582,22 @@
 
           <div class="controls-grid">
             <section class="ctrl-section">
-              <h3>Dictation hotkey</h3>
-              <HotkeyCapture
-                value={hotkey}
-                onChange={(h) => (hotkey = h)}
-              />
-              <div class="rec-mode">
-                <label class:selected={recordingMode === 'Hold'}>
-                  <input type="radio" name="mode" value="Hold" bind:group={recordingMode} />
-                  <span class="rec-label">Hold</span>
-                  <span class="rec-desc">Release to stop</span>
-                </label>
-                <label class:selected={recordingMode === 'Toggle'}>
-                  <input type="radio" name="mode" value="Toggle" bind:group={recordingMode} />
-                  <span class="rec-label">Toggle</span>
-                  <span class="rec-desc">Press to start/stop</span>
-                </label>
+              <h3>Dictation Hotkeys</h3>
+              <div class="form-group" role="group" aria-labelledby="hotkey-hold-label">
+                <span id="hotkey-hold-label" class="label-text">Hold to Dictate</span>
+                <HotkeyCapture
+                  value={hotkey}
+                  onChange={(h) => (hotkey = h)}
+                />
+                <p class="rec-desc">Press and hold to dictate, release to stop</p>
+              </div>
+              <div class="form-group" style="margin-top: 1rem;" role="group" aria-labelledby="hotkey-toggle-label">
+                <span id="hotkey-toggle-label" class="label-text">Toggle Dictation</span>
+                <HotkeyCapture
+                  value={toggleHotkey}
+                  onChange={(h) => (toggleHotkey = h)}
+                />
+                <p class="rec-desc">Press once to start dictating, press again to stop</p>
               </div>
             </section>
 
@@ -641,11 +637,11 @@
             <div class="ready-check">✓</div>
           </div>
           <h1>You're all set</h1>
-          <p class="subtitle">Try dictating right now — press your hotkey and speak.</p>
+          <p class="subtitle">Try dictating right now — press your dictation hotkey and speak.</p>
 
           <div class="demo-box" class:unfocused={!demoFocused}>
             <div class="demo-prompt">
-              <kbd>{hotkey || 'Ctrl+Win'}</kbd>
+              <kbd>{hotkey || toggleHotkey || 'Ctrl+Win'}</kbd>
               <span>then say anything</span>
             </div>
             <textarea
@@ -1459,6 +1455,14 @@
     font-size: 14px;
     font-weight: 600;
     color: var(--navy-deep);
+  }
+
+  .form-group .label-text {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text-primary);
   }
 
   .rec-desc {

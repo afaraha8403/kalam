@@ -48,6 +48,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -82,7 +83,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFFMzY4N0M4Q0QzQjkxNDIKUldTU3doWHp4VTFxeEhqRDdlZk5MNTN3Y0NyOG44dUtKWUw1dE5QdEZCNHdRQVl0MGFNNHo0YXkK",
       "endpoints": [
-        "https://kalam-voice.github.io/kalam/latest.json"
+        "https://github.com/afaraha8403/kalam/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

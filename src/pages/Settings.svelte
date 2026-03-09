@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import Icon from '@iconify/svelte'
   import { initTelemetry, optOut } from '../lib/telemetry'
   import { sidebarDictationStore } from '../lib/sidebarDictation'
   import { LANGUAGE_OPTIONS, languageLabel, isLanguageSupportedByProvider } from '../lib/languages'
   import { exportLogsCsv } from '../lib/api/db'
-  import type { AppConfig, AudioDevice } from '../types'
+  import type { AppConfig, AudioDevice, DictionaryEntry } from '../types'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
+  import About from './About.svelte'
 
   let config: AppConfig | null = null
   let audioDevices: AudioDevice[] = []
@@ -41,9 +43,21 @@
   const tabs = [
     { id: 'general', label: 'General' },
     { id: 'dictation', label: 'Audio & Dictation' },
+    { id: 'dictionary', label: 'Dictionary' },
+    { id: 'command', label: 'Command Mode' },
     { id: 'privacy', label: 'Privacy' },
     { id: 'advanced', label: 'Advanced' },
+    { id: 'about', label: 'About' },
   ]
+
+  let commandApiKeyInput = ''
+  let llmModels: string[] = []
+  let loadingLlmModels = false
+  let hasCommandApiKey = false
+
+  let dictionaryEntries: DictionaryEntry[] = []
+  let dictionaryNewTerm = ''
+  let dictionaryLoading = false
 
   onMount(async () => {
     try {
@@ -81,8 +95,27 @@
         if (config.overlay_offset_x == null) config.overlay_offset_x = 0
         if (config.overlay_offset_y == null) config.overlay_offset_y = 0
         if (!config.overlay_expand_direction) config.overlay_expand_direction = 'Up'
+        if (!config.command_config) {
+          config.command_config = {
+            enabled: false,
+            hotkey: null,
+            provider: null,
+            api_keys: {},
+            models: {}
+          }
+        }
+        if (config.command_config.provider === undefined) config.command_config.provider = null
+        if (config.command_config.hotkey === undefined) config.command_config.hotkey = null
+        if (!config.command_config.api_keys) config.command_config.api_keys = {}
+        if (!config.command_config.models) config.command_config.models = {}
       }
       
+      if (config?.command_config?.provider) {
+        hasCommandApiKey = !!config.command_config.api_keys[config.command_config.provider]
+      } else {
+        hasCommandApiKey = false
+      }
+
       // Check if API key is already configured
       hasApiKey = !!config?.stt_config?.api_key
       // Don't populate the input with the actual key for security
@@ -178,11 +211,18 @@
     if (apiKeyInput.trim()) {
       config.stt_config.api_key = apiKeyInput.trim()
     }
+    if (config.command_config && config.command_config.provider && commandApiKeyInput.trim()) {
+      if (!config.command_config.api_keys) config.command_config.api_keys = {}
+      config.command_config.api_keys[config.command_config.provider] = commandApiKeyInput.trim()
+    }
     // Clamp logging max_records to valid range
     if (config.logging) {
       config.logging.max_records = Math.min(20000, Math.max(500, config.logging.max_records || 2000))
     }
     if (config.language_toggle_hotkey === '') config.language_toggle_hotkey = null
+    if (config.command_config) {
+      if ((config.command_config.provider as unknown as string) === '') config.command_config.provider = null
+    }
     if (!Array.isArray(config.languages) || config.languages.length === 0) config.languages = ['en']
 
     console.log('Config object:', JSON.stringify(config, null, 2))
@@ -199,6 +239,12 @@
       }
       hasApiKey = !!config.stt_config.api_key
       apiKeyInput = '' // Clear input after save
+      if (config.command_config?.provider) {
+        hasCommandApiKey = !!config.command_config.api_keys?.[config.command_config.provider]
+      } else {
+        hasCommandApiKey = false
+      }
+      commandApiKeyInput = ''
     } catch (e) {
       console.error('Failed to save settings:', e)
       const err = e as Error & { message?: string }
@@ -402,7 +448,14 @@
 
   function setHotkey(hotkey: string) {
     if (config) {
-      config = { ...config, hotkey }
+      config = { ...config, hotkey: hotkey === '' ? null : hotkey }
+      scheduleSave()
+    }
+  }
+
+  function setToggleHotkey(hotkey: string) {
+    if (config) {
+      config = { ...config, toggle_dictation_hotkey: hotkey === '' ? null : hotkey }
       scheduleSave()
     }
   }
@@ -411,6 +464,233 @@
     if (config) {
       config = { ...config, language_toggle_hotkey: hotkey === '' ? null : hotkey }
       scheduleSave()
+    }
+  }
+
+  function setCommandProvider(e: Event) {
+    const v = (e.currentTarget as HTMLSelectElement).value
+    if (config && config.command_config) {
+      config.command_config.provider = v ? (v as import('../types').CommandModeProvider) : null
+      
+      const provider = config.command_config.provider
+      if (provider) {
+        commandApiKeyInput = ''
+        hasCommandApiKey = !!config.command_config.api_keys?.[provider]
+      } else {
+        commandApiKeyInput = ''
+        hasCommandApiKey = false
+      }
+
+      commandApiKeyStatus = 'idle'
+      commandApiKeyError = null
+      commandModelStatus = 'idle'
+      commandModelError = null
+      llmModels = []
+      scheduleSave()
+    }
+  }
+
+
+  function setCommandHotkey(hotkey: string) {
+    if (config?.command_config) {
+      config = {
+        ...config,
+        command_config: { ...config.command_config, hotkey: hotkey === '' ? null : hotkey }
+      }
+      scheduleSave()
+    }
+  }
+
+  let commandApiKeyStatus: 'idle' | 'testing' | 'valid' | 'invalid' = 'idle'
+  let commandApiKeyError: string | null = null
+  let testingModel = false
+  let commandModelStatus: 'idle' | 'testing' | 'valid' | 'invalid' = 'idle'
+  let commandModelError: string | null = null
+
+  let commandModelInputText = ''
+  let commandModelDropdownOpen = false
+  let commandModelTestTimeout: ReturnType<typeof setTimeout> | null = null
+  let comboboxEl: HTMLElement | null = null
+  let dropdownTop = 0
+  let dropdownLeft = 0
+  let dropdownWidth = 0
+
+  function updateDropdownPosition() {
+    if (comboboxEl) {
+      const rect = comboboxEl.getBoundingClientRect()
+      dropdownTop = rect.bottom + 8
+      dropdownLeft = rect.left
+      dropdownWidth = rect.width
+    }
+  }
+
+  function openDropdown() {
+    updateDropdownPosition()
+    commandModelDropdownOpen = true
+    window.addEventListener('scroll', updateDropdownPosition, true)
+    window.addEventListener('resize', updateDropdownPosition)
+  }
+
+  function closeDropdown() {
+    setTimeout(() => {
+      commandModelDropdownOpen = false
+      window.removeEventListener('scroll', updateDropdownPosition, true)
+      window.removeEventListener('resize', updateDropdownPosition)
+    }, 150)
+  }
+
+  $: if (config?.command_config?.provider) {
+    const savedModel = config.command_config.models?.[config.command_config.provider] ?? ''
+    if (!commandModelDropdownOpen && commandModelInputText !== savedModel) {
+      commandModelInputText = savedModel
+    }
+  }
+
+  // Auto-load models and validate saved state when switching to Command tab or after saving a new key
+  $: if (activeTab === 'command' && config?.command_config?.provider) {
+    const provider = config.command_config.provider;
+    const hasSavedKey = !!config.command_config.api_keys?.[provider];
+    const isTypingNewKey = commandApiKeyInput.trim().length > 0;
+    
+    if (hasSavedKey && !isTypingNewKey && commandApiKeyStatus === 'idle' && !loadingLlmModels) {
+      (async () => {
+        await fetchCommandLlmModels();
+        if (config?.command_config) {
+          const savedModel = config.command_config.models?.[provider];
+          if (savedModel && commandModelStatus === 'idle') {
+            await testCommandModel(savedModel);
+          }
+        }
+      })();
+    }
+  }
+
+  let filteredModels: string[] = []
+  $: {
+    const search = commandModelInputText.toLowerCase()
+    filteredModels = llmModels.filter(m => m.toLowerCase().includes(search))
+  }
+
+  function updateCommandModel(v: string) {
+    if (config && config.command_config && config.command_config.provider) {
+      if (!config.command_config.models) config.command_config.models = {}
+      if (v) {
+        config.command_config.models[config.command_config.provider] = v
+      } else {
+        delete config.command_config.models[config.command_config.provider]
+      }
+      scheduleSave()
+      
+      if (commandModelTestTimeout) clearTimeout(commandModelTestTimeout)
+      if (v) {
+        commandModelStatus = 'testing'
+        commandModelTestTimeout = setTimeout(() => {
+          testCommandModel(v)
+        }, 800)
+      } else {
+        commandModelStatus = 'idle'
+        commandModelError = null
+      }
+    }
+  }
+
+  function handleModelInput(e: Event) {
+    const v = (e.currentTarget as HTMLInputElement).value
+    commandModelInputText = v
+    if (!commandModelDropdownOpen) openDropdown()
+    updateCommandModel(v)
+  }
+
+  function selectModelFromDropdown(m: string) {
+    commandModelInputText = m
+    commandModelDropdownOpen = false
+    updateCommandModel(m)
+  }
+
+  function clearCommandApiKey() {
+    if (config && config.command_config && config.command_config.provider) {
+      delete config.command_config.api_keys[config.command_config.provider]
+      hasCommandApiKey = false
+      commandApiKeyInput = ''
+      commandApiKeyStatus = 'idle'
+      commandApiKeyError = null
+      llmModels = []
+      scheduleSave()
+    }
+  }
+
+  async function fetchCommandLlmModels() {
+    if (!config?.command_config) return
+    const provider = config.command_config.provider ?? 'groq'
+    const apiKey = (commandApiKeyInput.trim() || config.command_config.api_keys?.[provider]) ?? ''
+    if (!apiKey) return
+    loadingLlmModels = true
+    commandApiKeyStatus = 'testing'
+    commandApiKeyError = null
+    try {
+      llmModels = await invoke('fetch_llm_models', { provider, apiKey }) as string[]
+      commandApiKeyStatus = 'valid'
+    } catch (e) {
+      console.error('Failed to fetch LLM models:', e)
+      llmModels = []
+      commandApiKeyStatus = 'invalid'
+      commandApiKeyError = String(e)
+    } finally {
+      loadingLlmModels = false
+    }
+  }
+
+  async function testCommandModel(model: string) {
+    if (!config?.command_config) return
+    const provider = config.command_config.provider ?? 'groq'
+    const apiKey = (commandApiKeyInput.trim() || config.command_config.api_keys?.[provider]) ?? ''
+    if (!apiKey || !model) return
+    
+    testingModel = true
+    commandModelStatus = 'testing'
+    commandModelError = null
+    try {
+      await invoke('test_llm_model', { provider, apiKey, model })
+      commandModelStatus = 'valid'
+    } catch (e) {
+      console.error('Failed to test LLM model:', e)
+      commandModelStatus = 'invalid'
+      commandModelError = String(e)
+    } finally {
+      testingModel = false
+    }
+  }
+
+  async function loadDictionaryEntries() {
+    dictionaryLoading = true
+    try {
+      dictionaryEntries = (await invoke('get_dictionary_entries')) as DictionaryEntry[]
+    } catch (e) {
+      console.error('Failed to load dictionary:', e)
+      dictionaryEntries = []
+    } finally {
+      dictionaryLoading = false
+    }
+  }
+
+  async function addDictionaryTerm() {
+    const term = dictionaryNewTerm.trim()
+    if (!term) return
+    try {
+      await invoke('add_dictionary_entry', { term })
+      dictionaryNewTerm = ''
+      await loadDictionaryEntries()
+    } catch (e) {
+      console.error('Failed to add dictionary term:', e)
+    }
+  }
+
+  async function deleteDictionaryEntry(id: string) {
+    try {
+      await invoke('delete_dictionary_entry', { id })
+      await loadDictionaryEntries()
+    } catch (e) {
+      console.error('Failed to delete dictionary entry:', e)
     }
   }
 
@@ -445,6 +725,7 @@
           on:click={() => {
             activeTab = tab.id
             if (tab.id === 'logging') checkLogEmpty()
+            if (tab.id === 'dictionary') loadDictionaryEntries()
           }}
         >
           {tab.label}
@@ -455,40 +736,37 @@
     <div class="tab-content">
       {#if activeTab === 'general'}
         <section>
-          <h3>Hotkey & Recording</h3>
+          <h3>Dictation Hotkeys</h3>
           <div class="form-group">
-            <label for="hotkey">Activation Hotkey</label>
+            <label for="hotkey">Hold to Dictate</label>
             <HotkeyCapture 
-              value={config.hotkey} 
+              value={config.hotkey ?? ''} 
               onChange={setHotkey}
             />
+            <p class="hint">Press and hold this hotkey to dictate, release to stop.</p>
+            
+            <div class="sub-setting" style="margin-top: 12px;">
+              <label for="min-hold-ms">Short-press threshold (ms)</label>
+              <input 
+                id="min-hold-ms" 
+                type="number" 
+                min="0" 
+                max="2000" 
+                step="50"
+                bind:value={config.min_hold_ms}
+                on:change={scheduleSave}
+              />
+              <p class="hint">If you hold the key for less than this time, dictation is cancelled.</p>
+            </div>
           </div>
 
           <div class="form-group">
-            <label for="recording-mode">Recording Mode</label>
-            <select id="recording-mode" bind:value={config.recording_mode} on:change={scheduleSave}>
-              <option value="Hold">Hold to record</option>
-              <option value="Toggle">Toggle mode</option>
-            </select>
-            {#if config.recording_mode === 'Hold'}
-              <p class="hint">Press and hold the hotkey to record, release to stop</p>
-              
-              <div class="sub-setting" style="margin-top: 12px;">
-                <label for="min-hold-ms">Short-press threshold (ms)</label>
-                <input 
-                  id="min-hold-ms" 
-                  type="number" 
-                  min="0" 
-                  max="2000" 
-                  step="50"
-                  bind:value={config.min_hold_ms}
-                  on:change={scheduleSave}
-                />
-                <p class="hint">If you hold the key for less than this time, recording is cancelled.</p>
-              </div>
-            {:else}
-              <p class="hint">Press hotkey once to start, press again to stop</p>
-            {/if}
+            <label for="toggle-hotkey">Toggle Dictation</label>
+            <HotkeyCapture 
+              value={config.toggle_dictation_hotkey ?? ''} 
+              onChange={setToggleHotkey}
+            />
+            <p class="hint">Press this hotkey once to start dictating, press again to stop.</p>
           </div>
         </section>
 
@@ -853,6 +1131,217 @@
           </div>
         </section>
 
+      {:else if activeTab === 'dictionary'}
+        <section>
+          <h3>Custom vocabulary</h3>
+          {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
+            <p class="hint" style="margin-bottom: 16px;">
+              Custom words improve cloud transcription. In Local mode (or when Hybrid uses the local engine), entries are saved but not applied to recognition.
+            </p>
+          {:else}
+            <p class="hint" style="margin-bottom: 16px;">
+              These words and phrases are sent to the cloud transcription engine to improve accuracy (e.g. names, brands).
+            </p>
+          {/if}
+          <div class="form-group">
+            <label for="dictionary-new-term">Add term</label>
+            <div class="input-group" style="display: flex; gap: 8px; align-items: center;">
+              <input
+                id="dictionary-new-term"
+                type="text"
+                bind:value={dictionaryNewTerm}
+                placeholder="e.g. Kalam, Balacode"
+                on:keydown={(e) => e.key === 'Enter' && addDictionaryTerm()}
+              />
+              <button
+                type="button"
+                class="btn-secondary"
+                disabled={!dictionaryNewTerm.trim() || dictionaryLoading}
+                on:click={addDictionaryTerm}
+              >
+                Add
+              </button>
+            </div>
+          </div>
+          <div class="form-group">
+            <span class="label-text">Current terms</span>
+            {#if dictionaryLoading && dictionaryEntries.length === 0}
+              <p class="hint">Loading…</p>
+            {:else if dictionaryEntries.length === 0}
+              <p class="hint">No terms yet. Add words or phrases above to improve cloud transcription.</p>
+            {:else}
+              <ul class="dictionary-list">
+                {#each dictionaryEntries as entry (entry.id)}
+                  <li>
+                    <span class="dictionary-term">{entry.term}</span>
+                    <button
+                      type="button"
+                      class="btn-icon btn-remove"
+                      title="Remove"
+                      on:click={() => deleteDictionaryEntry(entry.id)}
+                    >
+                      ×
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        </section>
+
+      {:else if activeTab === 'command'}
+        <section>
+          <h3>Command Mode</h3>
+          <p class="hint">Use a dedicated hotkey to speak a command. The app creates a note, task, or reminder instead of typing. Without an LLM you must say "new note", "new task", or "new reminder" followed by your content. With an LLM provider, you can speak naturally—the app infers the type and extracts dates, times, repetition, and description from what you say.</p>
+
+          <div class="form-group checkbox">
+            <label>
+              <input type="checkbox" bind:checked={config.command_config.enabled} on:change={scheduleSave} />
+              Enable Command Mode
+            </label>
+          </div>
+
+          {#if config.command_config.enabled}
+            <div class="form-group">
+              <label for="command-hotkey">Command Hotkey</label>
+              <HotkeyCapture
+                value={config.command_config.hotkey ?? ''}
+                onChange={setCommandHotkey}
+              />
+              {#if config.command_config.provider}
+                <p class="hint">Press this hotkey, then speak naturally (e.g. "Remind me to call Mom tomorrow at 5pm" or "Task: buy milk by Friday"). The app infers note/task/reminder and extracts details. Must be different from the main dictation hotkey.</p>
+              {:else}
+                <p class="hint">Press this hotkey, then say "new note ...", "new task ...", or "new reminder ...". Must be different from the main dictation hotkey.</p>
+              {/if}
+            </div>
+
+            <div class="form-group">
+              <label for="command-llm-provider">LLM Provider (optional)</label>
+              <select
+                id="command-llm-provider"
+                value={config.command_config.provider ?? ''}
+                on:change={setCommandProvider}
+              >
+                <option value="">None (basic parsing only)</option>
+                <option value="groq">Groq</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="gemini">Gemini (AI Studio)</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+              </select>
+              <p class="hint">With an LLM provider, command mode understands natural language: you don't need to say "new note", "new task", or "new reminder". The app infers the type and extracts dates, times, repetition, and description from your speech.</p>
+            </div>
+
+            {#if config.command_config.provider}
+              <div class="form-group">
+                <label for="command-api-key">
+                  API Key
+                  {#if commandApiKeyStatus === 'valid'}
+                    <span class="badge configured">✓ Valid</span>
+                  {:else if commandApiKeyStatus === 'invalid'}
+                    <span class="badge error">✗ Invalid</span>
+                  {:else if hasCommandApiKey && !commandApiKeyInput}
+                    <span class="badge configured">✓ Configured</span>
+                  {/if}
+                </label>
+                <div class="input-group">
+                  <input
+                    id="command-api-key"
+                    type="password"
+                    bind:value={commandApiKeyInput}
+                    on:input={() => {
+                      commandApiKeyStatus = 'idle'
+                      commandApiKeyError = null
+                      scheduleSave()
+                    }}
+                    placeholder={hasCommandApiKey ? "•••••••••••••••• (enter new key to change)" : "Enter your API key"}
+                  />
+                  <button
+                    class="btn-secondary"
+                    disabled={loadingLlmModels || (!commandApiKeyInput.trim() && !config.command_config.api_keys?.[config.command_config.provider])}
+                    on:click={fetchCommandLlmModels}
+                  >
+                    {loadingLlmModels ? 'Testing…' : 'Test & Load Models'}
+                  </button>
+                  {#if hasCommandApiKey && !commandApiKeyInput}
+                    <button class="btn-secondary btn-danger" on:click={clearCommandApiKey}>
+                      Clear
+                    </button>
+                  {/if}
+                </div>
+                {#if commandApiKeyError}
+                  <p class="hint error-text">{commandApiKeyError}</p>
+                {/if}
+              </div>
+
+              {#if commandApiKeyStatus === 'valid' || llmModels.length > 0 || config.command_config.models?.[config.command_config.provider]}
+                <div class="form-group">
+                  <label for="command-model">
+                    Model
+                    {#if commandModelStatus === 'valid'}
+                      <span class="badge configured">✓ Valid</span>
+                    {:else if commandModelStatus === 'invalid'}
+                      <span class="badge error">✗ Invalid</span>
+                    {:else if commandModelStatus === 'testing'}
+                      <span class="badge">Testing…</span>
+                    {/if}
+                  </label>
+                  <div class="custom-combobox" class:open={commandModelDropdownOpen} bind:this={comboboxEl}>
+                    <div class="input-wrapper">
+                      <input
+                        id="command-model"
+                        type="text"
+                        bind:value={commandModelInputText}
+                        on:focus={openDropdown}
+                        on:blur={closeDropdown}
+                        on:input={handleModelInput}
+                        placeholder="Type or select a model..."
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                      <Icon icon="ph:caret-down-bold" class="dropdown-icon" />
+                    </div>
+                    {#if commandModelDropdownOpen}
+                      <div class="combobox-dropdown-container" style="position: fixed; top: {dropdownTop}px; left: {dropdownLeft}px; width: {dropdownWidth}px;">
+                        {#if filteredModels.length > 0}
+                          <ul class="combobox-dropdown" role="listbox">
+                            {#each filteredModels as m}
+                              <li 
+                                role="option"
+                                aria-selected={commandModelInputText === m}
+                                class:selected={config.command_config.models?.[config.command_config.provider] === m}
+                                tabindex="0"
+                                on:click={() => selectModelFromDropdown(m)}
+                                on:keydown={(e) => e.key === 'Enter' && selectModelFromDropdown(m)}
+                              >
+                                <span class="model-name">{m}</span>
+                                {#if config.command_config.models?.[config.command_config.provider] === m}
+                                  <Icon icon="ph:check-bold" class="check-icon" />
+                                {/if}
+                              </li>
+                            {/each}
+                          </ul>
+                        {:else}
+                          <div class="combobox-empty">
+                            <span class="empty-text">Use custom model:</span>
+                            <span class="custom-model-badge">{commandModelInputText || '...'}</span>
+                          </div>
+                        {/if}
+                        <div class="combobox-footer">
+                          <Icon icon="ph:info-duotone" /> Select from the list or type a custom model ID
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                  {#if commandModelError}
+                    <p class="hint error-text">{commandModelError}</p>
+                  {/if}
+                </div>
+              {/if}
+            {/if}
+          {/if}
+        </section>
+
       {:else if activeTab === 'privacy'}
         <section>
           <h3>Privacy</h3>
@@ -974,6 +1463,11 @@
             {resetting ? 'Resetting…' : 'Reset entire application'}
           </button>
         </section>
+
+      {:else if activeTab === 'about'}
+        <div class="about-tab">
+          <About />
+        </div>
       {/if}
     </div>
   </div>
@@ -1083,6 +1577,51 @@
     margin-bottom: 0;
   }
 
+  .dictionary-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .dictionary-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--bg-input);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .dictionary-term {
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+
+  .dictionary-list .btn-icon.btn-remove {
+    padding: 4px 10px;
+    min-width: auto;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .dictionary-list .btn-icon.btn-remove:hover {
+    color: var(--text-primary);
+    background: var(--bg-app);
+  }
+
+  .about-tab {
+    padding: 0;
+  }
+
   label,
   .label-text {
     display: block;
@@ -1159,6 +1698,7 @@
 
   input[type="password"],
   input[type="number"],
+  input[type="text"],
   select {
     width: 100%;
     padding: 14px 16px;
@@ -1174,6 +1714,7 @@
 
   input[type="password"]:focus,
   input[type="number"]:focus,
+  input[type="text"]:focus,
   select:focus {
     outline: none;
     background: var(--bg-card);
@@ -1183,6 +1724,7 @@
   
   input[type="password"]:hover,
   input[type="number"]:hover,
+  input[type="text"]:hover,
   select:hover {
     background: var(--bg-input-hover);
   }
@@ -1590,6 +2132,151 @@
   
   .input-group .btn-danger {
     margin-left: 0;
+  }
+
+  .custom-combobox {
+    position: relative;
+    width: 100%;
+  }
+
+  .custom-combobox.open {
+    z-index: 1000;
+  }
+
+  .custom-combobox .input-wrapper {
+    position: relative;
+  }
+
+  .custom-combobox input {
+    width: 100%;
+    padding-right: 36px;
+  }
+
+  .custom-combobox.open input {
+    border-color: var(--primary);
+    box-shadow: 0 4px 12px var(--primary-alpha);
+    background: var(--bg-card);
+  }
+
+  :global(.custom-combobox .dropdown-icon) {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    pointer-events: none;
+    font-size: 16px;
+    transition: transform 0.2s ease;
+  }
+
+  .custom-combobox.open :global(.dropdown-icon) {
+    transform: translateY(-50%) rotate(180deg);
+  }
+
+  .combobox-dropdown-container {
+    position: fixed;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: dropdownSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes dropdownSlideIn {
+    from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .combobox-dropdown {
+    max-height: 240px;
+    overflow-y: auto;
+    list-style: none;
+    padding: 6px;
+    margin: 0;
+  }
+
+  .combobox-dropdown::-webkit-scrollbar {
+    width: 6px;
+  }
+  .combobox-dropdown::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .combobox-dropdown::-webkit-scrollbar-thumb {
+    background: var(--border-visible);
+    border-radius: 3px;
+  }
+  .combobox-dropdown::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+
+  .combobox-dropdown li {
+    padding: 10px 12px;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    color: var(--text-primary);
+    transition: all 0.1s ease;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .combobox-dropdown li:hover {
+    background: var(--bg-input);
+    color: var(--navy-deep);
+  }
+
+  .combobox-dropdown li.selected {
+    background: var(--primary-alpha-light);
+    color: var(--primary-dark);
+    font-weight: 600;
+  }
+
+  :global(.combobox-dropdown li .check-icon) {
+    color: var(--primary);
+    font-size: 16px;
+  }
+
+  .combobox-empty {
+    padding: 20px 16px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .combobox-empty .empty-text {
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
+
+  .custom-model-badge {
+    background: var(--bg-input);
+    padding: 6px 12px;
+    border-radius: var(--radius-pill);
+    font-size: 13px;
+    color: var(--navy-deep);
+    border: 1px solid var(--border);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .combobox-footer {
+    padding: 10px 14px;
+    background: var(--bg-app);
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
 
   @media (max-width: 768px) {

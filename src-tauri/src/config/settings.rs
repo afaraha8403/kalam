@@ -2,8 +2,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub hotkey: String,
-    pub recording_mode: RecordingMode,
+    #[serde(default = "default_hotkey")]
+    pub hotkey: Option<String>,
+    #[serde(default)]
+    pub toggle_dictation_hotkey: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub recording_mode: Option<RecordingMode>,
     pub audio_device: Option<String>,
     pub stt_config: STTConfig,
     pub formatting: FormattingConfig,
@@ -51,6 +55,26 @@ pub struct AppConfig {
     /// Opt-in to product notifications and updates. Default false (opt-out by default).
     #[serde(default)]
     pub notifications_opt_in: bool,
+    /// Command mode: dedicated hotkey to create note/task/reminder from voice; optional LLM parsing.
+    #[serde(default)]
+    pub command_config: CommandConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CommandConfig {
+    pub enabled: bool,
+    pub hotkey: Option<String>,
+    /// "groq" | "openrouter" | "gemini" | "openai" | "anthropic"
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub api_keys: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub models: std::collections::HashMap<String, String>,
+    // Legacy fields for backwards compatibility
+    #[serde(default, skip_serializing)]
+    pub api_key: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub model: Option<String>,
 }
 
 fn default_dictation_enabled() -> bool {
@@ -94,14 +118,14 @@ pub enum WaveformStyle {
     CenterSplit,
 }
 
-fn default_hotkey() -> String {
+fn default_hotkey() -> Option<String> {
     #[cfg(windows)]
     {
-        "Ctrl+Win".to_string()
+        Some("Ctrl+Win".to_string())
     }
     #[cfg(not(windows))]
     {
-        "Ctrl+Super".to_string()
+        Some("Ctrl+Super".to_string())
     }
 }
 
@@ -117,7 +141,8 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             hotkey: default_hotkey(),
-            recording_mode: RecordingMode::Hold,
+            toggle_dictation_hotkey: None,
+            recording_mode: None,
             audio_device: None,
             stt_config: STTConfig::default(),
             formatting: FormattingConfig::default(),
@@ -142,6 +167,7 @@ impl Default for AppConfig {
             user_email: None,
             marketing_opt_in: false,
             notifications_opt_in: false,
+            command_config: CommandConfig::default(),
         }
     }
 }
@@ -314,20 +340,15 @@ impl Default for LoggingConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "PascalCase")]
 pub enum LogLevel {
     Off,
     Error,
     Warn,
+    #[default]
     Info,
     Debug,
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        LogLevel::Info
-    }
 }
 
 impl LogLevel {
