@@ -96,24 +96,25 @@ impl TextInjector {
             .set_text(text)
             .map_err(|e| anyhow::anyhow!("Failed to set clipboard: {}", e))?;
 
-        let mut enigo = Enigo::new(&Settings::default())
-            .map_err(|e| anyhow::anyhow!("Failed to init enigo: {:?}", e))?;
+        {
+            let mut enigo = Enigo::new(&Settings::default())
+                .map_err(|e| anyhow::anyhow!("Failed to init enigo: {:?}", e))?;
 
-        #[cfg(target_os = "macos")]
-        let modifier = Key::Meta;
-        #[cfg(not(target_os = "macos"))]
-        let modifier = Key::Control;
+            #[cfg(target_os = "macos")]
+            let modifier = Key::Meta;
+            #[cfg(not(target_os = "macos"))]
+            let modifier = Key::Control;
 
-        enigo
-            .key(modifier, Direction::Press)
-            .map_err(|e| anyhow::anyhow!("Failed to press modifier: {:?}", e))?;
-        enigo
-            .key(Key::Unicode('v'), Direction::Click)
-            .map_err(|e| anyhow::anyhow!("Failed to press v: {:?}", e))?;
-        enigo
-            .key(modifier, Direction::Release)
-            .map_err(|e| anyhow::anyhow!("Failed to release modifier: {:?}", e))?;
-        drop(enigo);
+            enigo
+                .key(modifier, Direction::Press)
+                .map_err(|e| anyhow::anyhow!("Failed to press modifier: {:?}", e))?;
+            enigo
+                .key(Key::Unicode('v'), Direction::Click)
+                .map_err(|e| anyhow::anyhow!("Failed to press v: {:?}", e))?;
+            enigo
+                .key(modifier, Direction::Release)
+                .map_err(|e| anyhow::anyhow!("Failed to release modifier: {:?}", e))?;
+        }
 
         sleep(Duration::from_millis(PASTE_WAIT_MS)).await;
 
