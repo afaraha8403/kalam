@@ -252,6 +252,11 @@ pub struct FormattingConfig {
     pub retry_attempts: u32,
     #[serde(default = "default_retry_delay_ms")]
     pub retry_delay_ms: u64,
+    /// Process names (lowercase, e.g. "notepad.exe") that should always use
+    /// Clipboard injection regardless of injection_method / clipboard_threshold.
+    /// Win11 Notepad and similar TSF-heavy apps corrupt rapid keystroke bursts.
+    #[serde(default = "default_force_clipboard_apps")]
+    pub force_clipboard_apps: Vec<String>,
 }
 
 fn default_retry_attempts() -> u32 {
@@ -259,6 +264,9 @@ fn default_retry_attempts() -> u32 {
 }
 fn default_retry_delay_ms() -> u64 {
     100
+}
+fn default_force_clipboard_apps() -> Vec<String> {
+    vec!["notepad.exe".to_string()]
 }
 
 impl Default for FormattingConfig {
@@ -273,6 +281,7 @@ impl Default for FormattingConfig {
             clipboard_threshold: 50,
             retry_attempts: 3,
             retry_delay_ms: 100,
+            force_clipboard_apps: default_force_clipboard_apps(),
         }
     }
 }
