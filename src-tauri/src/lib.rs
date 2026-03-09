@@ -423,14 +423,15 @@ fn create_registrations(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_shell::init());
-    #[cfg(windows)]
-    {
-        builder = builder.device_event_filter(tauri::DeviceEventFilter::Always);
-    }
+    let builder = {
+        let b = tauri::Builder::default()
+            .plugin(tauri_plugin_notification::init())
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_shell::init());
+        #[cfg(windows)]
+        let b = b.device_event_filter(tauri::DeviceEventFilter::Always);
+        b
+    };
     builder.setup(|app| {
             // Initialize app state (first use of config; logger already set in main)
             let state = AppState::new(app.handle().clone())?;
@@ -764,7 +765,8 @@ fn request_macos_accessibility() -> Result<(), String> {
             &kCFTypeDictionaryValueCallBacks,
         )
     };
-    let dict = unsafe { CFDictionary::wrap_under_create_rule(dict_ref) };
+    let dict: CFDictionary<CFString, CFBoolean> =
+        unsafe { CFDictionary::wrap_under_create_rule(dict_ref) };
     let _trusted = unsafe { AXIsProcessTrustedWithOptions(dict.as_CFTypeRef() as *const c_void) };
     Ok(())
 }
@@ -1458,6 +1460,7 @@ fn show_overlay(app: &tauri::AppHandle) -> anyhow::Result<()> {
     let overlay = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| anyhow::anyhow!("Overlay window not found"))?;
+    #[allow(unused_variables)]
     let win = overlay.as_ref().window();
 
     #[cfg(windows)]
@@ -1979,6 +1982,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         let last_injected_len = state.last_injected_len.clone();
         let last_injected_text = state.last_injected_text.clone();
         let app_handle = state.app_handle.clone();
+        #[allow(unused_variables)]
         let foreground_hwnd = state.foreground_for_injection.lock().await.take();
         let recording_type = *state.recording_type.lock().await;
 

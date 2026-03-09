@@ -144,6 +144,7 @@ fn parse_rdev_key_code(key: &str) -> anyhow::Result<Key> {
 /// Start the global key listener with multiple hotkey registrations.
 /// The first registration (index 0) is the dictation hotkey; when it is active, HOTKEY_ACTIVE is set (for Windows Win-key suppression).
 pub fn start_listener(registrations: Vec<HotkeyRegistration>) {
+    #[allow(unused_variables)]
     let any_meta = registrations.iter().any(|r| r.target.meta);
     #[cfg(windows)]
     if any_meta {
@@ -171,6 +172,7 @@ pub fn start_listener(registrations: Vec<HotkeyRegistration>) {
 }
 
 pub fn update_registrations(registrations: Vec<HotkeyRegistration>) {
+    #[allow(unused_variables)]
     let any_meta = registrations.iter().any(|r| r.target.meta);
     #[cfg(windows)]
     if any_meta {
