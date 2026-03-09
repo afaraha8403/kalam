@@ -96,6 +96,8 @@ pub struct AppState {
     pub last_injected_text: Arc<Mutex<String>>,
     /// On Windows: HWND of foreground window at recording start; restore before injection so text goes to the right app.
     pub foreground_for_injection: Arc<Mutex<Option<usize>>>,
+    /// On Windows: lowercase process filename (e.g. "notepad.exe") of the foreground window at recording start.
+    pub foreground_process_name: Arc<Mutex<Option<String>>>,
     pub press_start_time: Arc<Mutex<Option<std::time::Instant>>>,
     pub local_model_manager: Arc<crate::stt::lifecycle::LocalModelManager>,
     /// Set when starting recording: Dictation (main hotkey) or Command (command hotkey). Read in stop_dictation to decide inject vs command pipeline.
@@ -151,6 +153,7 @@ impl AppState {
             last_injected_len,
             last_injected_text,
             foreground_for_injection: Arc::new(Mutex::new(None)),
+            foreground_process_name: Arc::new(Mutex::new(None)),
             press_start_time: Arc::new(Mutex::new(None)),
             local_model_manager,
             recording_type: Arc::new(Mutex::new(RecordingType::Dictation)),
@@ -1623,6 +1626,43 @@ fn show_overlay(app: &tauri::AppHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// On Windows: resolve the lowercase process filename (e.g. "notepad.exe") for a given HWND.
+/// Returns None if the process cannot be queried.
+#[cfg(windows)]
+fn get_process_name_for_hwnd(hwnd: usize) -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+    let mut pid: u32 = 0;
+    unsafe { GetWindowThreadProcessId(hwnd as isize, &mut pid) };
+    if pid == 0 {
+        return None;
+    }
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle == 0 {
+        return None;
+    }
+
+    let mut buf = [0u16; 260];
+    let mut size = buf.len() as u32;
+    let ok = unsafe { QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size) };
+    unsafe { CloseHandle(handle) };
+
+    if ok == 0 {
+        return None;
+    }
+
+    let path = String::from_utf16_lossy(&buf[..size as usize]);
+    std::path::Path::new(&path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_lowercase())
+}
+
 async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<AtomicBool>) {
     if is_recording.load(Ordering::SeqCst) {
         log::debug!("Already recording, ignoring start request");
@@ -1644,7 +1684,10 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
             let hwnd =
                 unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
             if hwnd != 0 {
+                let process_name = get_process_name_for_hwnd(hwnd as usize);
+                log::debug!("Foreground process at dictation start: {:?}", process_name);
                 *state.foreground_for_injection.lock().await = Some(hwnd as usize);
+                *state.foreground_process_name.lock().await = process_name;
             }
         }
         *audio_state = AudioState::Recording;
@@ -2084,6 +2127,8 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         let app_handle = state.app_handle.clone();
         #[allow(unused_variables)]
         let foreground_hwnd = state.foreground_for_injection.lock().await.take();
+        #[allow(unused_variables)]
+        let foreground_process = state.foreground_process_name.lock().await.take();
         let recording_type = *state.recording_type.lock().await;
 
         tokio::spawn(async move {
@@ -2176,7 +2221,32 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                     hwnd as isize,
                                 )
                             };
-                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            // Win11 XAML apps (e.g. Notepad) need extra time to fully settle
+                            // focus before synthetic input is accepted reliably.
+                            std::thread::sleep(std::time::Duration::from_millis(150));
+                        }
+                        // On Windows, override injection method to Clipboard for apps known to
+                        // corrupt rapid keystroke bursts via TSF (e.g. Win11 Notepad).
+                        #[allow(unused_mut)]
+                        let mut effective_formatting = config.formatting.clone();
+                        #[cfg(windows)]
+                        {
+                            if let Some(ref pname) = foreground_process {
+                                let name_lower = pname.to_lowercase();
+                                let force_clipboard = config
+                                    .formatting
+                                    .force_clipboard_apps
+                                    .iter()
+                                    .any(|app| name_lower.contains(&app.to_lowercase()));
+                                if force_clipboard {
+                                    log::info!(
+                                        "Forcing clipboard injection for process: {}",
+                                        pname
+                                    );
+                                    effective_formatting.injection_method =
+                                        crate::config::InjectionMethod::Clipboard;
+                                }
+                            }
                         }
                         if let Ok(injector) = crate::injection::TextInjector::new() {
                             for action in &actions {
@@ -2195,7 +2265,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             }
                             if !formatted.is_empty() {
                                 if let Err(e) = injector
-                                    .inject_with_config(&formatted, &config.formatting)
+                                    .inject_with_config(&formatted, &effective_formatting)
                                     .await
                                 {
                                     log::error!("Failed to inject text: {}", e);
