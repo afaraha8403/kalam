@@ -1,6 +1,6 @@
 [package]
 name = "kalam-voice"
-version = "0.1.0"
+version = "0.0.1"
 description = "Kalam — open-source voice dictation. Free alternative to Whisperflow."
 authors = ["Kalam Team"]
 license = "MIT"
