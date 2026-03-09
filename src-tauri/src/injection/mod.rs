@@ -113,6 +113,7 @@ impl TextInjector {
         enigo
             .key(modifier, Direction::Release)
             .map_err(|e| anyhow::anyhow!("Failed to release modifier: {:?}", e))?;
+        drop(enigo);
 
         sleep(Duration::from_millis(PASTE_WAIT_MS)).await;
 
