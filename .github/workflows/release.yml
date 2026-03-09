@@ -47,6 +47,9 @@ jobs:
         working-directory: ./src-tauri
         run: cargo fmt -- --check
 
+      - name: Build frontend
+        run: npm run build
+
       - name: Rust clippy
         working-directory: ./src-tauri
         run: cargo clippy -- -D warnings
