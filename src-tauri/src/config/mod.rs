@@ -45,6 +45,53 @@ use std::path::PathBuf;
 
 pub use settings::*;
 
+/// Current config schema version. Bump when making breaking changes and add a migration.
+pub const CURRENT_CONFIG_VERSION: u32 = 1;
+
+/// Run migrations from config's current version to CURRENT_CONFIG_VERSION.
+fn migrate_config(mut config: AppConfig) -> AppConfig {
+    while config.config_version < CURRENT_CONFIG_VERSION {
+        let from = config.config_version;
+        config = run_migration(config, from);
+        config.config_version = from + 1;
+        log::info!("Migrated config from v{} to v{}", from, from + 1);
+    }
+    config
+}
+
+fn run_migration(config: AppConfig, from_version: u32) -> AppConfig {
+    match from_version {
+        0 => {
+            // No version in file (legacy): just ensure version is set; no data change.
+            config
+        }
+        _ => config,
+    }
+}
+
+/// Extract critical fields from parsed JSON Value so we can preserve them when repair fallback is used.
+fn extract_critical_from_value(value: &serde_json::Value) -> (bool, bool) {
+    let onboarding = value
+        .get("onboarding_complete")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let dictation = value
+        .get("dictation_enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    (onboarding, dictation)
+}
+
+/// Best-effort extract onboarding_complete from corrupt JSON via regex (so we don't reset onboarding).
+fn extract_onboarding_from_str(contents: &str) -> bool {
+    const PATTERN: &str = r#""onboarding_complete"\s*:\s*true"#;
+    if let Ok(re) = regex::Regex::new(PATTERN) {
+        re.is_match(contents)
+    } else {
+        false
+    }
+}
+
 pub fn get_kalam_dir() -> anyhow::Result<PathBuf> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
@@ -72,65 +119,114 @@ impl ConfigManager {
         let config_path = kalam_dir.join("config.json");
         log::info!("Config will be saved to: {:?}", config_path);
 
-        let mut config = if config_path.exists() {
-            let contents = fs::read_to_string(&config_path)?;
-            log::debug!("Loading config from {:?}: {}", config_path, contents);
-            serde_json::from_str(&contents).unwrap_or_default()
-        } else {
-            log::info!("No existing config found, using defaults");
-            AppConfig::default()
+        if !config_path.exists() {
+            log::info!("No config file found, using defaults");
+            let default = AppConfig::default();
+            let mut mgr = Self {
+                config_path: config_path.clone(),
+                config: default.clone(),
+            };
+            let _ = mgr.save(default);
+            return Ok(mgr);
+        }
+
+        let contents = fs::read_to_string(&config_path)?;
+        log::debug!("Loading config from {:?}", config_path);
+
+        // When true, persist the loaded config once so the file has the new shape (version/migrations).
+        let mut persist_upgraded = false;
+
+        let mut config = match serde_json::from_str::<AppConfig>(&contents) {
+            Ok(c) => {
+                let out = if c.config_version > CURRENT_CONFIG_VERSION {
+                    log::warn!(
+                        "Config file version {} is newer than app version {}; using defaults and not overwriting file.",
+                        c.config_version,
+                        CURRENT_CONFIG_VERSION
+                    );
+                    // Do not overwrite file when user has newer version.
+                    AppConfig::default()
+                } else if c.config_version < CURRENT_CONFIG_VERSION {
+                    persist_upgraded = true;
+                    migrate_config(c)
+                } else {
+                    // Same version: persist if file lacked config_version (legacy) so disk gets the new shape.
+                    if serde_json::from_str::<serde_json::Value>(&contents)
+                        .map_or(false, |v| v.get("config_version").is_none())
+                    {
+                        persist_upgraded = true;
+                    }
+                    c
+                };
+                out
+            }
+            Err(e) => {
+                log::warn!("Config strict parse failed ({}), attempting auto-fix.", e);
+                let mut default = AppConfig::default();
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    let (onboarding, dictation) = extract_critical_from_value(&value);
+                    default.onboarding_complete = onboarding;
+                    default.dictation_enabled = dictation;
+                    log::info!("Preserved critical flags from JSON Value: onboarding_complete={}, dictation_enabled={}", onboarding, dictation);
+                } else {
+                    default.onboarding_complete = extract_onboarding_from_str(&contents);
+                    log::info!("Preserved onboarding_complete={} from raw string (corrupt JSON).", default.onboarding_complete);
+                }
+                let mut mgr = Self {
+                    config_path: config_path.clone(),
+                    config: default.clone(),
+                };
+                if mgr.save(default.clone()).is_ok() {
+                    log::info!("Repaired config file written.");
+                }
+                default
+            }
         };
 
         migrate_legacy_languages(&mut config);
         migrate_legacy_command_config(&mut config);
         migrate_legacy_hotkeys(&mut config);
 
-        Ok(Self {
+        let mut mgr = Self {
             config_path,
             config,
-        })
+        };
+        if persist_upgraded {
+            if let Err(e) = mgr.save(mgr.get_all()) {
+                log::warn!("Could not persist upgraded config to disk: {}", e);
+            } else {
+                log::info!("Upgraded config persisted to disk.");
+            }
+        }
+
+        Ok(mgr)
     }
 
     pub fn save(&mut self, config: AppConfig) -> anyhow::Result<()> {
         self.config = config;
+        self.config.config_version = CURRENT_CONFIG_VERSION;
 
         // Ensure parent directory exists
         if let Some(parent) = self.config_path.parent() {
             if !parent.exists() {
                 log::info!("Creating parent directory: {:?}", parent);
-                match fs::create_dir_all(parent) {
-                    Ok(_) => log::info!("Directory created successfully"),
-                    Err(e) => {
-                        log::error!("Failed to create directory: {}", e);
-                        return Err(e.into());
-                    }
-                }
+                fs::create_dir_all(parent)
+                    .map_err(|e| anyhow::anyhow!("Failed to create directory: {}", e))?;
             }
         }
 
         log::info!("Serializing config...");
-        let json = match serde_json::to_string_pretty(&self.config) {
-            Ok(j) => {
-                log::info!("Config serialized, JSON length: {}", j.len());
-                j
-            }
-            Err(e) => {
-                log::error!("Failed to serialize config: {}", e);
-                return Err(e.into());
-            }
-        };
+        let json = serde_json::to_string_pretty(&self.config)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
+        log::info!("Config serialized, JSON length: {}", json.len());
 
-        log::info!("Writing config to {:?}", self.config_path);
-        match fs::write(&self.config_path, json) {
-            Ok(_) => {
-                log::info!("✓ Config saved successfully to {:?}", self.config_path);
-                Ok(())
-            }
-            Err(e) => {
-                log::error!("✗ Failed to write config file: {}", e);
-                Err(e.into())
-            }
-        }
+        let tmp_path = self.config_path.with_extension("json.tmp");
+        log::info!("Writing config to temp {:?}", tmp_path);
+        fs::write(&tmp_path, &json).map_err(|e| anyhow::anyhow!("Failed to write temp config: {}", e))?;
+        fs::rename(&tmp_path, &self.config_path)
+            .map_err(|e| anyhow::anyhow!("Failed to rename temp to config: {}", e))?;
+        log::info!("Config saved successfully to {:?}", self.config_path);
+        Ok(())
     }
 
     pub fn get_all(&self) -> AppConfig {

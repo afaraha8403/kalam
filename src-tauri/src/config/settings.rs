@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    /// Schema version for migrations. Bump when making breaking config changes.
+    #[serde(default = "default_config_version")]
+    pub config_version: u32,
     #[serde(default = "default_hotkey")]
     pub hotkey: Option<String>,
     #[serde(default)]
@@ -61,6 +64,9 @@ pub struct AppConfig {
     /// Update channel: stable (latest release) or beta (pre-releases).
     #[serde(default)]
     pub update_channel: UpdateChannel,
+    /// When true, the left sidebar is collapsed to icon-only width; persisted across restarts.
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -140,6 +146,10 @@ fn default_hotkey() -> Option<String> {
     }
 }
 
+fn default_config_version() -> u32 {
+    1
+}
+
 fn default_min_hold_ms() -> u64 {
     300
 }
@@ -151,6 +161,7 @@ fn default_languages() -> Vec<String> {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
+            config_version: default_config_version(),
             hotkey: default_hotkey(),
             toggle_dictation_hotkey: None,
             recording_mode: None,
@@ -180,6 +191,7 @@ impl Default for AppConfig {
             notifications_opt_in: false,
             command_config: CommandConfig::default(),
             update_channel: UpdateChannel::Stable,
+            sidebar_collapsed: false,
         }
     }
 }

@@ -37,6 +37,7 @@
   let currentPage = 'home'
   let isFirstRun = true
   let dictationEnabled = true
+  let sidebarCollapsed = false
   let statusBarConfig: AppConfig | null = null
   let dbStatus: { ok: boolean } | null = null
   let statusBarPlatform = ''
@@ -59,7 +60,10 @@
         }
       })
       unlistenSettings = await listen<AppConfig>('settings_updated', (e) => {
-        if (e.payload) statusBarConfig = e.payload
+        if (e.payload) {
+          statusBarConfig = e.payload
+          if (e.payload.sidebar_collapsed != null) sidebarCollapsed = e.payload.sidebar_collapsed
+        }
       })
       unlistenTranscription = await listen<{ latency_ms?: number }>('transcription-saved', (e) => {
         if (e.payload?.latency_ms != null) lastLatencyMs = e.payload.latency_ms
@@ -68,6 +72,7 @@
         const config = (await invoke('get_settings')) as AppConfig
         isFirstRun = !config.onboarding_complete
         dictationEnabled = config.dictation_enabled ?? true
+        sidebarCollapsed = config.sidebar_collapsed ?? false
         initTelemetry(config.privacy?.telemetry_enabled ?? false)
         const platform = (await invoke('get_platform')) as string
         statusBarConfig = config
@@ -113,6 +118,7 @@
     try {
       const config = (await invoke('get_settings')) as AppConfig
       dictationEnabled = config.dictation_enabled ?? true
+      sidebarCollapsed = config.sidebar_collapsed ?? false
       const platform = (await invoke('get_platform')) as string
       statusBarConfig = config
       statusBarPlatform = platform
@@ -124,6 +130,18 @@
       }
     } catch {
       // keep store as-is
+    }
+  }
+
+  async function setSidebarCollapsed(next: boolean) {
+    if (sidebarCollapsed === next) return
+    sidebarCollapsed = next
+    try {
+      const config = (await invoke('get_settings')) as AppConfig
+      await invoke('save_settings', { newConfig: { ...config, sidebar_collapsed: next } })
+    } catch (e) {
+      console.error('Failed to save sidebar state:', e)
+      sidebarCollapsed = !next
     }
   }
 
@@ -147,11 +165,22 @@
 {:else}
   <div class="app-shell">
     <main class="app">
-    <nav class="sidebar">
-      <div class="logo">
-        <img src="/logo/kalam-logo-icon.svg" alt="Kalam" class="logo-icon" />
-        <h1>Kalam</h1>
+    <nav class="sidebar" class:collapsed={sidebarCollapsed}>
+      <div class="sidebar-header">
+        <div class="logo">
+          <img src="/logo/kalam-logo-icon.svg" alt="Kalam" class="logo-icon" />
+          <h1>Kalam</h1>
+        </div>
       </div>
+      <button
+        type="button"
+        class="sidebar-toggle"
+        title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        on:click={() => setSidebarCollapsed(!sidebarCollapsed)}
+        aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        <Icon icon={sidebarCollapsed ? 'ph:caret-right-duotone' : 'ph:caret-left-duotone'} />
+      </button>
       <ul class="nav-links">
         <li class:active={currentPage === 'home'}>
           <button on:click={() => navigate('home')} title="Home">
@@ -192,8 +221,16 @@
       </ul>
       
       <div class="sidebar-bottom">
-        <div class="dictation-control" title="Turn dictation and hotkeys on or off">
-          <div class="dictation-info">
+        <div
+          class="dictation-control"
+          class:collapsed-toggle={sidebarCollapsed}
+          title={sidebarCollapsed ? (dictationEnabled ? 'Dictation on — click to turn off' : 'Dictation off — click to turn on') : 'Turn dictation and hotkeys on or off'}
+          role={sidebarCollapsed ? 'button' : undefined}
+          tabindex={sidebarCollapsed ? 0 : undefined}
+          on:click={sidebarCollapsed ? () => setDictation(!dictationEnabled) : undefined}
+          on:keydown={sidebarCollapsed ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDictation(!dictationEnabled); } } : undefined}
+        >
+          <div class="dictation-info" class:dictation-off={!dictationEnabled}>
             <Icon icon="ph:microphone-stage-duotone" class="nav-icon" />
             <span class="nav-text">Dictation</span>
           </div>
@@ -277,13 +314,92 @@
     padding: 28px 24px;
     position: relative;
     overflow: hidden;
+    transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .sidebar.collapsed {
+    width: 72px;
+    padding: 20px 12px;
+    align-items: center;
+  }
+
+  .sidebar.collapsed .sidebar-header {
+    margin-bottom: 32px;
+    justify-content: center;
+  }
+
+  .sidebar.collapsed .logo h1,
+  .sidebar.collapsed .nav-text,
+  .sidebar.collapsed .dictation-info .nav-text,
+  .sidebar.collapsed .tab-selector {
+    display: none;
+  }
+
+  .sidebar.collapsed .nav-links button,
+  .sidebar.collapsed .dictation-control,
+  .sidebar.collapsed .settings-link button {
+    justify-content: center;
+    padding: 12px;
+  }
+
+  .sidebar.collapsed .dictation-control {
+    flex-direction: column;
+    padding: 8px;
+  }
+
+  .dictation-control.collapsed-toggle {
+    cursor: pointer;
+  }
+
+  .dictation-control.collapsed-toggle:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .dictation-control.collapsed-toggle:not(:focus-visible) {
+    outline: none;
+  }
+
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 40px;
+  }
+
+  .sidebar-toggle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    opacity: 0.45;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.2s, color 0.2s, background 0.2s;
+    border-radius: 0 var(--radius-xl) var(--radius-xl) 0;
+  }
+
+  .sidebar-toggle:hover {
+    opacity: 0.85;
+    color: var(--text-secondary);
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  .sidebar-toggle :global(svg) {
+    font-size: 14px;
   }
 
   .logo {
     display: flex;
     align-items: center;
     gap: 14px;
-    margin-bottom: 40px;
     padding-bottom: 0;
   }
 
@@ -411,6 +527,16 @@
     font-weight: 500;
   }
 
+  .dictation-info.dictation-off :global(.nav-icon),
+  .dictation-info.dictation-off {
+    opacity: 0.45;
+    color: var(--text-muted);
+  }
+
+  .dictation-info.dictation-off :global(.nav-icon) {
+    filter: grayscale(0.6);
+  }
+
   .tab-selector {
     display: flex;
     background: var(--bg-app);
@@ -479,6 +605,11 @@
       width: 80px;
       padding: 24px 12px;
       align-items: center;
+    }
+
+    .sidebar.collapsed {
+      width: 72px;
+      padding: 20px 12px;
     }
 
     .logo {

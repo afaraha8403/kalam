@@ -13,12 +13,18 @@
   $: latencyLabel = lastLatencyMs != null ? `Latency ${lastLatencyMs} ms` : 'Latency —'
   $: dbLabel =
     dbStatus === null ? '…' : dbStatus.ok ? 'DB connected' : 'DB disconnected'
-  $: configLoaded = config !== null
-  $: configValid =
-    config !== null &&
-    (config.languages?.length ?? 0) > 0 &&
-    (!!config.hotkey?.trim() || !!config.toggle_dictation_hotkey?.trim())
-  $: configLabel = !configLoaded ? '…' : configValid ? 'Config loaded' : 'Config invalid'
+
+  $: sttMode = config?.stt_config?.mode ?? 'Cloud'
+  $: sttProvider = config?.stt_config?.provider ?? 'groq'
+  $: localModel = config?.stt_config?.local_model ?? 'sensevoice'
+  $: localModelLabel = localModel === 'whisper_base' ? 'Whisper Base' : localModel === 'sensevoice' ? 'SenseVoice' : localModel
+  $: providerLabel = sttProvider === 'openai' ? 'OpenAI' : sttProvider === 'groq' ? 'Groq' : sttProvider
+  $: sttModeLabel =
+    sttMode === 'Local'
+      ? `Local · ${localModelLabel}`
+      : sttMode === 'Hybrid'
+        ? `Hybrid · ${providerLabel}`
+        : `Cloud · ${providerLabel}`
 
   $: dictateHotkey =
     $sidebarDictationStore?.hotkey != null
@@ -52,9 +58,9 @@
     {dbLabel}
   </span>
   <span class="sep">·</span>
-  <span class="segment" class:error={configLoaded && !configValid}>
-    <Icon icon="ph:gear-duotone" class="icon" />
-    {configLabel}
+  <span class="segment stt-mode">
+    <Icon icon="ph:microphone-duotone" class="icon" />
+    {sttModeLabel}
   </span>
   <span class="sep">·</span>
   <span class="segment latency">

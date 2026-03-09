@@ -486,6 +486,16 @@ pub fn run() {
                 log::warn!("Failed to set initial overlay position: {}", e);
             }
 
+            // Set overlay window (and webview where supported) background to transparent.
+            // On macOS the webview/window can default to white; this avoids the white box.
+            if let Some(overlay) = app.get_webview_window(OVERLAY_LABEL) {
+                use tauri::window::Color;
+                let transparent = Some(Color(0, 0, 0, 0));
+                if let Err(e) = overlay.as_ref().window().set_background_color(transparent) {
+                    log::debug!("Overlay set_background_color: {}", e);
+                }
+            }
+
             // Track cursor to keep overlay on the correct monitor
             let cursor_tracking_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -601,6 +611,7 @@ pub fn run() {
             download_model,
             get_app_log,
             get_app_log_empty,
+            get_app_data_path,
             open_app_data_folder,
             commands::export_logs_csv,
             commands::create_entry,
@@ -626,8 +637,12 @@ pub fn run() {
             check_model_requirements,
             start_local_model,
             stop_local_model,
+            stop_all_local_models,
             restart_local_model,
             delete_local_model,
+            uninstall_sidecar,
+            is_sidecar_installed_for_model,
+            is_sidecar_available_for_model,
             commands::fetch_llm_models,
             commands::generate_structured_data,
             commands::test_llm_model,
@@ -918,6 +933,9 @@ async fn save_settings(
     state: tauri::State<'_, AppState>,
     new_config: AppConfig,
 ) -> Result<(), String> {
+    // Reconfigure logger immediately so this save operation is captured in the in-app log
+    app_log::reconfigure(new_config.logging.clone());
+
     log::info!("=== SAVE_SETTINGS CALLED ===");
     log::info!(
         "API key present: {}",
@@ -1111,6 +1129,13 @@ async fn reset_application(state: tauri::State<'_, AppState>) -> Result<(), Stri
 }
 
 #[tauri::command]
+fn get_app_data_path() -> Result<String, String> {
+    crate::config::get_kalam_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn open_app_data_folder() -> Result<(), String> {
     let path = crate::config::get_kalam_dir().map_err(|e| e.to_string())?;
     #[cfg(windows)]
@@ -1231,10 +1256,18 @@ async fn get_model_status(state: tauri::State<'_, AppState>) -> Result<serde_jso
             crate::stt::lifecycle::ModelStatus::Error(msg) => ("Error".to_string(), Some(msg)),
         }
     }
+    fn model_metadata(id: &str) -> (String, String, String) {
+        match id {
+            "sensevoice" => ("SenseVoice Small".into(), "Fast".into(), "50+ languages".into()),
+            "whisper_base" => ("Whisper Base".into(), "Good quality".into(), "99+ languages".into()),
+            _ => (id.to_string(), "—".into(), "—".into()),
+        }
+    }
     let mut out = serde_json::Map::new();
     for m in crate::stt::models::known_models() {
         let status = state.local_model_manager.get_status(m.id).await;
         let (status_label, error_message) = status_parts(status);
+        let (label, quality, languages) = model_metadata(m.id);
         out.insert(
             m.id.to_string(),
             json!({
@@ -1242,7 +1275,10 @@ async fn get_model_status(state: tauri::State<'_, AppState>) -> Result<serde_jso
                 "size_mb": m.size_mb,
                 "status": status_label,
                 "error": error_message,
-                "download_progress": serde_json::Value::Null
+                "download_progress": serde_json::Value::Null,
+                "label": label,
+                "quality": quality,
+                "languages": languages
             }),
         );
     }
@@ -1274,6 +1310,12 @@ async fn stop_local_model(
 }
 
 #[tauri::command]
+async fn stop_all_local_models(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    state.local_model_manager.stop_all_models().await;
+    Ok(())
+}
+
+#[tauri::command]
 async fn restart_local_model(
     state: tauri::State<'_, AppState>,
     model_id: String,
@@ -1295,6 +1337,31 @@ async fn delete_local_model(
         .delete_model(&model_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn uninstall_sidecar(
+    state: tauri::State<'_, AppState>,
+    model_id: String,
+) -> Result<(), String> {
+    let sidecar_id = stt::sidecars::model_id_to_sidecar_id(&model_id)
+        .ok_or_else(|| format!("No engine for model {}", model_id))?;
+    state
+        .local_model_manager
+        .stop_model(&model_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    stt::sidecars::uninstall_sidecar(sidecar_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn is_sidecar_installed_for_model(model_id: String) -> Result<bool, String> {
+    Ok(stt::sidecars::sidecar_installed_for_model(&model_id))
+}
+
+#[tauri::command]
+fn is_sidecar_available_for_model(model_id: String) -> Result<bool, String> {
+    Ok(stt::sidecars::sidecar_available_for_model(&model_id))
 }
 
 #[tauri::command]
@@ -1524,6 +1591,9 @@ fn show_overlay(app: &tauri::AppHandle) -> anyhow::Result<()> {
     #[allow(unused_variables)]
     let win = overlay.as_ref().window();
 
+    // Re-apply transparent background before show (helps macOS avoid white flash).
+    let _ = win.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
+
     #[cfg(windows)]
     let prev_hwnd = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
 
@@ -1620,19 +1690,12 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     }
 }
 
-/// Input for the blocking transcription thread. Either create provider from config (Cloud/Groq)
-/// inside the thread, or use an already-created provider (Local).
+/// Input for the blocking transcription thread. Provider is always created on the OS thread
+/// so reqwest::blocking::Client is never created/dropped on a tokio worker.
 enum TranscribeJob {
     FromConfig {
         stt_config: STTConfig,
-        audio_data: Vec<f32>,
-        sample_rate: u32,
-        vad_config: VADConfig,
-        language: Option<String>,
-        vocabulary: Option<String>,
-    },
-    FromProvider {
-        provider: Box<dyn crate::stt::provider::STTProvider>,
+        app_handle: Option<tauri::AppHandle>,
         audio_data: Vec<f32>,
         sample_rate: u32,
         vad_config: VADConfig,
@@ -1897,57 +1960,33 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
 }
 
 fn run_transcribe_job(job: TranscribeJob) -> anyhow::Result<crate::stt::TranscriptionResult> {
-    let (language, vocabulary) = match &job {
-        TranscribeJob::FromConfig {
-            language,
-            vocabulary,
-            ..
-        } => (language.clone(), vocabulary.clone()),
-        TranscribeJob::FromProvider {
-            language,
-            vocabulary,
-            ..
-        } => (language.clone(), vocabulary.clone()),
-    };
+    let TranscribeJob::FromConfig {
+        stt_config,
+        app_handle,
+        audio_data,
+        sample_rate,
+        vad_config,
+        language,
+        vocabulary,
+    } = job;
     let language = language.as_deref();
     let vocabulary = vocabulary.as_deref();
-    match job {
-        TranscribeJob::FromConfig {
-            stt_config,
-            audio_data,
-            sample_rate,
-            vad_config,
-            ..
-        } => {
-            let provider = crate::stt::provider::create_provider_sync(&stt_config)?;
-            log::info!(
-                "Starting transcription with {} (chunked + prompt chaining)",
-                provider.name()
-            );
-            crate::stt::transcribe_chunked(
-                &*provider,
-                &audio_data,
-                sample_rate,
-                &vad_config,
-                language,
-                vocabulary,
-            )
-        }
-        TranscribeJob::FromProvider {
-            provider,
-            audio_data,
-            sample_rate,
-            vad_config,
-            ..
-        } => crate::stt::transcribe_chunked(
-            &*provider,
-            &audio_data,
-            sample_rate,
-            &vad_config,
-            language,
-            vocabulary,
-        ),
-    }
+    let provider = crate::stt::provider::create_provider_sync(
+        &stt_config,
+        app_handle.as_ref(),
+    )?;
+    log::info!(
+        "Starting transcription with {} (chunked + prompt chaining)",
+        provider.name()
+    );
+    crate::stt::transcribe_chunked(
+        &*provider,
+        &audio_data,
+        sample_rate,
+        &vad_config,
+        language,
+        vocabulary,
+    )
 }
 
 async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<AtomicBool>) {
@@ -2050,72 +2089,27 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         tokio::spawn(async move {
             let stt_config = crate::config::privacy::effective_stt_config(&config);
             let vad_config = stt_config.vad_config();
-            // Create Cloud/Groq provider inside the OS thread so reqwest::blocking::Client
-            // is never created/dropped on a tokio worker (avoids runtime drop panic).
+            // Create provider inside the OS thread so reqwest::blocking::Client is never
+            // created/dropped on a tokio worker (avoids "Cannot drop a runtime" panic).
             let (tx, rx) = oneshot::channel();
-            let is_sync_capable = match stt_config.mode {
+            let app_handle_for_job = match stt_config.mode {
+                crate::config::STTMode::Local => Some(app_handle.clone()),
                 crate::config::STTMode::Cloud
                 | crate::config::STTMode::Hybrid
-                | crate::config::STTMode::Auto => true,
-                crate::config::STTMode::Local => false,
+                | crate::config::STTMode::Auto => None,
             };
-
-            let language = config.languages.first().cloned();
-            let job = if is_sync_capable {
-                TranscribeJob::FromConfig {
-                    stt_config: stt_config.clone(),
-                    audio_data,
-                    sample_rate,
-                    vad_config,
-                    language: language.clone(),
-                    vocabulary: vocabulary.clone(),
-                }
-            } else {
-                let provider = match crate::stt::provider::STTProviderFactory::create(
-                    &stt_config,
-                    Some(app_handle.clone()),
-                )
-                .await
-                {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::error!("STT provider creation failed: {}", e);
-                        let mut audio_state = audio_state_ref.lock().await;
-                        *audio_state = AudioState::Idle;
-                        emit_overlay_event(
-                            &app_handle,
-                            OverlayEvent::Error {
-                                message: "Provider failed".to_string(),
-                            },
-                        );
-                        let _ =
-                            crate::tray::TrayManager::set_tray_state(&app_handle, AudioState::Idle);
-                        let app_for_overlay = app_handle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-                            reset_overlay_state(&app_for_overlay);
-                        });
-                        return;
-                    }
-                };
-                log::info!(
-                    "Starting transcription with {} (chunked + prompt chaining)",
-                    provider.name()
-                );
-                TranscribeJob::FromProvider {
-                    provider,
-                    audio_data,
-                    sample_rate,
-                    vad_config,
-                    language,
-                    vocabulary: vocabulary.clone(),
-                }
+            let job = TranscribeJob::FromConfig {
+                stt_config: stt_config.clone(),
+                app_handle: app_handle_for_job,
+                audio_data,
+                sample_rate,
+                vad_config,
+                language: config.languages.first().cloned(),
+                vocabulary: vocabulary.clone(),
             };
-            if matches!(&job, TranscribeJob::FromConfig { .. }) {
-                log::info!(
-                    "Starting transcription (Cloud/Groq on OS thread, chunked + prompt chaining)"
-                );
-            }
+            log::info!(
+                "Starting transcription (provider will be created on OS thread, chunked + prompt chaining)"
+            );
             let start = std::time::Instant::now();
             std::thread::spawn(move || {
                 let result = run_transcribe_job(job);

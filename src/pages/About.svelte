@@ -107,13 +107,7 @@ maintainers to request a commercial license.`
 
 <div class="about-container">
   <header class="about-header animate-in" style="--delay: 0.1s">
-    <div class="brand">
-      <div class="logo-placeholder">
-        <Icon icon="ph:microphone-stage-duotone" />
-      </div>
-      <h2>Kalam</h2>
-    </div>
-    <span class="version-badge">v{appVersion || '…'}</span>
+    <span class="version-label">Current version: <strong>{appVersion || '…'}</strong></span>
   </header>
 
   <div class="about-grid">
@@ -165,9 +159,9 @@ maintainers to request a commercial license.`
       <div class="update-controls">
         <div class="channel-selector">
           <label for="about-update-channel">Channel</label>
-          <select id="about-update-channel" bind:value={updateChannel} on:change={onChannelChange}>
-            <option value="stable">Stable</option>
-            <option value="beta">Beta</option>
+          <select id="about-update-channel" class="channel-select" bind:value={updateChannel} on:change={onChannelChange}>
+            <option value="stable">Stable (Recommended)</option>
+            <option value="beta">Beta (Pre-releases)</option>
           </select>
         </div>
         
@@ -227,7 +221,6 @@ maintainers to request a commercial license.`
   .about-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     padding: 24px 32px;
     background: linear-gradient(135deg, var(--bg-card), var(--bg-app));
     border-radius: var(--radius-lg);
@@ -235,43 +228,15 @@ maintainers to request a commercial license.`
     box-shadow: var(--shadow-sm);
   }
 
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }
-
-  .logo-placeholder {
-    width: 48px;
-    height: 48px;
-    background: var(--primary-alpha);
-    color: var(--primary);
-    border-radius: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 28px;
-    box-shadow: inset 0 0 0 1px var(--primary-alpha-light);
-  }
-
-  .brand h2 {
-    font-family: 'Syne', sans-serif;
-    font-size: 28px;
-    font-weight: 800;
-    color: var(--navy-deep);
-    margin: 0;
-    letter-spacing: -0.03em;
-  }
-
-  .version-badge {
-    background: var(--bg-input);
+  .version-label {
+    font-size: 15px;
     color: var(--text-secondary);
-    padding: 6px 12px;
-    border-radius: var(--radius-pill);
-    font-size: 13px;
+  }
+
+  .version-label strong {
+    color: var(--navy-deep);
     font-weight: 600;
     font-family: 'DM Sans', ui-monospace, monospace;
-    border: 1px solid var(--border-subtle);
   }
 
   .about-grid {
@@ -427,29 +392,47 @@ maintainers to request a commercial license.`
 
   .channel-selector {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    gap: 8px;
   }
 
   .channel-selector label {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text-primary);
   }
 
-  .channel-selector select {
-    padding: 6px 28px 6px 12px;
-    font-size: 13px;
+  .channel-select.channel-select,
+  .channel-selector .channel-select {
+    width: 100%;
+    padding: 14px 16px;
+    padding-right: 48px;
+    font-size: 15px;
     font-weight: 500;
-    background-color: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--navy-deep);
+    background: var(--bg-input);
+    border: 2px solid transparent;
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
     cursor: pointer;
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    -webkit-appearance: none;
+    box-shadow: var(--shadow-inner);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 8px center;
+    background-position: right 16px center;
+    background-size: 16px;
+    transition: all 0.2s ease;
+  }
+
+  .channel-select:focus {
+    outline: none;
+    background-color: var(--bg-card);
+    border-color: var(--primary);
+    box-shadow: 0 4px 12px var(--primary-alpha);
+  }
+
+  .channel-select:hover {
+    background-color: var(--bg-input-hover, var(--bg-card));
   }
 
   .btn-check {

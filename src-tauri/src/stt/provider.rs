@@ -11,10 +11,13 @@ pub type CreateProviderFuture<'a> =
 
 pub struct STTProviderFactory;
 
-/// Create a Cloud/Groq provider on the current thread. Used so that reqwest::blocking::Client
+/// Create a provider on the current thread. Used so that reqwest::blocking::Client
 /// is never created or dropped on a tokio worker (avoids "Cannot drop a runtime" panic).
-/// Handles Cloud and Hybrid/Auto (when no sensitive app matched, use Cloud/Groq).
-pub fn create_provider_sync(config: &STTConfig) -> anyhow::Result<Box<dyn STTProvider>> {
+/// For Local mode, pass Some(app_handle); for Cloud/Groq pass None.
+pub fn create_provider_sync(
+    config: &STTConfig,
+    app_handle: Option<&tauri::AppHandle>,
+) -> anyhow::Result<Box<dyn STTProvider>> {
     match config.mode {
         STTMode::Cloud | STTMode::Hybrid | STTMode::Auto => match config.provider.as_str() {
             "groq" => {
@@ -37,9 +40,36 @@ pub fn create_provider_sync(config: &STTConfig) -> anyhow::Result<Box<dyn STTPro
             }
             _ => Err(anyhow::anyhow!("Unknown provider: {}", config.provider)),
         },
-        STTMode::Local => Err(anyhow::anyhow!(
-            "create_provider_sync only supports Cloud/Groq (Local needs app_handle)"
-        )),
+        STTMode::Local => {
+            let handle = app_handle
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("App handle required for Local STT"))?;
+            let local_model_id = config
+                .local_model
+                .clone()
+                .unwrap_or_else(|| "sensevoice".to_string());
+            let manifest = super::models::known_models()
+                .into_iter()
+                .find(|m| m.id == local_model_id.as_str())
+                .ok_or_else(|| anyhow::anyhow!("Local model manifest not found"))?;
+            let model_path = super::models::model_path(&local_model_id, &manifest)?;
+            if !super::models::is_installed(&local_model_id) {
+                log::warn!(
+                    "Local model check failed: model_id={}, model_path={:?}, exists={}",
+                    local_model_id,
+                    model_path,
+                    model_path.exists()
+                );
+                return Err(anyhow::anyhow!(
+                    "Selected local model is not installed. Download it in Settings."
+                ));
+            }
+            Ok(Box::new(super::sensevoice::SenseVoiceProvider::new(
+                handle,
+                model_path,
+                local_model_id,
+            )) as Box<dyn STTProvider>)
+        }
     }
 }
 
@@ -86,13 +116,21 @@ impl STTProviderFactory {
                         .find(|m| m.id == local_model_id.as_str())
                         .ok_or_else(|| anyhow::anyhow!("Local model manifest not found"))?;
                     let model_path = super::models::model_path(&local_model_id, &manifest)?;
-                    if !model_path.exists() {
+                    if !super::models::is_installed(&local_model_id) {
+                        log::warn!(
+                            "Local model check failed: model_id={}, model_path={:?}, exists={}",
+                            local_model_id,
+                            model_path,
+                            model_path.exists()
+                        );
                         return Err(anyhow::anyhow!(
                             "Selected local model is not installed. Download it in Settings."
                         ));
                     }
                     Ok(Box::new(super::sensevoice::SenseVoiceProvider::new(
-                        handle, model_path,
+                        handle,
+                        model_path,
+                        local_model_id,
                     )) as Box<dyn STTProvider>)
                 }
                 crate::config::STTMode::Hybrid | crate::config::STTMode::Auto => {

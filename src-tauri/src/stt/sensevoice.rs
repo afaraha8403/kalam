@@ -1,9 +1,11 @@
-//! SenseVoice local STT via Sherpa-ONNX sidecar.
+//! Local STT: SenseVoice via Sherpa-ONNX WebSocket; Whisper Base via whisper.cpp server HTTP.
 
 use std::io::Write;
 use std::path::PathBuf;
 use tauri::Manager;
-use tauri_plugin_shell::ShellExt;
+use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 
 use super::provider::STTProvider;
 use super::TranscriptionResult;
@@ -11,34 +13,32 @@ use crate::AppState;
 
 pub const SIDECAR_NAME: &str = "sherpa-onnx";
 
+const WS_PORT: u16 = 10080;
+
 pub struct SenseVoiceProvider {
     app_handle: tauri::AppHandle,
     model_path: PathBuf,
-    client: reqwest::blocking::Client,
+    model_id: String,
 }
 
 impl SenseVoiceProvider {
-    pub fn new(app_handle: tauri::AppHandle, model_path: PathBuf) -> Self {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap_or_default();
-
+    pub fn new(app_handle: tauri::AppHandle, model_path: PathBuf, model_id: String) -> Self {
         Self {
             app_handle,
             model_path,
-            client,
+            model_id,
         }
     }
 
     fn ensure_server_running(&self) -> anyhow::Result<()> {
         let state = self.app_handle.state::<AppState>();
+        let model_id = self.model_id.clone();
 
-        tauri::async_runtime::block_on(async {
-            let status = state.local_model_manager.get_status("sensevoice").await;
+        tauri::async_runtime::block_on(async move {
+            let status = state.local_model_manager.get_status(&model_id).await;
             if status != crate::stt::lifecycle::ModelStatus::Running {
-                log::info!("SenseVoice server not running, starting it...");
-                state.local_model_manager.start_model("sensevoice").await?;
+                log::info!("Local STT server for {} not running, starting it...", model_id);
+                state.local_model_manager.start_model(&model_id).await?;
                 // Wait a bit for the server to start
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             }
@@ -46,6 +46,14 @@ impl SenseVoiceProvider {
         })?;
 
         Ok(())
+    }
+
+    fn display_name(&self) -> &str {
+        match self.model_id.as_str() {
+            "whisper_base" => "Whisper Base (Local)",
+            "sensevoice" => "SenseVoice (Local)",
+            _ => "Local STT",
+        }
     }
 }
 
@@ -59,33 +67,10 @@ impl STTProvider for SenseVoiceProvider {
     ) -> anyhow::Result<TranscriptionResult> {
         self.ensure_server_running()?;
 
-        let samples_i16: Vec<i16> = audio
-            .iter()
-            .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
-            .collect();
-        let wav = create_wav(&samples_i16, sample_rate, 1)?;
-
-        let text = match self
-            .client
-            .post("http://localhost:10080/transcribe")
-            .body(wav.clone())
-            .send()
-        {
-            Ok(response) if response.status().is_success() => response.text()?,
-            Ok(response) => {
-                log::warn!(
-                    "Local server returned {}. Falling back to one-shot sidecar.",
-                    response.status()
-                );
-                run_sidecar_sync(self.app_handle.clone(), &self.model_path, &wav)?
-            }
-            Err(e) => {
-                log::warn!(
-                    "Local server request failed: {}. Falling back to one-shot sidecar.",
-                    e
-                );
-                run_sidecar_sync(self.app_handle.clone(), &self.model_path, &wav)?
-            }
+        let text = if self.model_id == "whisper_base" {
+            transcribe_via_whisper_http(audio, sample_rate)?
+        } else {
+            transcribe_via_websocket(audio, sample_rate)?
         };
 
         Ok(TranscriptionResult {
@@ -100,43 +85,120 @@ impl STTProvider for SenseVoiceProvider {
     }
 
     fn name(&self) -> &str {
-        "SenseVoice (Local)"
+        self.display_name()
     }
 }
 
-fn run_sidecar_sync(
-    app_handle: tauri::AppHandle,
-    model_path: &std::path::Path,
-    wav_bytes: &[u8],
-) -> anyhow::Result<String> {
-    let temp_dir = std::env::temp_dir();
-    let input_path = temp_dir.join(format!("kalam_sensevoice_{}.wav", std::process::id()));
-    std::fs::write(&input_path, wav_bytes)?;
-    let input_path_for_sidecar = input_path.clone();
+/// Protocol: connect to ws://127.0.0.1:port, send binary [sample_rate LE 4][samples_byte_len LE 4][float32 samples]
+/// (chunked like the official Python client to avoid server buffer issues), recv text, send "Done".
+const CHUNK_SIZE: usize = 10240;
 
-    let output = tauri::async_runtime::block_on(async move {
-        app_handle
-            .shell()
-            .sidecar(SIDECAR_NAME)
-            .map_err(|e| anyhow::anyhow!("Sidecar not found: {}", e))?
-            .args([
-                "--model",
-                model_path.to_str().unwrap_or(""),
-                "--input",
-                input_path_for_sidecar.to_str().unwrap_or(""),
-            ])
-            .output()
-            .await
-            .map_err(|e| anyhow::anyhow!("Sidecar execution failed: {}", e))
-    })?;
-
-    let _ = std::fs::remove_file(&input_path);
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::warn!("SenseVoice sidecar stderr: {}", stderr);
+fn transcribe_via_websocket(audio: &[f32], sample_rate: u32) -> anyhow::Result<String> {
+    let mut payload = Vec::with_capacity(8 + audio.len() * 4);
+    payload.extend_from_slice(&sample_rate.to_le_bytes());
+    let samples_bytes = (audio.len() * 4) as u32;
+    payload.extend_from_slice(&samples_bytes.to_le_bytes());
+    for &s in audio {
+        payload.extend_from_slice(&(s as f32).to_le_bytes());
     }
-    Ok(stdout)
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async {
+        let url = format!("ws://127.0.0.1:{}/", WS_PORT);
+        let (ws_stream, _) = connect_async(&url)
+            .await
+            .map_err(|e| anyhow::anyhow!("WebSocket connect failed: {}", e))?;
+        let (mut write, mut read) = ws_stream.split();
+
+        // Send payload in chunks to match sherpa-onnx Python client; single large frame can trigger server crash (e.g. STATUS_STACK_BUFFER_OVERRUN on Windows).
+        let mut offset = 0;
+        while offset < payload.len() {
+            let end = (offset + CHUNK_SIZE).min(payload.len());
+            write
+                .send(Message::Binary(payload[offset..end].to_vec()))
+                .await
+                .map_err(|e| anyhow::anyhow!("WebSocket send failed: {}", e))?;
+            offset = end;
+        }
+
+        let result_msg = read
+            .next()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("No response from server"))??;
+        let text = match result_msg {
+            Message::Text(s) => {
+                // The server returns a JSON string like: {"lang": "", "emotion": "", "event": "", "text": " TESTING TESTING ONE TO THREE TESTING", ...}
+                // We need to parse it and extract the "text" field.
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&s) {
+                    if let Some(t) = json.get("text").and_then(|v| v.as_str()) {
+                        t.to_string()
+                    } else {
+                        s
+                    }
+                } else {
+                    s
+                }
+            },
+            Message::Binary(b) => String::from_utf8_lossy(&b).to_string(),
+            _ => return Err(anyhow::anyhow!("Unexpected message type")),
+        };
+
+        write
+            .send(Message::Text("Done".to_string()))
+            .await
+            .map_err(|e| anyhow::anyhow!("WebSocket send Done failed: {}", e))?;
+
+        Ok::<String, anyhow::Error>(text)
+    })
+}
+
+/// Whisper.cpp server: POST multipart to /inference with WAV file, response_format=json; response is {"text": "..."}.
+const WHISPER_HTTP_PORT: u16 = 10080;
+
+fn transcribe_via_whisper_http(audio: &[f32], sample_rate: u32) -> anyhow::Result<String> {
+    let samples_i16: Vec<i16> = audio
+        .iter()
+        .map(|&s| {
+            let v = (s * 32767.0_f32).round();
+            v.clamp(i16::MIN as f32, i16::MAX as f32) as i16
+        })
+        .collect();
+    let wav = create_wav(&samples_i16, sample_rate, 1)?;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(async {
+        let url = format!("http://127.0.0.1:{}/inference", WHISPER_HTTP_PORT);
+        let part = reqwest::multipart::Part::bytes(wav)
+            .file_name("audio.wav")
+            .mime_str("audio/wav")?;
+        let form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("response_format", "json");
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .build()?;
+        let resp = client.post(&url).multipart(form).send().await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        if !status.is_success() {
+            return Err(anyhow::anyhow!("Whisper server error {}: {}", status, body));
+        }
+        let json: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|e| anyhow::anyhow!("Whisper response not JSON: {}", e))?;
+        if let Some(err) = json.get("error").and_then(|v| v.as_str()) {
+            return Err(anyhow::anyhow!("Whisper server: {}", err));
+        }
+        let text = json
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        Ok::<String, anyhow::Error>(text)
+    })
 }
 
 fn create_wav(samples: &[i16], sample_rate: u32, channels: u16) -> anyhow::Result<Vec<u8>> {

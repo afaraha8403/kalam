@@ -121,4 +121,5 @@ jobs:
           releaseBody: 'See the assets to download this version.'
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, 'beta') }}
+          releaseAssetNamePattern: '[name]-[version]-[platform]-[arch][ext]'
           args: ${{ matrix.args }}

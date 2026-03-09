@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import { listen } from '@tauri-apps/api/event'
   import Icon from '@iconify/svelte'
   import { initTelemetry, optOut } from '../lib/telemetry'
   import { sidebarDictationStore } from '../lib/sidebarDictation'
@@ -24,6 +25,8 @@
   let addLanguageCode = ''
   let logEmpty = true
   let saveError: string | null = null
+  let appDataPath: string | null = null
+  let openFolderError: string | null = null
   let initialLoadDone = false
   let saveDebounceId: ReturnType<typeof setTimeout> | null = null
   let resetting = false
@@ -34,11 +37,30 @@
     size_mb: number
     status: 'NotInstalled' | 'Stopped' | 'Starting' | 'Running' | 'Error'
     error?: string | null
+    label?: string
+    quality?: string
+    languages?: string
   }
+
+  const LOCAL_MODEL_IDS = ['sensevoice', 'whisper_base'] as const
 
   let hardwareReqs: Record<string, ModelRequirement> = {}
   let modelStatuses: Record<string, ModelStatusEntry> = {}
   let statusPollInterval: ReturnType<typeof setInterval> | null = null
+  let downloadProgress: Record<string, { percent: number | null; downloaded_bytes: number; total_bytes: number | null }> = {}
+  let engineDownloadProgress: Record<string, { percent: number | null; downloaded_bytes: number; total_bytes: number | null }> = {}
+  let modelErrors: Record<string, string> = {}
+  let unlistenDownloadProgress: (() => void) | null = null
+  let unlistenEngineDownloadProgress: (() => void) | null = null
+  let sidecarInstalled = false
+  /** Engine (sidecar) has a download for this platform; when false show "Engine not available on this platform". */
+  let sidecarAvailable: Record<string, boolean> = {}
+
+  function modelIdToSidecarId(modelId: string): string | null {
+    if (modelId === 'sensevoice') return 'sherpa-onnx'
+    if (modelId === 'whisper_base') return 'whisper-cpp'
+    return null
+  }
 
   const tabs = [
     { id: 'general', label: 'General' },
@@ -62,16 +84,20 @@
   onMount(async () => {
     try {
       // Load settings and audio devices in parallel
-      const [settings, devices, platform, sensevoiceReqs, whisperReqs] = await Promise.all([
+      const [settings, devices, platform, sensevoiceReqs, whisperReqs, sensevoiceAvail, whisperAvail] = await Promise.all([
         invoke('get_settings') as Promise<AppConfig>,
         invoke('get_audio_devices') as Promise<AudioDevice[]>,
         invoke('get_platform') as Promise<string>,
         invoke('check_model_requirements', { modelId: 'sensevoice' }),
         invoke('check_model_requirements', { modelId: 'whisper_base' }),
+        invoke('is_sidecar_available_for_model', { modelId: 'sensevoice' }) as Promise<boolean>,
+        invoke('is_sidecar_available_for_model', { modelId: 'whisper_base' }) as Promise<boolean>,
       ])
       
       hardwareReqs['sensevoice'] = sensevoiceReqs as ModelRequirement
       hardwareReqs['whisper_base'] = whisperReqs as ModelRequirement
+      sidecarAvailable['sensevoice'] = sensevoiceAvail
+      sidecarAvailable['whisper_base'] = whisperAvail
       
       config = settings
       audioDevices = devices
@@ -108,7 +134,6 @@
         if (config.command_config.hotkey === undefined) config.command_config.hotkey = null
         if (!config.command_config.api_keys) config.command_config.api_keys = {}
         if (!config.command_config.models) config.command_config.models = {}
-        if (!config.update_channel) config.update_channel = 'stable'
       }
       
       if (config?.command_config?.provider) {
@@ -124,6 +149,27 @@
       
       await refreshModelStatuses()
       statusPollInterval = setInterval(refreshModelStatuses, 2000)
+
+      try {
+        appDataPath = (await invoke('get_app_data_path')) as string
+      } catch {
+        appDataPath = null
+      }
+
+      unlistenDownloadProgress = await listen<{ model_type: string; downloaded_bytes: number; total_bytes: number | null; percent: number | null }>(
+        'model-download-progress',
+        (e) => {
+          const { model_type, downloaded_bytes, total_bytes, percent } = e.payload
+          downloadProgress = { ...downloadProgress, [model_type]: { percent: percent ?? null, downloaded_bytes, total_bytes } }
+        }
+      )
+      unlistenEngineDownloadProgress = await listen<{ sidecar_id: string; downloaded_bytes: number; total_bytes: number | null; percent: number | null }>(
+        'sidecar-download-progress',
+        (e) => {
+          const { sidecar_id, downloaded_bytes, total_bytes, percent } = e.payload
+          engineDownloadProgress = { ...engineDownloadProgress, [sidecar_id]: { percent: percent ?? null, downloaded_bytes, total_bytes } }
+        }
+      )
       
       console.log('Loaded audio devices:', devices)
     } catch (e) {
@@ -135,59 +181,164 @@
 
   onDestroy(() => {
     if (statusPollInterval) clearInterval(statusPollInterval)
+    if (unlistenDownloadProgress) unlistenDownloadProgress()
+    if (unlistenEngineDownloadProgress) unlistenEngineDownloadProgress()
   })
 
   async function refreshModelStatuses() {
     try {
-      modelStatuses = await invoke('get_model_status') as Record<string, ModelStatusEntry>
+      const next = await invoke('get_model_status') as Record<string, ModelStatusEntry>
+      modelStatuses = next
+      // Clear engine download progress when model is no longer Starting
+      let cleared = false
+      const nextEngine: typeof engineDownloadProgress = { ...engineDownloadProgress }
+      for (const modelId of LOCAL_MODEL_IDS) {
+        const sid = modelIdToSidecarId(modelId)
+        if (sid && next[modelId]?.status !== 'Starting' && nextEngine[sid]) {
+          delete nextEngine[sid]
+          cleared = true
+        }
+      }
+      if (cleared) engineDownloadProgress = nextEngine
+      // Update engine installed for current local model
+      if (config?.stt_config?.mode === 'Local' || config?.stt_config?.mode === 'Hybrid') {
+        const localModel = config.stt_config.local_model ?? 'sensevoice'
+        try {
+          sidecarInstalled = (await invoke('is_sidecar_installed_for_model', { modelId: localModel })) as boolean
+        } catch {
+          sidecarInstalled = false
+        }
+      } else {
+        sidecarInstalled = false
+      }
     } catch (e) {
       console.error('Failed to get model statuses:', e)
     }
   }
 
+  function setModelError(modelId: string, message: string) {
+    modelErrors = { ...modelErrors, [modelId]: message }
+  }
+
+  function clearModelError(modelId: string) {
+    const next = { ...modelErrors }
+    delete next[modelId]
+    modelErrors = next
+  }
+
+  async function onSttModeChange() {
+    scheduleSave()
+    if (config?.stt_config?.mode === 'Cloud' || config?.stt_config?.mode === 'Hybrid') {
+      try {
+        await invoke('stop_all_local_models')
+        await refreshModelStatuses()
+      } catch (e) {
+        console.error('Failed to stop local models on mode switch:', e)
+      }
+    }
+  }
+
+  async function setActiveLocalModel(modelId: string) {
+    if (!config) return
+    config.stt_config.local_model = modelId
+    scheduleSave()
+  }
+
   async function startModel(modelId: string) {
+    clearModelError(modelId)
     try {
       await invoke('start_local_model', { modelId })
       await refreshModelStatuses()
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setModelError(modelId, msg)
       console.error('Failed to start model:', e)
     }
   }
 
   async function stopModel(modelId: string) {
+    clearModelError(modelId)
     try {
       await invoke('stop_local_model', { modelId })
       await refreshModelStatuses()
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setModelError(modelId, msg)
       console.error('Failed to stop model:', e)
     }
   }
 
   async function restartModel(modelId: string) {
+    clearModelError(modelId)
     try {
       await invoke('restart_local_model', { modelId })
       await refreshModelStatuses()
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setModelError(modelId, msg)
       console.error('Failed to restart model:', e)
+    }
+  }
+
+  async function uninstallEngine(modelId: string) {
+    if (!confirm('Uninstall the local STT engine? It will be downloaded again when you start a local model.')) return
+    try {
+      await invoke('uninstall_sidecar', { modelId })
+      await refreshModelStatuses()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.error('Failed to uninstall engine:', e)
+      alert(msg)
     }
   }
 
   async function deleteModel(modelId: string) {
     if (!confirm('Are you sure you want to delete this model? You will need to download it again.')) return
+    clearModelError(modelId)
+    const installedCount = LOCAL_MODEL_IDS.filter((id) => modelStatuses[id]?.installed).length
+    const isLastModel = installedCount === 1
+    let uninstallEngine = false
+    if (isLastModel && confirm('This is your last local model. Do you also want to uninstall the local STT engine to free up space?')) {
+      uninstallEngine = true
+    }
     try {
+      if (uninstallEngine) {
+        await invoke('uninstall_sidecar', { modelId })
+      }
       await invoke('delete_local_model', { modelId })
       await refreshModelStatuses()
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setModelError(modelId, msg)
       console.error('Failed to delete model:', e)
     }
   }
 
   async function downloadModel(modelId: string) {
+    clearModelError(modelId)
+    downloadProgress = { ...downloadProgress, [modelId]: { percent: null, downloaded_bytes: 0, total_bytes: null } }
     try {
       await invoke('download_model', { modelType: modelId })
       await refreshModelStatuses()
+      // Auto-start so engine downloads (if needed) and starts; UI then shows Stop/Restart
+      if (sidecarAvailable[modelId] !== false) {
+        try {
+          await invoke('start_local_model', { modelId })
+          await refreshModelStatuses()
+        } catch (startErr) {
+          const msg = startErr instanceof Error ? startErr.message : String(startErr)
+          setModelError(modelId, msg)
+          console.error('Failed to start after download:', startErr)
+        }
+      }
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setModelError(modelId, msg)
       console.error('Failed to download model:', e)
+    } finally {
+      const next = { ...downloadProgress }
+      delete next[modelId]
+      downloadProgress = next
     }
   }
 
@@ -246,6 +397,9 @@
         hasCommandApiKey = false
       }
       commandApiKeyInput = ''
+      if (activeTab === 'advanced') {
+        await checkLogEmpty()
+      }
     } catch (e) {
       console.error('Failed to save settings:', e)
       const err = e as Error & { message?: string }
@@ -296,10 +450,13 @@
   }
 
   async function openAppDataFolder() {
+    openFolderError = null
     try {
       await invoke('open_app_data_folder')
     } catch (e) {
       console.error('Failed to open app data folder:', e)
+      const err = e as Error & { message?: string }
+      openFolderError = err?.message ?? String(e)
     }
   }
 
@@ -725,7 +882,7 @@
           class:active={activeTab === tab.id}
           on:click={() => {
             activeTab = tab.id
-            if (tab.id === 'logging') checkLogEmpty()
+            if (tab.id === 'advanced') checkLogEmpty()
             if (tab.id === 'dictionary') loadDictionaryEntries()
           }}
         >
@@ -786,18 +943,6 @@
               Start in focus (show window on startup)
             </label>
             <p class="hint">If disabled, app starts minimized to tray and plays a sound</p>
-          </div>
-        </section>
-
-        <section>
-          <h3>Updates</h3>
-          <div class="form-group">
-            <label for="update-channel">Release Channel</label>
-            <select id="update-channel" bind:value={config.update_channel} on:change={scheduleSave}>
-              <option value="stable">Stable (Recommended)</option>
-              <option value="beta">Beta (Pre-releases)</option>
-            </select>
-            <p class="hint">Choose whether to receive stable updates or early beta versions.</p>
           </div>
         </section>
 
@@ -936,8 +1081,8 @@
           <h3>Speech-to-Text Mode</h3>
           <div class="form-group">
             <label for="stt-mode">Mode</label>
-            <select id="stt-mode" bind:value={config.stt_config.mode} on:change={scheduleSave}>
-              <option value="Cloud">Cloud (Groq API)</option>
+            <select id="stt-mode" bind:value={config.stt_config.mode} on:change={onSttModeChange}>
+              <option value="Cloud">Cloud</option>
               <option value="Local">Local (SenseVoice)</option>
               <option value="Hybrid">Hybrid (Auto-switch)</option>
             </select>
@@ -993,69 +1138,77 @@
 
           {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
             <div class="form-group">
-              <label for="local-model">Active local model</label>
-              <select id="local-model" bind:value={config.stt_config.local_model} on:change={scheduleSave}>
-                <option value="sensevoice">SenseVoice Small</option>
-                <option value="whisper_base">Whisper Base</option>
-              </select>
-              <p class="hint">This model is used when mode is Local.</p>
-            </div>
-
-            <div class="form-group">
-              <span class="label-text">Local Models</span>
-              <div class="model-list">
-                <div class="model-item">
-                  <div class="model-info">
-                    <strong>SenseVoice Small</strong>
-                    <span>200 MB • Fast • 50+ languages</span>
-                    {#if hardwareReqs['sensevoice'] && !hardwareReqs['sensevoice'].can_run}
-                      <span class="warning">⚠️ {hardwareReqs['sensevoice'].reason}</span>
+              <span class="label-text">Local model</span>
+              <p class="hint">Select one model; it is used when mode is Local. Download, start, or delete from the list.</p>
+              <div class="model-list model-radio-list">
+                {#each LOCAL_MODEL_IDS as modelId}
+                  {@const status = modelStatuses[modelId]}
+                  {@const progress = downloadProgress[modelId]}
+                  {@const sidecarId = modelIdToSidecarId(modelId)}
+                  {@const engineProgress = sidecarId ? engineDownloadProgress[sidecarId] : null}
+                  {@const err = modelErrors[modelId]}
+                  {@const isActive = (config.stt_config.local_model ?? 'sensevoice') === modelId}
+                  <div class="model-item" class:model-item-active={isActive}>
+                    <div class="model-radio-row" role="button" tabindex="0" on:click={() => setActiveLocalModel(modelId)} on:keydown={(ev) => ev.key === 'Enter' && setActiveLocalModel(modelId)}>
+                      <span class="model-radio" aria-checked={isActive} role="radio">
+                        {#if isActive}
+                          <span class="model-radio-checked">●</span>
+                        {:else}
+                          <span class="model-radio-unchecked">○</span>
+                        {/if}
+                      </span>
+                      <div class="model-info">
+                        <strong>{status?.label ?? modelId}</strong>
+                        <span>{status?.size_mb ?? 0} MB • {status?.quality ?? '—'} • {status?.languages ?? '—'}</span>
+                        {#if hardwareReqs[modelId] && !hardwareReqs[modelId].can_run}
+                          <span class="warning">⚠️ {hardwareReqs[modelId].reason}</span>
+                        {/if}
+                        {#if sidecarAvailable[modelId] === false}
+                          <span class="warning">Engine not available on this platform</span>
+                        {/if}
+                        {#if status}
+                          <span class="status-badge {status.status.toLowerCase()}">{status.status}</span>
+                        {/if}
+                      </div>
+                    </div>
+                    {#if progress}
+                      <div class="model-download-progress">
+                        <progress value={progress.percent ?? 0} max="100" />
+                        <span>{progress.percent != null ? Math.round(progress.percent) + '%' : 'Downloading model…'}</span>
+                      </div>
                     {/if}
-                    {#if modelStatuses['sensevoice']}
-                      <span class="status-badge {modelStatuses['sensevoice'].status.toLowerCase()}">{modelStatuses['sensevoice'].status}</span>
+                    {#if status?.status === 'Starting' && engineProgress}
+                      <div class="model-download-progress">
+                        <progress value={engineProgress.percent ?? 0} max="100" />
+                        <span>{engineProgress.percent != null ? Math.round(engineProgress.percent) + '%' : 'Downloading engine…'}</span>
+                      </div>
                     {/if}
-                  </div>
-                  <div class="model-actions">
-                    {#if !modelStatuses['sensevoice']?.installed}
-                      <button class="btn-secondary" disabled={hardwareReqs['sensevoice'] && !hardwareReqs['sensevoice'].can_run} on:click={() => downloadModel('sensevoice')}>Download</button>
-                    {:else}
-                      {#if modelStatuses['sensevoice'].status === 'Stopped' || modelStatuses['sensevoice'].status === 'Error'}
-                        <button class="btn-secondary" on:click={() => startModel('sensevoice')}>Start</button>
-                      {:else if modelStatuses['sensevoice'].status === 'Running'}
-                        <button class="btn-secondary" on:click={() => stopModel('sensevoice')}>Stop</button>
-                        <button class="btn-secondary" on:click={() => restartModel('sensevoice')}>Restart</button>
+                    {#if err}
+                      <p class="model-error">{err}</p>
+                    {/if}
+                    <div class="model-actions">
+                      {#if !status?.installed}
+                        <button class="btn-secondary" disabled={(hardwareReqs[modelId] && !hardwareReqs[modelId].can_run) || sidecarAvailable[modelId] === false} on:click|stopPropagation={() => downloadModel(modelId)}>Download</button>
+                      {:else}
+                        {#if status.status === 'Stopped' || status.status === 'Error'}
+                          <button class="btn-secondary" disabled={sidecarAvailable[modelId] === false} on:click|stopPropagation={() => startModel(modelId)} title={sidecarAvailable[modelId] === false ? 'Engine not available on this platform' : ''}>Start</button>
+                        {:else if status.status === 'Running'}
+                          <button class="btn-secondary" on:click|stopPropagation={() => stopModel(modelId)}>Stop</button>
+                          <button class="btn-secondary" on:click|stopPropagation={() => restartModel(modelId)}>Restart</button>
+                        {/if}
+                        <button class="btn-secondary btn-danger" title="Delete model" on:click|stopPropagation={() => deleteModel(modelId)}>Delete</button>
                       {/if}
-                      <button class="btn-secondary btn-danger" title="Delete model" on:click={() => deleteModel('sensevoice')}>Delete</button>
-                    {/if}
+                    </div>
                   </div>
-                </div>
-
-                <div class="model-item">
-                  <div class="model-info">
-                    <strong>Whisper Base</strong>
-                    <span>142 MB • Good quality</span>
-                    {#if hardwareReqs['whisper_base'] && !hardwareReqs['whisper_base'].can_run}
-                      <span class="warning">⚠️ {hardwareReqs['whisper_base'].reason}</span>
-                    {/if}
-                    {#if modelStatuses['whisper_base']}
-                      <span class="status-badge {modelStatuses['whisper_base'].status.toLowerCase()}">{modelStatuses['whisper_base'].status}</span>
-                    {/if}
-                  </div>
-                  <div class="model-actions">
-                    {#if !modelStatuses['whisper_base']?.installed}
-                      <button class="btn-secondary" disabled={hardwareReqs['whisper_base'] && !hardwareReqs['whisper_base'].can_run} on:click={() => downloadModel('whisper_base')}>Download</button>
-                    {:else}
-                      {#if modelStatuses['whisper_base'].status === 'Stopped' || modelStatuses['whisper_base'].status === 'Error'}
-                        <button class="btn-secondary" on:click={() => startModel('whisper_base')}>Start</button>
-                      {:else if modelStatuses['whisper_base'].status === 'Running'}
-                        <button class="btn-secondary" on:click={() => stopModel('whisper_base')}>Stop</button>
-                        <button class="btn-secondary" on:click={() => restartModel('whisper_base')}>Restart</button>
-                      {/if}
-                      <button class="btn-secondary btn-danger" title="Delete model" on:click={() => deleteModel('whisper_base')}>Delete</button>
-                    {/if}
-                  </div>
-                </div>
+                {/each}
               </div>
+              {#if sidecarInstalled}
+                <div class="local-engine-section">
+                  <span class="label-text">Local engine</span>
+                  <p class="hint">The STT engine binary is installed. You can uninstall it to free space; it will be downloaded again when you start a local model.</p>
+                  <button class="btn-secondary btn-danger" type="button" on:click={() => uninstallEngine(config?.stt_config?.local_model ?? 'sensevoice')}>Uninstall engine</button>
+                </div>
+              {/if}
             </div>
           {/if}
 
@@ -1393,11 +1546,17 @@
           <h3>App Data & Logging</h3>
           <p class="hint" style="margin-bottom: 16px;">
             When enabled, the app keeps a bounded in-memory log (no transcription or personal data).
-            Use it to export a log file for support if something goes wrong.
+            Logs are stored in memory and in the database (data.db) in the app data folder—no separate .log files are created. Use the buttons below to export for support.
           </p>
           <div class="form-group">
             <span class="label-text">App data folder</span>
-            <p class="hint">Config and app data are stored here. Click to open the folder.</p>
+            <p class="hint">Config, database (data.db), and app data are stored here. Click to open the folder.</p>
+            {#if appDataPath}
+              <p class="path-display" title={appDataPath}><code>{appDataPath}</code></p>
+            {/if}
+            {#if openFolderError}
+              <p class="save-error" role="alert">Failed to open folder: {openFolderError}</p>
+            {/if}
             <button
               type="button"
               class="btn-secondary btn-link"
@@ -1459,7 +1618,7 @@
               {#if logEmpty}
                 No log entries yet. Enable logging and use the app to capture entries, then download.
               {:else}
-                Log: in-memory buffer. CSV: full log history from database. No transcription or sensitive data.
+                Download log: current in-memory buffer. Download logs (CSV): full history from data.db. No transcription or sensitive data.
               {/if}
             </p>
           </div>
@@ -1492,12 +1651,25 @@
 <style>
   .settings {
     max-width: 900px;
-    padding: 8px;
-    animation: fadeIn 0.4s ease-out;
+    padding: 12px 16px 32px;
+    animation: settingsIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    position: relative;
   }
 
-  @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
+  .settings::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 320px;
+    background: radial-gradient(ellipse 100% 100% at 50% -10%, var(--primary-alpha-light), transparent 55%);
+    pointer-events: none;
+    z-index: -1;
+  }
+
+  @keyframes settingsIn {
+    from { opacity: 0; transform: translateY(12px); }
     to { opacity: 1; transform: translateY(0); }
   }
 
@@ -1505,85 +1677,128 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 32px;
+    margin-bottom: 28px;
+    padding: 4px 0;
   }
 
-  h2 {
-    font-size: 32px;
-    font-weight: 700;
+  header h2 {
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: var(--navy-deep);
+    margin: 0;
   }
 
   .tabs {
     display: flex;
-    gap: 4px;
-    margin-bottom: 32px;
-    background: var(--bg-app);
+    gap: 2px;
+    margin-bottom: 28px;
+    background: var(--bg-card);
     padding: 6px;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-lg);
     overflow-x: auto;
-    scrollbar-width: none; /* Firefox */
+    scrollbar-width: none;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border-subtle);
   }
-  
+
   .tabs::-webkit-scrollbar {
-    display: none; /* Chrome/Safari */
+    display: none;
   }
 
   .tab {
-    padding: 10px 20px;
+    padding: 12px 20px;
     background: transparent;
     border: none;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-md);
     color: var(--text-secondary);
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: color 0.2s ease, background 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s ease;
     white-space: nowrap;
   }
 
   .tab:hover {
     color: var(--navy-deep);
+    background: var(--bg-input);
   }
 
   .tab.active {
-    background: var(--bg-card);
+    background: var(--primary-alpha);
     color: var(--primary-dark);
-    box-shadow: var(--shadow-sm);
+    box-shadow: 0 2px 8px var(--primary-alpha);
+  }
+
+  .tab-content section {
+    animation: sectionIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
+  .tab-content section:nth-child(1) { animation-delay: 0.02s; }
+  .tab-content section:nth-child(2) { animation-delay: 0.05s; }
+  .tab-content section:nth-child(3) { animation-delay: 0.08s; }
+  .tab-content section:nth-child(4) { animation-delay: 0.11s; }
+  .tab-content section:nth-child(5) { animation-delay: 0.14s; }
+  .tab-content section:nth-child(6) { animation-delay: 0.17s; }
+  .tab-content section:nth-child(7) { animation-delay: 0.2s; }
+  .tab-content section:nth-child(8) { animation-delay: 0.23s; }
+  .tab-content section:nth-child(9) { animation-delay: 0.26s; }
+  .tab-content section:nth-child(10) { animation-delay: 0.29s; }
+
+  @keyframes sectionIn {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   section {
     background: var(--bg-card);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-subtle);
     border-radius: var(--radius-lg);
-    padding: 32px;
-    margin-bottom: 24px;
+    padding: 28px 32px;
+    margin-bottom: 20px;
     box-shadow: var(--shadow-sm);
-    transition: box-shadow 0.3s ease;
+    transition: box-shadow 0.3s ease, border-color 0.2s ease, transform 0.2s ease;
+    position: relative;
+    overflow: hidden;
   }
-  
+
+  section::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: linear-gradient(to bottom, var(--primary-alpha), var(--primary));
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    opacity: 0.9;
+  }
+
   section:hover {
     box-shadow: var(--shadow-md);
+    border-color: var(--border);
   }
 
   section h3 {
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 700;
-    margin-bottom: 24px;
+    margin: 0 0 24px 0;
+    padding-bottom: 14px;
     color: var(--navy-deep);
     border-bottom: 1px solid var(--border-subtle);
-    padding-bottom: 16px;
+    letter-spacing: -0.02em;
   }
 
   .form-group {
-    margin-bottom: 24px;
+    margin-bottom: 26px;
   }
 
   .form-group.row-group {
     display: flex;
     gap: 20px;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
   }
-  
+
   .form-group.row-group .sub-setting {
     flex: 1;
     margin-top: 0;
@@ -1591,6 +1806,10 @@
 
   .form-group:last-child {
     margin-bottom: 0;
+  }
+
+  .sub-setting {
+    margin-top: 0;
   }
 
   .dictionary-list {
@@ -1606,10 +1825,17 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 14px;
+    padding: 12px 16px;
     background: var(--bg-input);
     border-radius: var(--radius-md);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid transparent;
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .dictionary-list li:hover {
+    background: var(--bg-card);
+    border-color: var(--border-subtle);
+    box-shadow: var(--shadow-sm);
   }
 
   .dictionary-term {
@@ -1645,6 +1871,7 @@
     font-weight: 600;
     margin-bottom: 10px;
     color: var(--navy-deep);
+    letter-spacing: -0.01em;
   }
 
   .form-group.checkbox label {
@@ -1747,20 +1974,43 @@
 
   .save-error {
     margin: 0 0 20px;
-    padding: 14px 16px;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid var(--error);
+    padding: 14px 18px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
     border-radius: var(--radius-md);
     color: var(--error);
     font-size: 14px;
     font-weight: 500;
+    animation: shake 0.4s ease;
+  }
+
+  .path-display {
+    margin: 8px 0;
+    font-size: 13px;
+    word-break: break-all;
+  }
+
+  .path-display code {
+    background: var(--bg-input);
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    font-family: ui-monospace, monospace;
+  }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-4px); }
+    40% { transform: translateX(4px); }
+    60% { transform: translateX(-2px); }
+    80% { transform: translateX(2px); }
   }
 
   .hint {
     font-size: 13px;
     color: var(--text-muted);
-    margin-top: 8px;
-    line-height: 1.5;
+    margin-top: 10px;
+    line-height: 1.55;
+    max-width: 72ch;
   }
 
   .hint a {
@@ -1908,7 +2158,7 @@
     font-weight: 600;
     font-size: 14px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
     box-shadow: 0 4px 12px var(--primary-alpha);
   }
 
@@ -1926,17 +2176,20 @@
   }
 
   .save-status {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
     background: var(--bg-input);
-    padding: 6px 12px;
+    padding: 8px 14px;
     border-radius: var(--radius-pill);
+    border: 1px solid var(--border-subtle);
+    transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
   }
 
   .save-status.error {
     color: var(--error);
-    background: rgba(239, 68, 68, 0.1);
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.2);
   }
 
   .button-row {
@@ -1953,13 +2206,14 @@
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
     box-shadow: var(--shadow-sm);
   }
 
   .btn-secondary:hover {
     background: var(--bg-input);
-    border-color: var(--navy-deep);
+    border-color: var(--navy-mid);
+    box-shadow: var(--shadow-sm);
   }
 
   .btn-secondary:disabled {
@@ -1985,12 +2239,13 @@
   .mic-level-container {
     margin-top: 16px;
     background: var(--bg-input);
-    padding: 16px;
+    padding: 18px;
     border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
   }
 
   .mic-level {
-    height: 12px;
+    height: 10px;
     background: var(--bg-card);
     border-radius: var(--radius-pill);
     overflow: hidden;
@@ -1999,9 +2254,9 @@
 
   .mic-bar {
     height: 100%;
-    background: linear-gradient(90deg, var(--primary), var(--primary-light));
+    background: linear-gradient(90deg, var(--primary-dark), var(--primary), var(--primary-light));
     border-radius: var(--radius-pill);
-    transition: width 0.1s ease-out;
+    transition: width 0.12s ease-out;
     min-width: 4px;
   }
 
@@ -2039,27 +2294,91 @@
     gap: 16px;
   }
 
+  .model-radio-list .model-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .model-radio-list .model-actions {
+    margin-top: 4px;
+  }
+
   .model-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 20px;
+    padding: 20px 22px;
     background: var(--bg-input);
     border-radius: var(--radius-md);
     border: 1px solid transparent;
-    transition: all 0.2s ease;
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   }
-  
+
   .model-item:hover {
     background: var(--bg-card);
-    border-color: var(--border);
+    border-color: var(--border-subtle);
     box-shadow: var(--shadow-sm);
+  }
+
+  .model-item-active {
+    border-color: var(--primary);
+    background: var(--bg-card);
+  }
+
+  .model-radio-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+  }
+
+  .model-radio {
+    flex-shrink: 0;
+    font-size: 18px;
+    line-height: 1.2;
+    color: var(--primary);
+  }
+
+  .model-radio-unchecked {
+    color: var(--text-muted);
+  }
+
+  .model-download-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .model-download-progress progress {
+    flex: 1;
+    max-width: 200px;
+    height: 8px;
+  }
+
+  .local-engine-section {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .local-engine-section .hint {
+    margin-bottom: 10px;
+  }
+
+  .model-error {
+    font-size: 13px;
+    color: var(--error);
+    margin: 0;
   }
 
   .model-info {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    flex: 1;
   }
   
   .model-info strong {
@@ -2101,16 +2420,23 @@
 
   .danger-zone {
     margin-top: 40px;
-    padding: 24px;
-    background: rgba(239, 68, 68, 0.02);
-    border: 1px solid rgba(239, 68, 68, 0.2);
+    padding: 24px 28px;
+    background: rgba(239, 68, 68, 0.04);
+    border: 1px solid rgba(239, 68, 68, 0.18);
     border-radius: var(--radius-lg);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .danger-zone:hover {
+    border-color: rgba(239, 68, 68, 0.3);
+    box-shadow: 0 2px 12px rgba(239, 68, 68, 0.06);
   }
 
   .danger-zone h4 {
     color: var(--error);
     margin-bottom: 12px;
     font-size: 16px;
+    font-weight: 700;
   }
 
   .btn-danger {

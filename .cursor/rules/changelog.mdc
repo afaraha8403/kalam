@@ -1,0 +1,44 @@
+---
+description: Maintain CHANGELOG.md for significant changes; date-grouped; source for release notes
+alwaysApply: true
+---
+
+# Changelog maintenance
+
+## When to update
+
+Update `CHANGELOG.md` (at project root) whenever you or the user:
+
+- Add a **new feature**
+- Ship a **significant fix** (bug fix that affects behavior or correctness)
+- Make a **notable change** (refactor, config, dependency, or UX change worth documenting)
+- Remove or deprecate something user-facing
+
+Do **not** add trivial edits (typos, comment-only, formatting-only) unless the user asks.
+
+## Format (date-grouped)
+
+- **Newest first.** Each section is a date: `## YYYY-MM-DD`.
+- One section per calendar day; add new entries under that day. If the section for today does not exist, add it at the top (below the title).
+- Use today’s date (YYYY-MM-DD) for the current session’s entries unless the user specifies otherwise.
+
+Structure:
+
+```markdown
+# Changelog
+
+## YYYY-MM-DD
+- **Feature:** Short description.
+- **Fix:** Short description.
+- **Change:** Short description.
+```
+
+Use exactly these labels: **Feature**, **Fix**, **Change**. One line per item; keep text concise.
+
+## If the file is missing
+
+If `CHANGELOG.md` does not exist, create it with a title and one date section (today). Then add the relevant entry/entries.
+
+## Releases
+
+`CHANGELOG.md` is the source of truth for release notes. When creating a release (e.g. tag `v*`), the release body can be filled from the changelog (e.g. the section for the release date or a “Unreleased” section). The current workflow (`.github/workflows/release.yml`) uses a fixed `releaseBody`; when wiring release notes to the build, use the contents or a chosen section of `CHANGELOG.md`.

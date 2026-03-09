@@ -6,6 +6,7 @@ pub mod models;
 pub mod openai;
 pub mod provider;
 pub mod sensevoice;
+pub mod sidecars;
 
 use crate::audio::vad::{VADConfig, VADProcessor};
 use crate::stt::provider::STTProvider;

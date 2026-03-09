@@ -171,15 +171,22 @@
                 <img src="favicon.svg" alt="Kalam Logo" class="w-7 h-7 sm:w-8 sm:h-8 group-hover:scale-105 transition-transform">
                 <span class="font-heading font-bold text-xl sm:text-2xl text-navy-deep tracking-tight">Kalam</span>
             </a>
-            <!-- Desktop nav -->
+            <!-- Desktop nav: main links + More dropdown + GitHub -->
             <div class="hidden sm:flex items-center gap-5 lg:gap-6">
                 <a href="#features" class="text-text-secondary hover:text-primary font-medium transition-colors">Features</a>
-                <a href="#command-center" class="text-text-secondary hover:text-primary font-medium transition-colors">Workspace</a>
-                <a href="#compare" class="text-text-secondary hover:text-primary font-medium transition-colors">Compare</a>
                 <a href="#how-it-works" class="text-text-secondary hover:text-primary font-medium transition-colors">How it Works</a>
                 <a href="#faq" class="text-text-secondary hover:text-primary font-medium transition-colors">FAQ</a>
-                <a href="documentation.html" class="text-text-secondary hover:text-primary font-medium transition-colors">Documentation</a>
-                <a href="business.html" class="text-text-secondary hover:text-primary font-medium transition-colors">For business</a>
+                <details class="relative group/details">
+                    <summary class="list-none text-text-secondary hover:text-primary font-medium transition-colors cursor-pointer flex items-center gap-1" aria-haspopup="true">More <span class="text-[0.6em] opacity-80" aria-hidden="true">▾</span></summary>
+                    <div class="absolute left-0 top-full pt-1">
+                        <div class="w-48 py-2 bg-white rounded-xl shadow-app-lg border border-gray-200">
+                            <a href="#command-center" class="block px-4 py-2.5 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Workspace</a>
+                            <a href="#compare" class="block px-4 py-2.5 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Compare</a>
+                            <a href="documentation.html" class="block px-4 py-2.5 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Documentation</a>
+                            <a href="business.html" class="block px-4 py-2.5 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">For business</a>
+                        </div>
+                    </div>
+                </details>
                 <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="text-navy-deep hover:text-primary transition-colors flex items-center gap-2 font-medium">
                     <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
                     <span>GitHub</span>
@@ -577,21 +584,66 @@
       var REPO = 'afaraha8403/kalam';
       var RELEASES_URL = 'https://api.github.com/repos/' + REPO + '/releases?per_page=20';
 
-      function detectOS() {
+      function detectOSSync() {
         var ua = navigator.userAgent || '';
         var plat = navigator.platform || '';
         if (/Win(dows|32|64|CE)/i.test(ua) || plat === 'Win32') return { os: 'windows', arch: 'x64' };
-        if (/Mac|Darwin|iPhone|iPad/i.test(ua) || plat === 'MacIntel' || plat === 'MacPPC') {
-          var isARM = /aarch64|arm64|Apple Silicon/i.test(ua) || (navigator.maxTouchPoints > 0 && plat === 'MacIntel');
-          return { os: 'mac', arch: isARM ? 'aarch64' : 'x86_64' };
+        if (/Mac|Darwin/i.test(ua) || plat === 'MacIntel' || plat === 'MacPPC') {
+          if (/iPhone|iPad/i.test(ua)) return { os: null, arch: null };
+          return { os: 'mac', arch: null };
         }
-        if (/Linux|X11|Ubuntu/i.test(ua) || plat === 'Linux x86_64') return { os: 'linux', arch: 'amd64' };
+        if (/Linux|X11|Ubuntu/i.test(ua) || plat === 'Linux x86_64' || plat === 'Linux aarch64') {
+          var linuxArch = /aarch64|arm64/i.test(ua) || plat === 'Linux aarch64' ? 'arm64' : 'amd64';
+          return { os: 'linux', arch: linuxArch };
+        }
         return { os: null, arch: null };
+      }
+
+      function resolveMacArch() {
+        if (navigator.userAgentData && typeof navigator.userAgentData.getHighEntropyValues === 'function') {
+          return navigator.userAgentData.getHighEntropyValues(['architecture'])
+            .then(function(v) {
+              var arch = (v && v.architecture) ? String(v.architecture).toLowerCase() : '';
+              return (arch === 'arm') ? 'aarch64' : (arch === 'x86' || arch === 'x64') ? 'x86_64' : null;
+            })
+            .catch(function() { return null; });
+        }
+        return Promise.resolve(null);
+      }
+
+      function detectOS() {
+        return resolveMacArch().then(function(macArch) {
+          var info = detectOSSync();
+          if (info.os === 'mac' && info.arch === null) {
+            info.arch = macArch !== null ? macArch : 'aarch64';
+          }
+          return info;
+        });
+      }
+
+      function macAssetMatchesArch(nameLower, arch) {
+        if (arch === 'aarch64') return nameLower.indexOf('aarch64') !== -1 || nameLower.indexOf('arm64') !== -1;
+        if (arch === 'x86_64') return nameLower.indexOf('x86_64') !== -1 || nameLower.indexOf('_x64') !== -1 || (nameLower.indexOf('x64') !== -1 && nameLower.indexOf('aarch64') === -1 && nameLower.indexOf('arm64') === -1);
+        return false;
+      }
+
+      function assetMatchesNewPattern(nameLower, platform, arch) {
+        if (platform === 'darwin') {
+          return (arch === 'aarch64' && (nameLower.indexOf('-darwin-aarch64') !== -1 || nameLower.indexOf('_darwin_aarch64') !== -1)) ||
+                 (arch === 'x86_64' && (nameLower.indexOf('-darwin-x64') !== -1 || nameLower.indexOf('_darwin_x64') !== -1));
+        }
+        if (platform === 'windows') return nameLower.indexOf('-windows-x64') !== -1 || nameLower.indexOf('_windows_x64') !== -1;
+        if (platform === 'linux') {
+          return (arch === 'amd64' && (nameLower.indexOf('-linux-x64') !== -1 || nameLower.indexOf('-linux-amd64') !== -1 || nameLower.indexOf('_linux_x64') !== -1 || nameLower.indexOf('_linux_amd64') !== -1)) ||
+                 (arch === 'arm64' && (nameLower.indexOf('-linux-arm64') !== -1 || nameLower.indexOf('-linux-aarch64') !== -1 || nameLower.indexOf('_linux_arm64') !== -1));
+        }
+        return false;
       }
 
       function pickAssetForOS(assets, osInfo) {
         if (!assets || !assets.length) return null;
         var os = osInfo.os, arch = osInfo.arch;
+        var platform = os === 'mac' ? 'darwin' : os === 'windows' ? 'windows' : os === 'linux' ? 'linux' : null;
         var winExt = ['.msi', '.exe'];
         var macExt = ['.dmg', '.app.tar.gz'];
         var linuxExt = ['.AppImage', '.deb'];
@@ -602,10 +654,23 @@
           var ext = exts[e].toLowerCase();
           var candidates = assets.filter(function(a) { return name(a).endsWith(ext); });
           if (candidates.length === 0) continue;
+          if (platform && arch && candidates.length > 1) {
+            var newPatternMatch = candidates.filter(function(a) { return assetMatchesNewPattern(name(a), platform, arch); });
+            if (newPatternMatch.length) return newPatternMatch[0];
+          }
           if (os === 'mac' && arch && candidates.length > 1) {
-            var pref = candidates.filter(function(a) { return name(a).indexOf(arch) !== -1; });
+            var pref = candidates.filter(function(a) { return macAssetMatchesArch(name(a), arch); });
             if (pref.length) return pref[0];
             return candidates[0];
+          }
+          if (os === 'linux' && arch && candidates.length > 1) {
+            var linuxPref = candidates.filter(function(a) {
+              var n = name(a);
+              if (arch === 'amd64') return n.indexOf('amd64') !== -1 || n.indexOf('x64') !== -1;
+              if (arch === 'arm64') return n.indexOf('arm64') !== -1 || n.indexOf('aarch64') !== -1;
+              return false;
+            });
+            if (linuxPref.length) return linuxPref[0];
           }
           return candidates[0];
         }
@@ -618,13 +683,13 @@
         var secondary = document.getElementById('download-secondary');
         if (!primary || !primaryText) return;
 
-        var osInfo = detectOS();
         var fallbackUrl = 'https://github.com/' + REPO + '/releases/latest';
         var fallbackLabel = 'Download Latest Release';
 
-        fetch(RELEASES_URL, { headers: { 'Accept': 'application/vnd.github.v3+json' } })
-          .then(function(r) { return r.json(); })
-          .then(function(releases) {
+        detectOS().then(function(osInfo) {
+          return fetch(RELEASES_URL, { headers: { 'Accept': 'application/vnd.github.v3+json' } })
+            .then(function(r) { return r.json(); })
+            .then(function(releases) {
             if (!Array.isArray(releases) || releases.length === 0) {
               primary.href = fallbackUrl;
               primaryText.textContent = fallbackLabel;
@@ -644,7 +709,9 @@
 
             primary.href = downloadUrl;
             if (osLabel && asset) {
-              primaryText.textContent = 'Download for ' + osLabel + (isStable ? ' (v' + tag.replace(/^v/, '') + ')' : ' (beta)');
+              var archLabel = '';
+              if (osInfo.os === 'mac' && osInfo.arch) archLabel = osInfo.arch === 'aarch64' ? ' (Apple Silicon)' : ' (Intel)';
+              primaryText.textContent = 'Download for ' + osLabel + archLabel + (isStable ? ' (v' + tag.replace(/^v/, '') + ')' : ' (beta)');
             } else {
               primaryText.textContent = isStable ? 'Download ' + tag : 'Download (beta)';
             }
@@ -655,12 +722,13 @@
             }
             parts.push('<a href="https://github.com/' + REPO + '/releases" class="text-primary hover:underline">Other platforms &amp; releases</a>');
             secondary.innerHTML = parts.join('');
-          })
-          .catch(function() {
-            primary.href = fallbackUrl;
-            primaryText.textContent = fallbackLabel;
-            secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" class="text-primary hover:underline">all releases</a> for other platforms.';
+            });
           });
+        }).catch(function() {
+          primary.href = fallbackUrl;
+          primaryText.textContent = fallbackLabel;
+          secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" class="text-primary hover:underline">all releases</a> for other platforms.';
+        });
       }
 
       if (document.readyState === 'loading') {
