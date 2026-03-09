@@ -694,7 +694,10 @@ async fn check_update_with_channel(
         .map_err(|e| anyhow::anyhow!("{:?}", e))?
         .build()
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-    updater.check().await.map_err(|e| anyhow::anyhow!("{:?}", e))
+    updater
+        .check()
+        .await
+        .map_err(|e| anyhow::anyhow!("{:?}", e))
 }
 
 /// Check for app updates; if available and user has show_updates enabled, show a notification.
@@ -766,7 +769,9 @@ fn get_app_version(app: tauri::AppHandle) -> String {
 /// Check for updates; returns new version if available, None if up to date, Err on failure.
 #[tauri::command]
 async fn check_for_updates(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    let update = check_update_with_channel(&app).await.map_err(|e| format!("{:?}", e))?;
+    let update = check_update_with_channel(&app)
+        .await
+        .map_err(|e| format!("{:?}", e))?;
     Ok(update.as_ref().map(|u| u.version.clone()))
 }
 
