@@ -72,6 +72,7 @@ export interface FormattingConfig {
   injection_method: 'Auto' | 'Keystrokes' | 'Clipboard'
   keystroke_delay_ms: number
   clipboard_threshold: number
+  force_clipboard_apps: string[]
 }
 
 export interface FormattingRule {
