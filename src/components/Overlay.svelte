@@ -41,6 +41,25 @@
 
   $: isExpanded = state.kind !== 'Collapsed' && state.kind !== 'Hidden'
 
+  let isHovered = false
+  $: requiresLargeWindow = isExpanded || isHovered
+
+  let resizeTimeout: ReturnType<typeof setTimeout> | null = null
+  $: {
+    if (requiresLargeWindow) {
+      if (resizeTimeout != null) {
+        clearTimeout(resizeTimeout)
+        resizeTimeout = null
+      }
+      invoke('resize_overlay', { expanded: true }).catch(console.error)
+    } else {
+      if (resizeTimeout != null) clearTimeout(resizeTimeout)
+      resizeTimeout = setTimeout(() => {
+        invoke('resize_overlay', { expanded: false }).catch(console.error)
+      }, 400)
+    }
+  }
+
   // Rolling history of mic levels for the live wave
   const WAVE_POINTS = 100
   let levelHistory: number[] = []
@@ -239,9 +258,9 @@
       const p = e?.payload
       if (isValidPayload(p)) {
         state = p
-        
+
         if (statusTimeout) clearTimeout(statusTimeout)
-        
+
         if (p.kind === 'Status' || p.kind === 'Error' || p.kind === 'Success') {
           statusTimeout = setTimeout(() => {
             state = { kind: 'Collapsed' }
@@ -251,6 +270,14 @@
     }).then((fn) => {
       unlisten = fn
     })
+
+    // Startup emit can happen before we're listening; fetch initial state when we mount
+    invoke<OverlayEvent>('get_overlay_initial_state')
+      .then((initial) => {
+        if (isValidPayload(initial)) state = initial
+      })
+      .catch(console.error)
+
     return () => {
       unlisten?.()
       unlistenSettings?.()
@@ -270,6 +297,8 @@
     class:success={state.kind === 'Success'}
     class:error={state.kind === 'Error'}
     data-tauri-drag-region
+    on:mouseenter={() => (isHovered = true)}
+    on:mouseleave={() => (isHovered = false)}
   >
     {#if state.kind === 'Collapsed'}
       <!-- idle: just the pill shape itself, but with hover text -->
@@ -392,16 +421,18 @@
     display: flex;
     justify-content: center;
     background: transparent;
+    border-radius: 9999px;
+    overflow: hidden;
   }
 
   .blip-root.expand-up {
     align-items: flex-end;
-    padding-bottom: 24px;
+    padding-bottom: 0;
   }
 
   .blip-root.expand-down {
     align-items: flex-start;
-    padding-top: 24px;
+    padding-top: 0;
   }
 
   .blip-root.expand-center {

@@ -110,7 +110,7 @@
           <div class="timeline-marker">
             <div class="marker-dot"></div>
           </div>
-          <div class="history-card">
+          <div class="history-card" role="button" tabindex="0" on:click={() => copyText(entry.text)} on:keydown={(e) => e.key === 'Enter' && copyText(entry.text)}>
             <div class="history-header">
               <span class="history-time">
                 <Icon icon="ph:calendar-blank-duotone" />
@@ -128,7 +128,7 @@
             <div class="history-body">
               <p>{entry.text || '(empty)'}</p>
             </div>
-            <div class="history-actions">
+            <div class="history-actions" on:click|stopPropagation on:keydown|stopPropagation>
               <button class="action-btn" on:click={() => copyText(entry.text)} title="Copy to clipboard">
                 <Icon icon="ph:copy-duotone" />
                 <span>Copy</span>
@@ -283,6 +283,7 @@
     padding: 20px 24px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
     transition: all 0.3s ease;
+    cursor: pointer;
   }
 
   .history-card:hover {

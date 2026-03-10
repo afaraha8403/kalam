@@ -135,17 +135,14 @@
   {:else}
     <div class="snippets-grid">
       {#each filteredSnippets as snippet}
-        <div class="snippet-card">
+        <div class="snippet-card" role="button" tabindex="0" on:click={() => startEdit(snippet)} on:keydown={(e) => e.key === 'Enter' && startEdit(snippet)}>
           <div class="snippet-trigger">
             <span class="badge">{snippet.trigger}</span>
           </div>
           <div class="snippet-expansion">
             <p>{snippet.expansion}</p>
           </div>
-          <div class="snippet-hover-actions">
-            <button class="action-btn edit" on:click={() => startEdit(snippet)} title="Edit">
-              <Icon icon="ph:pencil-simple-duotone" />
-            </button>
+          <div class="snippet-hover-actions" on:click|stopPropagation on:keydown|stopPropagation>
             <button class="action-btn delete" on:click={() => removeSnippet(snippet.trigger)} title="Delete">
               <Icon icon="ph:trash-duotone" />
             </button>
@@ -191,7 +188,6 @@
     </div>
     
     <div slot="footer">
-      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
       <button class="btn-primary" on:click={editing ? saveEdit : addSnippet} disabled={!newTrigger.trim() || !newExpansion.trim()}>
         {#if editing}
           <Icon icon="ph:check-bold" /> Save Changes
@@ -199,6 +195,7 @@
           <Icon icon="ph:plus-bold" /> Add Snippet
         {/if}
       </button>
+      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
     </div>
   </SidePanel>
 </div>
@@ -391,6 +388,7 @@
     position: relative;
     transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+    cursor: pointer;
   }
 
   .snippet-card:hover {

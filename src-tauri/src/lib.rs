@@ -102,6 +102,8 @@ pub struct AppState {
     pub local_model_manager: Arc<crate::stt::lifecycle::LocalModelManager>,
     /// Set when starting recording: Dictation (main hotkey) or Command (command hotkey). Read in stop_dictation to decide inject vs command pipeline.
     pub recording_type: Arc<Mutex<RecordingType>>,
+    /// Whether the overlay OS window is expanded (300x120) or collapsed (80x80). Used by update_overlay_position.
+    pub overlay_expanded: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -157,6 +159,7 @@ impl AppState {
             press_start_time: Arc::new(Mutex::new(None)),
             local_model_manager,
             recording_type: Arc::new(Mutex::new(RecordingType::Dictation)),
+            overlay_expanded: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -581,7 +584,10 @@ pub fn run() {
 
             log::info!("Kalam initialized successfully");
 
-            // Show overlay in collapsed state on startup
+            // Resize overlay to collapsed (80x80) so it does not block clicks, then show it
+            if let Err(e) = resize_overlay(app.handle().clone(), false) {
+                log::warn!("Failed to resize overlay on startup: {}", e);
+            }
             if let Err(e) = show_overlay(app.handle()) {
                 log::warn!("Failed to show overlay on startup: {}", e);
             }
@@ -616,6 +622,8 @@ pub fn run() {
             get_app_log_empty,
             get_app_data_path,
             open_app_data_folder,
+            resize_overlay,
+            get_overlay_initial_state,
             commands::export_logs_csv,
             commands::create_entry,
             commands::get_entries_by_type,
@@ -1409,8 +1417,12 @@ fn check_model_requirements(model_id: String) -> Result<system_reqs::HardwareChe
 }
 
 const OVERLAY_LABEL: &str = "overlay";
-const OVERLAY_WIDTH: i32 = 300;
-const OVERLAY_HEIGHT: i32 = 120;
+/// Expanded pill size (matches .blip.expanded in Overlay.svelte)
+const OVERLAY_EXPANDED_WIDTH: i32 = 250;
+const OVERLAY_EXPANDED_HEIGHT: i32 = 48;
+/// Collapsed pill size (matches .blip.collapsed)
+const OVERLAY_COLLAPSED_WIDTH: i32 = 48;
+const OVERLAY_COLLAPSED_HEIGHT: i32 = 10;
 const OVERLAY_BOTTOM_MARGIN: i32 = 24;
 
 #[derive(serde::Serialize, Clone)]
@@ -1436,9 +1448,52 @@ enum OverlayEvent {
     },
 }
 
+#[tauri::command]
+fn resize_overlay(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    state
+        .overlay_expanded
+        .store(expanded, std::sync::atomic::Ordering::Relaxed);
+
+    if let Some(overlay) = app.get_webview_window(OVERLAY_LABEL) {
+        let width = if expanded {
+            OVERLAY_EXPANDED_WIDTH as f64
+        } else {
+            OVERLAY_COLLAPSED_WIDTH as f64
+        };
+        let height = if expanded {
+            OVERLAY_EXPANDED_HEIGHT as f64
+        } else {
+            OVERLAY_COLLAPSED_HEIGHT as f64
+        };
+
+        let size = tauri::LogicalSize::new(width, height);
+        let _ = overlay.set_size(tauri::Size::Logical(size));
+        let _ = update_overlay_position(&app);
+        let _ = overlay.set_always_on_top(true);
+    }
+    Ok(())
+}
+
 fn emit_overlay_event(app: &tauri::AppHandle, event: OverlayEvent) {
     // Emit only to the overlay window so it always receives the event
     let _ = app.emit_to(OVERLAY_LABEL, "overlay-state", event);
+}
+
+/// Returns the initial overlay state (Collapsed or Hidden) for the overlay to fetch when it mounts.
+/// Used because the startup emit can happen before the overlay webview has registered its listener.
+#[tauri::command]
+fn get_overlay_initial_state(state: tauri::State<AppState>) -> OverlayEvent {
+    let dictation_enabled = if let Ok(config) = state.config.try_lock() {
+        config.get_all().dictation_enabled
+    } else {
+        true
+    };
+    if dictation_enabled {
+        OverlayEvent::Collapsed
+    } else {
+        OverlayEvent::Hidden
+    }
 }
 
 fn reset_overlay_state(app: &tauri::AppHandle) {
@@ -1462,7 +1517,7 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
     let win = overlay.as_ref().window();
 
     let state = app.state::<AppState>();
-    let (position, offset_x, offset_y) = {
+    let (position, offset_x, offset_y, expand_direction) = {
         // Use try_lock to avoid blocking the async runtime
         if let Ok(cfg) = state.config.try_lock() {
             let all = cfg.get_all();
@@ -1470,11 +1525,24 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
                 all.overlay_position.clone(),
                 all.overlay_offset_x,
                 all.overlay_offset_y,
+                all.overlay_expand_direction.clone(),
             )
         } else {
             // Fallback if we can't lock immediately
-            (crate::config::OverlayPosition::default(), 0, 0)
+            (
+                crate::config::OverlayPosition::default(),
+                0,
+                0,
+                crate::config::ExpandDirection::default(),
+            )
         }
+    };
+
+    let expanded = state.overlay_expanded.load(Ordering::Relaxed);
+    let (logical_width, logical_height) = if expanded {
+        (OVERLAY_EXPANDED_WIDTH as f64, OVERLAY_EXPANDED_HEIGHT as f64)
+    } else {
+        (OVERLAY_COLLAPSED_WIDTH as f64, OVERLAY_COLLAPSED_HEIGHT as f64)
     };
 
     // Get absolute cursor position using the OS API, then find the matching monitor
@@ -1512,60 +1580,72 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
         let wa = monitor.work_area();
         let scale_factor = monitor.scale_factor();
 
-        // We must calculate the physical size based on our known logical size.
-        // If we use win.outer_size() while the window is hidden, it may return 0,
-        // causing the window to be placed completely off-screen or behind the taskbar.
-        let physical_width = (OVERLAY_WIDTH as f64 * scale_factor).round() as i32;
-        let physical_height = (OVERLAY_HEIGHT as f64 * scale_factor).round() as i32;
         let physical_margin = (OVERLAY_BOTTOM_MARGIN as f64 * scale_factor).round() as i32;
         let physical_offset_x = (offset_x as f64 * scale_factor).round() as i32;
         let physical_offset_y = (offset_y as f64 * scale_factor).round() as i32;
+        let full_width = (OVERLAY_EXPANDED_WIDTH as f64 * scale_factor).round() as i32;
+        let full_height = (OVERLAY_EXPANDED_HEIGHT as f64 * scale_factor).round() as i32;
+        let physical_width = (logical_width * scale_factor).round() as i32;
+        let physical_height = (logical_height * scale_factor).round() as i32;
 
-        let mut x = wa.position.x;
-        let mut y = wa.position.y;
-
+        // Compute top-left of the *full* (300x120) window so we can anchor the pill when resizing.
+        let mut x_full = wa.position.x;
+        let mut y_full = wa.position.y;
         use crate::config::OverlayPosition::*;
         match position {
             BottomCenter => {
-                x += (wa.size.width as i32 - physical_width) / 2;
-                y += wa.size.height as i32 - physical_height - physical_margin;
+                x_full += (wa.size.width as i32 - full_width) / 2;
+                y_full += wa.size.height as i32 - full_height - physical_margin;
             }
             BottomLeft => {
-                x += physical_margin;
-                y += wa.size.height as i32 - physical_height - physical_margin;
+                x_full += physical_margin;
+                y_full += wa.size.height as i32 - full_height - physical_margin;
             }
             BottomRight => {
-                x += wa.size.width as i32 - physical_width - physical_margin;
-                y += wa.size.height as i32 - physical_height - physical_margin;
+                x_full += wa.size.width as i32 - full_width - physical_margin;
+                y_full += wa.size.height as i32 - full_height - physical_margin;
             }
             TopCenter => {
-                x += (wa.size.width as i32 - physical_width) / 2;
-                y += physical_margin;
+                x_full += (wa.size.width as i32 - full_width) / 2;
+                y_full += physical_margin;
             }
             TopLeft => {
-                x += physical_margin;
-                y += physical_margin;
+                x_full += physical_margin;
+                y_full += physical_margin;
             }
             TopRight => {
-                x += wa.size.width as i32 - physical_width - physical_margin;
-                y += physical_margin;
+                x_full += wa.size.width as i32 - full_width - physical_margin;
+                y_full += physical_margin;
             }
             CenterLeft => {
-                x += physical_margin;
-                y += (wa.size.height as i32 - physical_height) / 2;
+                x_full += physical_margin;
+                y_full += (wa.size.height as i32 - full_height) / 2;
             }
             CenterRight => {
-                x += wa.size.width as i32 - physical_width - physical_margin;
-                y += (wa.size.height as i32 - physical_height) / 2;
+                x_full += wa.size.width as i32 - full_width - physical_margin;
+                y_full += (wa.size.height as i32 - full_height) / 2;
             }
             Center => {
-                x += (wa.size.width as i32 - physical_width) / 2;
-                y += (wa.size.height as i32 - physical_height) / 2;
+                x_full += (wa.size.width as i32 - full_width) / 2;
+                y_full += (wa.size.height as i32 - full_height) / 2;
             }
         }
+        x_full += physical_offset_x;
+        y_full += physical_offset_y;
 
-        x += physical_offset_x;
-        y += physical_offset_y;
+        // Content anchor: point on screen that stays fixed when window resizes (depends on expand_direction).
+        use crate::config::ExpandDirection;
+        let (anchor_cx, anchor_cy) = match expand_direction {
+            ExpandDirection::Up => (x_full + full_width / 2, y_full + full_height),
+            ExpandDirection::Down => (x_full + full_width / 2, y_full),
+            ExpandDirection::Center => (x_full + full_width / 2, y_full + full_height / 2),
+        };
+        let x = anchor_cx - physical_width / 2;
+        let y = match expand_direction {
+            ExpandDirection::Up => anchor_cy - physical_height,
+            ExpandDirection::Down => anchor_cy,
+            ExpandDirection::Center => anchor_cy - physical_height / 2,
+        };
 
         let new_pos = tauri::PhysicalPosition { x, y };
         let mut should_update = true;
@@ -1579,8 +1659,9 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
 
         if should_update {
             let _ = overlay.set_position(tauri::Position::Physical(new_pos));
-            let _ = overlay.set_always_on_top(true); // Re-assert to ensure it stays above taskbar
         }
+        // Re-assert always on top every time (e.g. after resize) so overlay stays above taskbar
+        let _ = overlay.set_always_on_top(true);
     }
     Ok(())
 }

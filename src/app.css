@@ -16,11 +16,11 @@
   --navy-alpha: rgba(7, 16, 41, 0.05);
   
   /* Surfaces — Light theme with HIGH contrast */
-  --bg-app: #EAEFF5;       /* App background (slightly darker/cooler for floating effect) */
-  --bg-dark: #F1F5F9;      /* Sidebar / App background */
-  --bg-content: #FFFFFF;   /* Main content area */
+  --bg-app: #E2E8F0;       /* App background (slightly darker/cooler for floating effect) */
+  --bg-dark: #CBD5E1;      /* Sidebar / App background */
+  --bg-content: #F8FAFC;   /* Main content area */
   --bg-card: #FFFFFF;      /* Cards */
-  --bg-input: #F4F7F9;     /* Inputs and hover states (softer) */
+  --bg-input: #F1F5F9;     /* Inputs and hover states (softer) */
   --bg-input-hover: #E2E8F0;
   --bg-elevated: #FFFFFF;  /* Modals/Overlays */
   
@@ -30,10 +30,10 @@
   --text-muted: #64748B;
   
   /* Borders — Clear separation */
-  --border: #E2E8F0;
-  --border-visible: #CBD5E1;
+  --border: #CBD5E1;
+  --border-visible: #94A3B8;
   --border-bright: #4AAEBE;
-  --border-subtle: #F1F5F9;
+  --border-subtle: #E2E8F0;
   
   /* Semantic */
   --success: #10B981;
@@ -42,10 +42,10 @@
   --white: #FFFFFF;
 
   /* Shadows for floating aesthetic */
-  --shadow-sm: 0 2px 8px rgba(7, 16, 41, 0.04);
-  --shadow-md: 0 4px 20px rgba(7, 16, 41, 0.06);
-  --shadow-lg: 0 12px 32px rgba(7, 16, 41, 0.08);
-  --shadow-inner: inset 0 2px 4px rgba(7, 16, 41, 0.02);
+  --shadow-sm: 0 2px 4px rgba(7, 16, 41, 0.06), 0 0 0 1px rgba(7, 16, 41, 0.04);
+  --shadow-md: 0 4px 12px rgba(7, 16, 41, 0.08), 0 0 0 1px rgba(7, 16, 41, 0.04);
+  --shadow-lg: 0 12px 32px rgba(7, 16, 41, 0.12), 0 0 0 1px rgba(7, 16, 41, 0.04);
+  --shadow-inner: inset 0 2px 4px rgba(7, 16, 41, 0.04);
 
   /* Border Radius */
   --radius-sm: 8px;

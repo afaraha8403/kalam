@@ -20,11 +20,11 @@ furnished to do so, subject to the following conditions:
       that is not primarily intended for or directed toward commercial
       advantage or monetary compensation.
 
-  (2) COMMERCIAL USE, and any use or modification of the Software or
-      derivative works for RESALE or for use by a business (including
-      sole proprietorships, companies, and other for-profit entities),
-      is NOT permitted under this license. Such use requires a separate
-      written license from the copyright holder.
+  (2) COMMERCIAL USE (use by a business, sole proprietorship, or other
+      for-profit entity), RESALE, or integration into a for-profit
+      product is NOT permitted under this license, EXCEPT as allowed in
+      the Small Team Commercial Use section below. All other commercial
+      use requires a separate written license from the copyright holder.
 
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
@@ -38,9 +38,28 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ----------------------------------------------------------------------
-COMMERCIAL USE
+SMALL TEAM COMMERCIAL USE
 ----------------------------------------------------------------------
 
-For commercial use, resale, or use by a business, you must obtain a
-separate license from the project owner. Please reach out to the project
+Commercial use of the Software is permitted without a separate license
+only for organizations that have no more than two (2) "team members."
+A "team member" is any natural person who uses the Software (or a
+modified or combined version of it) for the organization's commercial
+purposes (e.g., as an employee, contractor, or equivalent). The same
+MIT permissions (use, copy, modify, merge, publish, distribute,
+sublicense, and sell copies) apply for such small-team commercial use,
+subject to the conditions and disclaimer in the MIT section above.
+
+Commercial use by organizations with more than two (2) team members,
+or any resale, embedding, or distribution of the Software or derivative
+works as part of a for-profit product or service, requires a separate
+written license from the copyright holder.
+
+----------------------------------------------------------------------
+COMMERCIAL USE (BEYOND SMALL TEAM)
+----------------------------------------------------------------------
+
+For commercial use beyond the small team limit above, or for resale or
+integration into a for-profit product, you must obtain a separate
+license from the project owner. Please reach out to the project
 maintainers to request a commercial license.

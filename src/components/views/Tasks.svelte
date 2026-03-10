@@ -264,8 +264,8 @@
       {#if activeTasks.length > 0}
         <div class="task-list">
           {#each activeTasks as entry (entry.id)}
-            <div class="task-item">
-              <button class="checkbox" on:click={() => toggleComplete(entry)}>
+            <div class="task-item" role="button" tabindex="0" on:click={() => openEditPanel(entry)} on:keydown={(e) => e.key === 'Enter' && openEditPanel(entry)}>
+              <button class="checkbox" on:click|stopPropagation={() => toggleComplete(entry)}>
                 <div class="check-circle">
                   <Icon icon="ph:check-bold" class="check-icon" />
                 </div>
@@ -292,10 +292,7 @@
                   {/if}
                 </div>
               </div>
-              <div class="task-actions">
-                <button class="action-btn open" on:click={() => openEditPanel(entry)} title="Open details">
-                  <Icon icon="ph:caret-right-duotone" />
-                </button>
+              <div class="task-actions" on:click|stopPropagation on:keydown|stopPropagation>
                 <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete task">
                   <Icon icon="ph:trash-duotone" />
                 </button>
@@ -313,8 +310,8 @@
           </div>
           <div class="task-list completed">
             {#each completedTasks as entry (entry.id)}
-              <div class="task-item is-completed">
-                <button class="checkbox" on:click={() => toggleComplete(entry)}>
+              <div class="task-item is-completed" role="button" tabindex="0" on:click={() => openEditPanel(entry)} on:keydown={(e) => e.key === 'Enter' && openEditPanel(entry)}>
+                <button class="checkbox" on:click|stopPropagation={() => toggleComplete(entry)}>
                   <div class="check-circle checked">
                     <Icon icon="ph:check-bold" class="check-icon" />
                   </div>
@@ -322,10 +319,7 @@
                 <div class="task-content">
                   <span class="task-title">{entry.title || entry.content}</span>
                 </div>
-                <div class="task-actions">
-                  <button class="action-btn open" on:click={() => openEditPanel(entry)} title="Open details">
-                    <Icon icon="ph:caret-right-duotone" />
-                  </button>
+                <div class="task-actions" on:click|stopPropagation on:keydown|stopPropagation>
                   <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete task">
                     <Icon icon="ph:trash-duotone" />
                   </button>
@@ -428,10 +422,10 @@
     </div>
     
     <div slot="footer">
-      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
       <button class="btn-primary" on:click={savePanel} disabled={!draftEntry.title?.trim()}>
         <Icon icon="ph:check-bold" /> Save
       </button>
+      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
     </div>
   </SidePanel>
 </div>
@@ -581,6 +575,7 @@
     border: 1px solid var(--border-subtle);
     border-radius: 16px;
     transition: all 0.2s ease;
+    cursor: pointer;
   }
 
   .task-item:hover {
@@ -826,8 +821,21 @@
     border-radius: 10px;
     font-size: 15px;
     font-family: inherit;
-    background: var(--bg-input, #f8f9fa);
+    background: var(--bg-input);
     color: var(--text-primary);
+    transition: all 0.2s;
+  }
+
+  .field input[type="date"]::-webkit-calendar-picker-indicator,
+  .field input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.6;
+    transition: 0.2s;
+  }
+
+  .field input[type="date"]::-webkit-calendar-picker-indicator:hover,
+  .field input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
   }
 
   .field input:focus, .field textarea:focus {

@@ -188,7 +188,7 @@
       {:else}
         <ul class="widget-list">
           {#each tasksDueToday.slice(0, 5) as task (task.id)}
-            <li class="widget-item">
+            <li class="widget-item" role="button" tabindex="0" on:click={() => navigate('tasks')} on:keydown={(e) => e.key === 'Enter' && navigate('tasks')}>
               <span class="widget-item-title">{task.title || task.content?.slice(0, 40) || 'Task'}</span>
             </li>
           {/each}
@@ -208,7 +208,7 @@
       {:else}
         <ul class="widget-list">
           {#each remindersDueToday.slice(0, 5) as rem (rem.id)}
-            <li class="widget-item">
+            <li class="widget-item" role="button" tabindex="0" on:click={() => navigate('reminders')} on:keydown={(e) => e.key === 'Enter' && navigate('reminders')}>
               <span class="widget-item-title">{rem.title || rem.content?.slice(0, 40) || 'Reminder'}</span>
             </li>
           {/each}
@@ -251,7 +251,7 @@
             
             <div class="day-entries">
               {#each dayEntries as entry}
-                <div class="history-card">
+                <div class="history-card" role="button" tabindex="0" on:click={() => copyToClipboard(entry.text)} on:keydown={(e) => e.key === 'Enter' && copyToClipboard(entry.text)}>
                   <div class="history-header">
                     <span class="history-time">
                       <Icon icon="ph:clock-duotone" />
@@ -269,7 +269,7 @@
                     <p>{entry.text}</p>
                   </div>
                   
-                  <div class="history-actions">
+                  <div class="history-actions" on:click|stopPropagation on:keydown|stopPropagation>
                     <button class="action-btn" on:click={() => copyToClipboard(entry.text)}>
                       <Icon icon="ph:copy-duotone" />
                       <span>Copy</span>
@@ -466,8 +466,15 @@
   .widget-item {
     font-size: 14px;
     color: var(--navy-deep);
-    padding: 8px 0;
+    padding: 8px 12px;
     border-bottom: 1px solid var(--border-subtle);
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background 0.2s;
+  }
+
+  .widget-item:hover {
+    background: var(--bg-input);
   }
 
   .widget-item:last-child {
@@ -680,6 +687,7 @@
     padding: 24px;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
     transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    cursor: pointer;
   }
 
   .history-card:hover {

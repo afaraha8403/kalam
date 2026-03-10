@@ -176,6 +176,27 @@
     }
   }
 
+  function setQuickDate(type: 'today' | 'tomorrow' | 'next_week') {
+    const d = new Date()
+    if (type === 'today') {
+      d.setHours(18, 0, 0, 0) // 6 PM today
+      if (d.getTime() < Date.now()) d.setHours(20, 0, 0, 0) // 8 PM if 6 PM passed
+    } else if (type === 'tomorrow') {
+      d.setDate(d.getDate() + 1)
+      d.setHours(9, 0, 0, 0) // 9 AM tomorrow
+    } else if (type === 'next_week') {
+      d.setDate(d.getDate() + 7)
+      d.setHours(9, 0, 0, 0) // 9 AM next week
+    }
+    // format to YYYY-MM-DDThh:mm
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    const h = String(d.getHours()).padStart(2, '0')
+    const min = String(d.getMinutes()).padStart(2, '0')
+    draftReminderAt = `${y}-${m}-${day}T${h}:${min}`
+  }
+
   function openAddPanel() {
     panelMode = 'add'
     panelReminderId = null
@@ -334,6 +355,16 @@
     }
   }
 
+  function handleItemClick(entry: Entry) {
+    if (entry.entry_type === 'reminder') {
+      openEditPanel(entry)
+    } else if (entry.entry_type === 'note') {
+      openNote(entry)
+    } else if (entry.entry_type === 'task') {
+      openTask(entry)
+    }
+  }
+
   $: filteredEntries = entries.filter(e => {
     const matchesSearch = (e.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
                           (e.content || '').toLowerCase().includes(searchQuery.toLowerCase())
@@ -438,9 +469,9 @@
             </div>
             <div class="reminder-list">
               {#each groupedActive[group] as entry (entry.id)}
-                <div class="reminder-item" class:is-note={entry.entry_type === 'note'} class:is-task={entry.entry_type === 'task'}>
+                <div class="reminder-item" class:is-note={entry.entry_type === 'note'} class:is-task={entry.entry_type === 'task'} role="button" tabindex="0" on:click={() => handleItemClick(entry)} on:keydown={(e) => e.key === 'Enter' && handleItemClick(entry)}>
                   {#if entry.entry_type === 'reminder'}
-                    <button class="checkbox" on:click={() => toggleComplete(entry)}>
+                    <button class="checkbox" on:click|stopPropagation={() => toggleComplete(entry)}>
                       <div class="check-circle">
                         <Icon icon="ph:check-bold" class="check-icon" />
                       </div>
@@ -460,12 +491,9 @@
                         {/if}
                       </div>
                     </div>
-                    <div class="reminder-actions">
+                    <div class="reminder-actions" on:click|stopPropagation on:keydown|stopPropagation>
                       <button class="action-btn" on:click={() => snooze(entry)} title="Snooze 1 hour">
                         <Icon icon="ph:clock-countdown-duotone" />
-                      </button>
-                      <button class="action-btn" on:click={() => openEditPanel(entry)} title="Edit reminder">
-                        <Icon icon="ph:pencil-simple-duotone" />
                       </button>
                       <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete reminder">
                         <Icon icon="ph:trash-duotone" />
@@ -483,15 +511,12 @@
                         </span>
                       </div>
                     </div>
-                    <div class="reminder-actions">
+                    <div class="reminder-actions" on:click|stopPropagation on:keydown|stopPropagation>
                       <button class="action-btn" on:click={() => snooze(entry)} title="Snooze 1 hour">
                         <Icon icon="ph:clock-countdown-duotone" />
                       </button>
                       <button class="action-btn" on:click={() => clearReminder(entry)} title="Remove reminder">
                         <Icon icon="ph:bell-slash-duotone" />
-                      </button>
-                      <button class="action-btn" on:click={() => openNote(entry)} title="Open note">
-                        <Icon icon="ph:note-duotone" />
                       </button>
                     </div>
                   {:else if entry.entry_type === 'task'}
@@ -506,15 +531,12 @@
                         </span>
                       </div>
                     </div>
-                <div class="reminder-actions">
+                <div class="reminder-actions" on:click|stopPropagation on:keydown|stopPropagation>
                   <button class="action-btn" on:click={() => snooze(entry)} title="Snooze 1 hour">
                     <Icon icon="ph:clock-countdown-duotone" />
                   </button>
                   <button class="action-btn" on:click={() => clearReminder(entry)} title="Remove reminder">
                     <Icon icon="ph:bell-slash-duotone" />
-                  </button>
-                  <button class="action-btn" on:click={() => openTask(entry)} title="Open task">
-                    <Icon icon="ph:check-square-duotone" />
                   </button>
                   <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete task">
                     <Icon icon="ph:trash-duotone" />
@@ -536,8 +558,8 @@
           </div>
           <div class="reminder-list completed">
             {#each completedReminders as entry (entry.id)}
-              <div class="reminder-item is-completed" class:is-task={entry.entry_type === 'task'}>
-                <button class="checkbox" on:click={() => toggleComplete(entry)}>
+              <div class="reminder-item is-completed" class:is-task={entry.entry_type === 'task'} role="button" tabindex="0" on:click={() => handleItemClick(entry)} on:keydown={(e) => e.key === 'Enter' && handleItemClick(entry)}>
+                <button class="checkbox" on:click|stopPropagation={() => toggleComplete(entry)}>
                   <div class="check-circle checked">
                     <Icon icon="ph:check-bold" class="check-icon" />
                   </div>
@@ -548,7 +570,7 @@
                   {/if}
                   <span class="reminder-title">{entry.entry_type === 'task' ? (entry.title || entry.content || '(no title)') : entry.content}</span>
                 </div>
-                <div class="reminder-actions">
+                <div class="reminder-actions" on:click|stopPropagation on:keydown|stopPropagation>
                   <button class="action-btn delete" on:click={() => remove(entry.id)} title={entry.entry_type === 'task' ? 'Delete task' : 'Delete reminder'}>
                     <Icon icon="ph:trash-duotone" />
                   </button>
@@ -573,6 +595,11 @@
       </div>
       <div class="field">
         <label for="edit-datetime">Date & time</label>
+        <div class="datetime-quick-actions">
+          <button type="button" class="quick-btn" on:click={() => setQuickDate('today')}>Today</button>
+          <button type="button" class="quick-btn" on:click={() => setQuickDate('tomorrow')}>Tomorrow</button>
+          <button type="button" class="quick-btn" on:click={() => setQuickDate('next_week')}>Next Week</button>
+        </div>
         <input id="edit-datetime" type="datetime-local" class="edit-input" bind:value={draftReminderAt} />
       </div>
       <div class="field">
@@ -585,10 +612,10 @@
       </div>
     </div>
     <div slot="footer">
-      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
       <button class="btn-primary" on:click={savePanel} disabled={!draftContent.trim()}>
         <Icon icon="ph:check-bold" /> Save
       </button>
+      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
     </div>
   </SidePanel>
 
@@ -791,6 +818,7 @@
     border-radius: 16px;
     transition: all 0.2s ease;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.01);
+    cursor: pointer;
   }
 
   .reminder-item:hover {
@@ -1065,6 +1093,26 @@
     color: var(--text-primary);
     font-size: 14px;
     font-family: inherit;
+    transition: all 0.2s;
+  }
+
+  .edit-input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.6;
+    transition: 0.2s;
+  }
+
+  .edit-input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
+
+  .edit-select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 256 256'%3E%3Cpath fill='%2364748B' d='M213.66 101.66l-80 80a8 8 0 0 1-11.32 0l-80-80a8 8 0 0 1 11.32-11.32L128 164.69l74.34-74.35a8 8 0 0 1 11.32 11.32z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+    cursor: pointer;
   }
 
   .edit-input:focus, .edit-select:focus {
@@ -1073,11 +1121,37 @@
     box-shadow: 0 0 0 3px var(--primary-alpha);
   }
 
+  .datetime-quick-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .quick-btn {
+    flex: 1;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .quick-btn:hover {
+    background: var(--primary-alpha-light);
+    color: var(--primary-dark);
+    border-color: var(--primary-alpha);
+  }
+
   /* Custom RRule Modal */
   .edit-modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
+    background: rgba(7, 16, 41, 0.6);
+    backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1087,10 +1161,9 @@
 
   .edit-modal {
     background: var(--bg-card);
-    border-radius: 16px;
-    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.15);
-    border: 1px solid var(--border-subtle);
-    max-width: 400px;
+    border-radius: 20px;
+    box-shadow: 0 24px 48px rgba(7, 16, 41, 0.2), 0 0 0 1px rgba(7, 16, 41, 0.05);
+    max-width: 420px;
     width: 100%;
     overflow: hidden;
   }

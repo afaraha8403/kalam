@@ -438,13 +438,13 @@
     </div>
     
     <div slot="footer">
+      <button class="btn-primary" on:click={savePanel} disabled={!draftEntry.title?.trim() && !draftEntry.content?.trim()}>
+        <Icon icon="ph:check-bold" /> Save
+      </button>
       <button class="btn-ghost" on:click={closePanel}>Cancel</button>
       {#if notesScope === 'trash' && panelMode === 'edit' && panelNoteId}
         <button type="button" class="btn-ghost danger" on:click={() => permanentlyDelete(panelNoteId || '')}>Delete permanently</button>
       {/if}
-      <button class="btn-primary" on:click={savePanel} disabled={!draftEntry.title?.trim() && !draftEntry.content?.trim()}>
-        <Icon icon="ph:check-bold" /> Save
-      </button>
     </div>
   </SidePanel>
 </div>
@@ -917,6 +917,17 @@
     border-radius: 6px;
     background: var(--bg-app);
     color: var(--text-primary);
+    transition: all 0.2s;
+  }
+
+  .toolbar-datetime::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.6;
+    transition: 0.2s;
+  }
+
+  .toolbar-datetime::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
   }
 
   .toolbar-btn {
