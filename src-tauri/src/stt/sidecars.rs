@@ -84,14 +84,8 @@ fn whisper_url(filename: &str) -> String {
 /// Resolves platform-specific download info for whisper-cpp. Official releases only provide Windows zips.
 fn whisper_platform_url(os: &str, arch: &str) -> Option<SidecarPlatform> {
     let (url, binary_rel) = match (os, arch) {
-        ("windows", "x86_64") => (
-            whisper_url("whisper-bin-x64.zip"),
-            "whisper-server.exe",
-        ),
-        ("windows", "x86") => (
-            whisper_url("whisper-bin-Win32.zip"),
-            "whisper-server.exe",
-        ),
+        ("windows", "x86_64") => (whisper_url("whisper-bin-x64.zip"), "whisper-server.exe"),
+        ("windows", "x86") => (whisper_url("whisper-bin-Win32.zip"), "whisper-server.exe"),
         _ => return None,
     };
     Some(SidecarPlatform {
@@ -218,7 +212,9 @@ fn extract_zip(archive_path: &Path, out_dir: &Path) -> anyhow::Result<()> {
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let name = entry.name();
-        let Some(rel_path) = sanitize_zip_entry_path(name) else { continue };
+        let Some(rel_path) = sanitize_zip_entry_path(name) else {
+            continue;
+        };
         let out_path = out_dir.join(&rel_path);
         if entry.is_dir() {
             std::fs::create_dir_all(&out_path)?;
@@ -335,7 +331,11 @@ pub async fn download_sidecar_with_progress(
         } else {
             let top = match entries.as_slice() {
                 [one] => one.path(),
-                _ => return Err(anyhow::anyhow!("Archive must have exactly one root directory")),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Archive must have exactly one root directory"
+                    ))
+                }
             };
             if top.is_dir() {
                 for entry in std::fs::read_dir(&top)? {

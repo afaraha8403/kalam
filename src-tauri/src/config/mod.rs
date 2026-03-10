@@ -169,7 +169,10 @@ impl ConfigManager {
                     log::info!("Preserved critical flags from JSON Value: onboarding_complete={}, dictation_enabled={}", onboarding, dictation);
                 } else {
                     default.onboarding_complete = extract_onboarding_from_str(&contents);
-                    log::info!("Preserved onboarding_complete={} from raw string (corrupt JSON).", default.onboarding_complete);
+                    log::info!(
+                        "Preserved onboarding_complete={} from raw string (corrupt JSON).",
+                        default.onboarding_complete
+                    );
                 }
                 let mut mgr = Self {
                     config_path: config_path.clone(),
@@ -221,7 +224,8 @@ impl ConfigManager {
 
         let tmp_path = self.config_path.with_extension("json.tmp");
         log::info!("Writing config to temp {:?}", tmp_path);
-        fs::write(&tmp_path, &json).map_err(|e| anyhow::anyhow!("Failed to write temp config: {}", e))?;
+        fs::write(&tmp_path, &json)
+            .map_err(|e| anyhow::anyhow!("Failed to write temp config: {}", e))?;
         fs::rename(&tmp_path, &self.config_path)
             .map_err(|e| anyhow::anyhow!("Failed to rename temp to config: {}", e))?;
         log::info!("Config saved successfully to {:?}", self.config_path);

@@ -64,7 +64,8 @@ pub fn transcribe_chunked(
     if segments.is_empty() {
         // No VAD segments: still call provider so short/quiet speech gets transcribed.
         // Then detect prompt echo (Whisper returning dictionary on silence) and treat as empty.
-        let mut result = provider.transcribe_blocking(audio, sample_rate, vocabulary, language_hint)?;
+        let mut result =
+            provider.transcribe_blocking(audio, sample_rate, vocabulary, language_hint)?;
         if let Some(vocab) = vocabulary {
             if is_prompt_echo(&result.text, vocab) {
                 result.text.clear();

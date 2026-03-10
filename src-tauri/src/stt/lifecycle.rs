@@ -80,8 +80,11 @@ impl LocalModelManager {
         let sidecar_id = match crate::stt::sidecars::model_id_to_sidecar_id(model_id) {
             Some(id) => id,
             None => {
-                self.set_status(model_id, ModelStatus::Error("Unsupported local model".into()))
-                    .await;
+                self.set_status(
+                    model_id,
+                    ModelStatus::Error("Unsupported local model".into()),
+                )
+                .await;
                 return Err(anyhow::anyhow!("Unsupported local model"));
             }
         };
@@ -104,7 +107,8 @@ impl LocalModelManager {
                     .await
             {
                 let msg = format!("Engine download failed: {}", e);
-                self.set_status(model_id, ModelStatus::Error(msg.clone())).await;
+                self.set_status(model_id, ModelStatus::Error(msg.clone()))
+                    .await;
                 return Err(anyhow::anyhow!("{}", msg));
             }
         }
@@ -112,7 +116,8 @@ impl LocalModelManager {
         let binary_path = match crate::stt::sidecars::sidecar_path_for_model(model_id) {
             Ok(p) => p,
             Err(e) => {
-                self.set_status(model_id, ModelStatus::Error(e.to_string())).await;
+                self.set_status(model_id, ModelStatus::Error(e.to_string()))
+                    .await;
                 return Err(e);
             }
         };
@@ -126,14 +131,14 @@ impl LocalModelManager {
             "sensevoice" => {
                 let root = crate::stt::models::sherpa_zipformer_model_root(&model_path)
                     .map_err(|e| anyhow::anyhow!("Invalid model layout: {}", e))?;
-                
+
                 let mut args = crate::stt::models::sherpa_zipformer_server_args(&root, 10080)?;
-                
+
                 // For SenseVoice, we can enable inverse text normalization (ITN) for punctuation
                 if args.iter().any(|a| a.starts_with("--sense-voice-model")) {
                     args.push("--sense-voice-use-itn=1".to_string());
                 }
-                
+
                 args
             }
             "whisper_base" => {
@@ -145,8 +150,11 @@ impl LocalModelManager {
                 ]
             }
             _ => {
-                self.set_status(model_id, ModelStatus::Error("Unsupported local model".into()))
-                    .await;
+                self.set_status(
+                    model_id,
+                    ModelStatus::Error("Unsupported local model".into()),
+                )
+                .await;
                 return Err(anyhow::anyhow!("Unsupported local model"));
             }
         };

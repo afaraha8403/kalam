@@ -118,7 +118,8 @@ pub fn sherpa_zipformer_server_args(model_root: &Path, port: u16) -> anyhow::Res
             let e = e?;
             let p = e.path();
             if p.extension().is_some_and(|x| x == "onnx")
-                && p.file_stem().is_some_and(|s| s.to_string_lossy().starts_with(prefix))
+                && p.file_stem()
+                    .is_some_and(|s| s.to_string_lossy().starts_with(prefix))
             {
                 return Ok(p);
             }
@@ -129,7 +130,7 @@ pub fn sherpa_zipformer_server_args(model_root: &Path, port: u16) -> anyhow::Res
             model_root
         ))
     };
-    
+
     // Check if this is a SenseVoice model (has model.onnx or model.int8.onnx)
     if let Ok(model) = find_onnx("model") {
         return Ok(vec![

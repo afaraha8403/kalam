@@ -1269,8 +1269,16 @@ async fn get_model_status(state: tauri::State<'_, AppState>) -> Result<serde_jso
     }
     fn model_metadata(id: &str) -> (String, String, String) {
         match id {
-            "sensevoice" => ("SenseVoice Small".into(), "Fast".into(), "50+ languages".into()),
-            "whisper_base" => ("Whisper Base".into(), "Good quality".into(), "99+ languages".into()),
+            "sensevoice" => (
+                "SenseVoice Small".into(),
+                "Fast".into(),
+                "50+ languages".into(),
+            ),
+            "whisper_base" => (
+                "Whisper Base".into(),
+                "Good quality".into(),
+                "99+ languages".into(),
+            ),
             _ => (id.to_string(), "—".into(), "—".into()),
         }
     }
@@ -1540,9 +1548,15 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
 
     let expanded = state.overlay_expanded.load(Ordering::Relaxed);
     let (logical_width, logical_height) = if expanded {
-        (OVERLAY_EXPANDED_WIDTH as f64, OVERLAY_EXPANDED_HEIGHT as f64)
+        (
+            OVERLAY_EXPANDED_WIDTH as f64,
+            OVERLAY_EXPANDED_HEIGHT as f64,
+        )
     } else {
-        (OVERLAY_COLLAPSED_WIDTH as f64, OVERLAY_COLLAPSED_HEIGHT as f64)
+        (
+            OVERLAY_COLLAPSED_WIDTH as f64,
+            OVERLAY_COLLAPSED_HEIGHT as f64,
+        )
     };
 
     // Get absolute cursor position using the OS API, then find the matching monitor
@@ -2095,10 +2109,7 @@ fn run_transcribe_job(job: TranscribeJob) -> anyhow::Result<crate::stt::Transcri
     } = job;
     let language = language.as_deref();
     let vocabulary = vocabulary.as_deref();
-    let provider = crate::stt::provider::create_provider_sync(
-        &stt_config,
-        app_handle.as_ref(),
-    )?;
+    let provider = crate::stt::provider::create_provider_sync(&stt_config, app_handle.as_ref())?;
     log::info!(
         "Starting transcription with {} (chunked + prompt chaining)",
         provider.name()

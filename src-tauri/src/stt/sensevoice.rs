@@ -1,9 +1,9 @@
 //! Local STT: SenseVoice via Sherpa-ONNX WebSocket; Whisper Base via whisper.cpp server HTTP.
 
+use futures_util::{SinkExt, StreamExt};
 use std::io::Write;
 use std::path::PathBuf;
 use tauri::Manager;
-use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -37,7 +37,10 @@ impl SenseVoiceProvider {
         tauri::async_runtime::block_on(async move {
             let status = state.local_model_manager.get_status(&model_id).await;
             if status != crate::stt::lifecycle::ModelStatus::Running {
-                log::info!("Local STT server for {} not running, starting it...", model_id);
+                log::info!(
+                    "Local STT server for {} not running, starting it...",
+                    model_id
+                );
                 state.local_model_manager.start_model(&model_id).await?;
                 // Wait a bit for the server to start
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -140,7 +143,7 @@ fn transcribe_via_websocket(audio: &[f32], sample_rate: u32) -> anyhow::Result<S
                 } else {
                     s
                 }
-            },
+            }
             Message::Binary(b) => String::from_utf8_lossy(&b).to_string(),
             _ => return Err(anyhow::anyhow!("Unexpected message type")),
         };
