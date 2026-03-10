@@ -1,7 +1,7 @@
 # To Do
-- [ ] When the toggle is held down or is in press down and no speech or text is being picked up, Grok and possibly local models and possibly OpenAI Whisper return the words in the dictionary.
 
 ## Done
+- [X] When the toggle is held down or is in press down and no speech or text is being picked up, Grok and possibly local models and possibly OpenAI Whisper return the words in the dictionary.
 - [X] on Mac the transparent wrapper for the overlay or blob or pill is white and not transparent.
 - [X] When you attempt to type in the email in the onboarding page it crashes the app.
 - [X] The website does not properly identify if the macOS is intel or arm.
