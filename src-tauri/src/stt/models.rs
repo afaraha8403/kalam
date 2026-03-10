@@ -117,10 +117,10 @@ pub fn sherpa_zipformer_server_args(model_root: &Path, port: u16) -> anyhow::Res
         for e in std::fs::read_dir(model_root)? {
             let e = e?;
             let p = e.path();
-            if p.extension().map_or(false, |x| x == "onnx") {
-                if p.file_stem().map_or(false, |s| s.to_string_lossy().starts_with(prefix)) {
-                    return Ok(p);
-                }
+            if p.extension().is_some_and(|x| x == "onnx")
+                && p.file_stem().is_some_and(|s| s.to_string_lossy().starts_with(prefix))
+            {
+                return Ok(p);
             }
         }
         Err(anyhow::anyhow!(
@@ -254,5 +254,5 @@ pub async fn download_model_with_progress(
         log::info!("Downloaded {} to {:?}", model_id, dest);
     }
 
-    Ok(model_path(model_id, &manifest)?)
+    model_path(model_id, &manifest)
 }

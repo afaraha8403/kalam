@@ -137,29 +137,28 @@ impl ConfigManager {
         let mut persist_upgraded = false;
 
         let mut config = match serde_json::from_str::<AppConfig>(&contents) {
-            Ok(c) => {
-                let out = if c.config_version > CURRENT_CONFIG_VERSION {
+            Ok(c) => match c.config_version.cmp(&CURRENT_CONFIG_VERSION) {
+                std::cmp::Ordering::Greater => {
                     log::warn!(
                         "Config file version {} is newer than app version {}; using defaults and not overwriting file.",
                         c.config_version,
                         CURRENT_CONFIG_VERSION
                     );
-                    // Do not overwrite file when user has newer version.
                     AppConfig::default()
-                } else if c.config_version < CURRENT_CONFIG_VERSION {
+                }
+                std::cmp::Ordering::Less => {
                     persist_upgraded = true;
                     migrate_config(c)
-                } else {
-                    // Same version: persist if file lacked config_version (legacy) so disk gets the new shape.
+                }
+                std::cmp::Ordering::Equal => {
                     if serde_json::from_str::<serde_json::Value>(&contents)
-                        .map_or(false, |v| v.get("config_version").is_none())
+                        .is_ok_and(|v| v.get("config_version").is_none())
                     {
                         persist_upgraded = true;
                     }
                     c
-                };
-                out
-            }
+                }
+            },
             Err(e) => {
                 log::warn!("Config strict parse failed ({}), attempting auto-fix.", e);
                 let mut default = AppConfig::default();

@@ -99,7 +99,7 @@ fn transcribe_via_websocket(audio: &[f32], sample_rate: u32) -> anyhow::Result<S
     let samples_bytes = (audio.len() * 4) as u32;
     payload.extend_from_slice(&samples_bytes.to_le_bytes());
     for &s in audio {
-        payload.extend_from_slice(&(s as f32).to_le_bytes());
+        payload.extend_from_slice(&s.to_le_bytes());
     }
 
     let rt = tokio::runtime::Builder::new_current_thread()

@@ -14,6 +14,22 @@ use crate::stt::provider::STTProvider;
 /// Overlap between consecutive chunks in samples (0.5s at 16kHz).
 const CHUNK_OVERLAP_SAMPLES: usize = 8000;
 
+/// True if `text` is effectively the vocabulary prompt echoed back (Whisper hallucination on silence).
+fn is_prompt_echo(text: &str, vocabulary: &str) -> bool {
+    let normalize = |s: &str| {
+        let mut words: Vec<String> = s
+            .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+            .map(|w| w.trim().to_lowercase())
+            .filter(|w| !w.is_empty())
+            .collect();
+        words.sort_unstable();
+        words
+    };
+    let t = normalize(text.trim());
+    let v = normalize(vocabulary.trim());
+    !t.is_empty() && t == v
+}
+
 #[derive(Debug, Clone)]
 pub struct TranscriptionResult {
     pub text: String,
@@ -46,8 +62,15 @@ pub fn transcribe_chunked(
     let segments = vad.process(audio);
 
     if segments.is_empty() {
-        let prompt = vocabulary;
-        return provider.transcribe_blocking(audio, sample_rate, prompt, language_hint);
+        // No VAD segments: still call provider so short/quiet speech gets transcribed.
+        // Then detect prompt echo (Whisper returning dictionary on silence) and treat as empty.
+        let mut result = provider.transcribe_blocking(audio, sample_rate, vocabulary, language_hint)?;
+        if let Some(vocab) = vocabulary {
+            if is_prompt_echo(&result.text, vocab) {
+                result.text.clear();
+            }
+        }
+        return Ok(result);
     }
 
     let mut combined_text = String::new();

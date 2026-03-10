@@ -2245,7 +2245,9 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
             match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
                 Ok(Ok(Ok(result))) => {
                     let latency_ms = start.elapsed().as_millis() as u32;
-                    if recording_type == RecordingType::Command {
+                    if result.text.trim().is_empty() {
+                        log::info!("Transcription empty (no speech), skipping save and injection");
+                    } else if recording_type == RecordingType::Command {
                         if let Err(e) =
                             run_command_pipeline(&result.text, &config, &app_handle).await
                         {
