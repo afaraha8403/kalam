@@ -2,104 +2,122 @@
 
 ![Kalam logo](public/logo/kalam-logo-horizontal.svg)
 
-**Kalam** (كلام — *speech* in Arabic) is an open-source, cross-platform voice dictation application that transforms spoken language into polished text across all applications on Windows, macOS, and Linux. A free, privacy-friendly alternative to Whisperflow.
+**Kalam** (كلام — *speech* in Arabic) is an open-source, cross-platform voice dictation app that turns speech into text in any application on Windows, macOS, and Linux. A free, privacy-friendly alternative to Whisperflow.
 
-> **⚠️ In development** — Kalam is still under active development. APIs, features, and UX may change. Not recommended for production use yet.
+[**Website**](https://afaraha8403.github.io/kalam/) · [**Documentation & manual**](https://afaraha8403.github.io/kalam/documentation.html) · [**Download (GitHub Releases)**](https://github.com/afaraha8403/kalam/releases)
 
-![License](https://img.shields.io/badge/license-Dual%20(MIT%20NC%20%2B%20Commercial)-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
+---
+
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/afaraha8403/kalam?label=release)](https://github.com/afaraha8403/kalam/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/afaraha8403/kalam/releases)
+[![License](https://img.shields.io/badge/license-Dual%20(MIT%20NC%20%2B%20Commercial)-blue.svg)](LICENSE)
+[![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri)](https://v2.tauri.app/)
+[![Open source](https://img.shields.io/badge/open--source-✓-green.svg)](https://github.com/afaraha8403/kalam)
 
 ## Features
 
-- ⚡ **4x Faster** than typing
-- 🔒 **Privacy-First** with local mode support
-- 🌍 **Cross-Platform** (Windows, macOS, Linux)
-- ☁️ **Dual-Engine** (Cloud + Local STT)
-- 🎯 **Global Hotkey** activation
-- 📝 **History** with search
-- 🎭 **Voice Commands** for formatting
+- ⚡ **4× faster** than typing — speak; it types everywhere
+- 🔒 **Privacy-first** — local mode keeps audio on-device
+- 🌍 **Cross-platform** — Windows, macOS, Linux
+- ☁️ **Cloud + local STT** — Groq, OpenAI, or offline (SenseVoice / Whisper)
+- 🎯 **Global hotkey** — hold to dictate in any app
+- 📝 **History** with search and optional encryption
+- 🎭 **Voice commands** for formatting (e.g. “new paragraph”)
+- 📌 **Command mode** — create notes, tasks, and reminders by voice (optional LLM parsing)
 - 📎 **Snippets** for frequently used text
 
-## Quick Start
+## Speech-to-Text (STT) providers
 
-There are no releases yet. To try Kalam, build from source (see [Development](#development) below):
+| Mode  | Providers / models |
+|-------|--------------------|
+| **Cloud** | **Groq** (Whisper large v3 turbo), **OpenAI** (Whisper-1) — BYOK in Settings |
+| **Local** | **SenseVoice** (Sherpa-ONNX), **Whisper Base** (whisper.cpp) — no API key |
 
-1. **Clone**, install dependencies, and run `npm run tauri:dev`
-2. **Configure** your API key (for cloud mode) or download a local model in Settings
-3. **Press** `Ctrl+Win` (or `Ctrl+Cmd` on macOS) to start dictating
+You can run **Cloud only**, **Local only**, or **Hybrid** (cloud with local fallback). Local mode works fully offline.
 
-## Development
+## Command mode (notes, tasks, reminders)
 
-We use a PowerShell task runner (`tasks.ps1`) to simplify common development operations, testing, and releases.
+Use a **separate hotkey** from dictation. When you press it and speak, Kalam creates a **note**, **task**, or **reminder** instead of typing into another app.
+
+- Say *“new note …”*, *“new task …”*, or *“new reminder …”* with your content.
+- **Optional LLM parsing** (Settings → Command Mode): Kalam can use **Groq**, **OpenRouter**, **Gemini**, **OpenAI**, or **Anthropic** to infer type and extract title, due date, repetition, and description from natural speech.
+
+## Quick start
+
+1. **Download** the latest build for your OS from [GitHub Releases](https://github.com/afaraha8403/kalam/releases). Install and open Kalam.
+2. **Configure** (Settings → Audio & dictation):
+   - **Cloud:** enter your [Groq](https://console.groq.com) or OpenAI API key and pick the provider.
+   - **Local:** choose SenseVoice or Whisper Base; the app will download the engine and model when needed.
+3. **Dictate:** press **Ctrl+Win** (Windows), **Ctrl+Super** (Linux), or **Ctrl+Cmd** (macOS), hold while you speak, then release. Text is inserted into the app that had focus.
+
+For setup details, API keys, and the full user manual, see the [**documentation**](https://afaraha8403.github.io/kalam/documentation.html).
+
+## Building from source
+
+For development or when pre-built binaries aren’t available for your platform:
 
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+
 - [Rust](https://rustup.rs/) 1.75+
 
-### Setup & Task Runner
+### Setup and task runner
 
-```bash
-# Clone the repository
+We use a PowerShell task runner (`tasks.ps1`) for deps, dev, tests, and builds.
+
+```powershell
+# Clone
 git clone https://github.com/afaraha8403/kalam.git
 cd kalam
 
 # Install dependencies
 ./tasks.ps1 deps
 
-# Run in development mode
+# Run in development
 ./tasks.ps1 dev
 
-# Run tests and checks
+# Run tests
 ./tasks.ps1 test
 
 # Build for production
 ./tasks.ps1 build
 ```
 
-To see all available commands, including release and signing key generation:
-```bash
-./tasks.ps1 help
-```
+All commands (including release and signing): `./tasks.ps1 help`
 
 ## Architecture
 
-- **Framework**: [Tauri v2](https://v2.tauri.app/) (Rust backend + WebView frontend)
-- **Frontend**: Svelte + TypeScript
-- **Audio Capture**: `cpal` (Cross-Platform Audio Library)
-- **Text Injection**: `enigo` (keystroke simulation)
-- **Cloud STT**: Groq API (Whisper)
-- **Local STT**: SenseVoice / Whisper.cpp
+- **Framework:** [Tauri v2](https://v2.tauri.app/) (Rust backend + WebView frontend)
+- **Frontend:** Svelte + TypeScript
+- **Audio:** `cpal` (cross-platform capture)
+- **Text injection:** `enigo` (keystroke simulation)
+- **Cloud STT:** Groq API, OpenAI API
+- **Local STT:** SenseVoice (Sherpa-ONNX), Whisper (whisper.cpp sidecar)
 
-## API Keys
+## API keys (BYOK)
 
-Kalam uses a BYOK (Bring Your Own Key) model:
-
-1. Sign up at [Groq Console](https://console.groq.com)
-2. Get your free API key
-3. Enter it in Settings → STT Provider
-
-Local mode works without any API key!
+- **Cloud STT:** Sign up at [Groq Console](https://console.groq.com) or [OpenAI](https://platform.openai.com), get an API key, add it in **Settings → STT Provider**.
+- **Command mode LLM:** Optional; add provider and key in **Settings → Command Mode**. Local dictation and basic command phrases work without any key.
 
 ## Privacy
 
-- **Audio** is never stored to disk (in-memory only)
-- **Cloud mode** sends audio to Groq via TLS 1.3 (zero retention)
-- **Local mode** processes everything on-device
-- **History** is stored locally in SQLite with AES-256 encryption
-- **Telemetry** is opt-in only (disabled by default)
+- **Audio** is not stored to disk (in-memory only).
+- **Cloud mode** sends audio to the chosen provider over TLS; we do not retain it.
+- **Local mode** processes everything on-device.
+- **History** is stored locally (SQLite) with optional AES-256 encryption.
+- **Telemetry** is opt-in and off by default.
 
 ## Contributing
 
-Contributions are welcome. Open an issue or PR to get started.
+Issues and pull requests are welcome. See [GitHub](https://github.com/afaraha8403/kalam) to get started.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Dual license (MIT NC + Commercial). See [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- [Tauri](https://tauri.app/) for the amazing framework
-- [Groq](https://groq.com/) for fast STT API
-- [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) for local STT
-- All our contributors and supporters!
+- [Tauri](https://tauri.app/) for the framework
+- [Groq](https://groq.com/) and [OpenAI](https://openai.com/) for cloud STT
+- [SenseVoice](https://github.com/FunAudioLLM/SenseVoice) and [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for local STT
+- Everyone who contributes and supports the project
