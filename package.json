@@ -1,6 +1,6 @@
 {
   "name": "kalam",
-  "version": "0.0.1-beta.8",
+  "version": "0.0.1-beta.9",
   "description": "Kalam — open-source voice dictation for Windows, macOS & Linux. Free, privacy-friendly alternative to Whisperflow. Speaks into any app.",
   "type": "module",
   "keywords": [
