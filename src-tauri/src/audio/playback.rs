@@ -11,21 +11,26 @@ pub fn play_sound(app_handle: &tauri::AppHandle, sound_name: &str) -> anyhow::Re
         )
         .map_err(|e| anyhow::anyhow!("Failed to resolve sound path: {}", e))?;
 
-    let sound_data = std::fs::read(&sound_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read sound file {:?}: {}", sound_path, e))?;
-
-    std::thread::spawn(move || match OutputStream::try_default() {
-        Ok((_stream, stream_handle)) => match Sink::try_new(&stream_handle) {
-            Ok(sink) => match Decoder::new(Cursor::new(sound_data)) {
-                Ok(source) => {
-                    sink.append(source);
-                    sink.sleep_until_end();
+    // Read and play off the hot path so start_dictation isn't blocked by fs or audio init.
+    let path = sound_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let sound_data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(e) => {
+                log::error!("Failed to read sound file {:?}: {}", path, e);
+                return;
+            }
+        };
+        std::thread::spawn(move || {
+            if let Ok((_stream, stream_handle)) = OutputStream::try_default() {
+                if let Ok(sink) = Sink::try_new(&stream_handle) {
+                    if let Ok(source) = Decoder::new(Cursor::new(sound_data)) {
+                        sink.append(source);
+                        sink.sleep_until_end();
+                    }
                 }
-                Err(e) => log::error!("Failed to decode sound data: {}", e),
-            },
-            Err(e) => log::error!("Failed to create audio sink: {}", e),
-        },
-        Err(e) => log::error!("Failed to get default output stream: {}", e),
+            }
+        });
     });
 
     Ok(())

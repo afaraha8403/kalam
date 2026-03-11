@@ -206,6 +206,10 @@ pub enum RecordingMode {
 pub struct STTConfig {
     pub mode: STTMode,
     pub provider: String,
+    #[serde(default)]
+    pub api_keys: std::collections::HashMap<String, String>,
+    // Legacy field for backwards compatibility; migrated into api_keys on load.
+    #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
     pub local_model: Option<String>,
     pub vad_preset: VADPreset,
@@ -216,6 +220,7 @@ impl Default for STTConfig {
         Self {
             mode: STTMode::Cloud,
             provider: "groq".to_string(),
+            api_keys: std::collections::HashMap::new(),
             api_key: None,
             local_model: None,
             vad_preset: VADPreset::Balanced,

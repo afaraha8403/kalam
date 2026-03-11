@@ -281,7 +281,7 @@
   }
 
   :global(body) {
-    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg-app);
     color: var(--text-primary);
   }
@@ -625,7 +625,7 @@
     background: var(--bg-input);
     padding: 4px 8px;
     border-radius: var(--radius-sm);
-    font-family: 'DM Sans', monospace;
+    font-family: 'Google Sans', ui-monospace, monospace;
     font-size: 12px;
     font-weight: 600;
     border: 1px solid var(--border);

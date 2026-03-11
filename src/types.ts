@@ -63,7 +63,9 @@ export interface AppConfig {
 export interface STTConfig {
   mode: 'Cloud' | 'Local' | 'Hybrid' | 'Auto'
   provider: string
-  api_key: string | null
+  api_keys: Record<string, string>
+  /** Legacy fallback; migrated into api_keys. */
+  api_key?: string | null
   local_model: string | null
   vad_preset: 'Fast' | 'Balanced' | 'Accurate'
 }

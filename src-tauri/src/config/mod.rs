@@ -40,6 +40,16 @@ fn migrate_legacy_command_config(config: &mut crate::config::AppConfig) {
         }
     }
 }
+
+/// Migrate legacy STT api_key into provider-specific api_keys map.
+fn migrate_legacy_stt_config(config: &mut crate::config::AppConfig) {
+    let provider = config.stt_config.provider.clone();
+    if let Some(api_key) = config.stt_config.api_key.take() {
+        if !provider.trim().is_empty() {
+            config.stt_config.api_keys.entry(provider).or_insert(api_key);
+        }
+    }
+}
 use std::fs;
 use std::path::PathBuf;
 
@@ -186,6 +196,7 @@ impl ConfigManager {
         };
 
         migrate_legacy_languages(&mut config);
+        migrate_legacy_stt_config(&mut config);
         migrate_legacy_command_config(&mut config);
         migrate_legacy_hotkeys(&mut config);
 

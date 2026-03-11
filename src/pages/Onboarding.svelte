@@ -69,9 +69,13 @@
   async function loadConfig() {
     try {
       const config = (await invoke('get_settings')) as AppConfig
-      if (config.stt_config?.api_key) apiKey = config.stt_config.api_key
       if (config.stt_config?.provider) selectedProvider = config.stt_config.provider as 'groq' | 'openai'
       if (config.stt_config?.mode) selectedMode = config.stt_config.mode as 'Cloud' | 'Hybrid' | 'Local'
+      if (!config.stt_config?.api_keys) config.stt_config.api_keys = {}
+      if (config.stt_config?.api_key && !config.stt_config.api_keys[selectedProvider]) {
+        config.stt_config.api_keys[selectedProvider] = config.stt_config.api_key
+      }
+      if (config.stt_config?.api_keys?.[selectedProvider]) apiKey = config.stt_config.api_keys[selectedProvider]
       if (config.hotkey) {
         hotkey = platform === 'windows' && config.hotkey === 'Ctrl+Super' ? 'Ctrl+Win' : config.hotkey
       } else {
@@ -91,8 +95,9 @@
   async function saveOnboardingState() {
     try {
       const config = (await invoke('get_settings')) as AppConfig
-      if (apiKey) config.stt_config.api_key = apiKey
       config.stt_config.provider = selectedProvider
+      if (!config.stt_config.api_keys) config.stt_config.api_keys = {}
+      if (apiKey) config.stt_config.api_keys[selectedProvider] = apiKey
       config.stt_config.mode = selectedMode
       config.hotkey = hotkey
       config.toggle_dictation_hotkey = toggleHotkey || null
@@ -232,8 +237,9 @@
     try {
       const config = (await invoke('get_settings')) as AppConfig
       config.onboarding_complete = true
-      if (apiKey) config.stt_config.api_key = apiKey
       config.stt_config.provider = selectedProvider
+      if (!config.stt_config.api_keys) config.stt_config.api_keys = {}
+      if (apiKey) config.stt_config.api_keys[selectedProvider] = apiKey
       config.stt_config.mode = selectedMode
       config.hotkey = hotkey
       config.toggle_dictation_hotkey = toggleHotkey || null
@@ -1621,7 +1627,7 @@
     background: var(--bg-input);
     border: 1px solid var(--border-visible);
     border-radius: var(--radius-sm);
-    font-family: 'DM Sans', monospace;
+    font-family: 'Google Sans', ui-monospace, monospace;
     font-size: 14px;
     font-weight: 700;
     color: var(--navy-deep);
@@ -1685,7 +1691,7 @@
     background: var(--bg-input);
     border: 1px solid var(--border-visible);
     border-radius: 4px;
-    font-family: 'DM Sans', monospace;
+    font-family: 'Google Sans', ui-monospace, monospace;
     font-size: 12px;
     font-weight: 700;
     color: var(--navy-deep);

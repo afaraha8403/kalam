@@ -2,20 +2,53 @@
 
 use super::settings::{AppConfig, PatternType, PrivacyAction, STTConfig, STTMode};
 use regex::Regex;
-use sysinfo::System;
+
+#[cfg(windows)]
+fn process_name_from_pid(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle == 0 {
+        return None;
+    }
+
+    let mut buf = [0u16; 260];
+    let mut size = buf.len() as u32;
+    let ok = unsafe { QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size) };
+    unsafe { CloseHandle(handle) };
+    if ok == 0 {
+        return None;
+    }
+
+    let path = String::from_utf16_lossy(&buf[..size as usize]);
+    std::path::Path::new(&path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+}
 
 /// Get the foreground window's process name and title. Returns (process_name, window_title).
 pub fn get_foreground_app() -> Option<(String, String)> {
     let window = active_win_pos_rs::get_active_window().ok()?;
     let pid = window.process_id;
     let title = window.title.clone();
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    let pid_sys = sysinfo::Pid::from_u32(pid as u32);
-    let process_name = sys
-        .process(pid_sys)
-        .map(|p| p.name().to_string_lossy().to_string())
-        .unwrap_or_default();
+
+    #[cfg(windows)]
+    let process_name = process_name_from_pid(pid as u32).unwrap_or_default();
+
+    #[cfg(not(windows))]
+    let process_name = {
+        use sysinfo::{Pid, System};
+        let mut sys = System::new_all();
+        sys.refresh_processes();
+        sys.process(Pid::from_u32(pid as u32))
+            .map(|p| p.name().to_string_lossy().to_string())
+            .unwrap_or_default()
+    };
+
     Some((process_name, title))
 }
 

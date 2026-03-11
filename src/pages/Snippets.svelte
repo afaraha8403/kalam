@@ -407,7 +407,7 @@
     color: var(--primary-dark);
     padding: 6px 12px;
     border-radius: 8px;
-    font-family: 'DM Sans', monospace;
+    font-family: 'Google Sans', ui-monospace, monospace;
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.02em;

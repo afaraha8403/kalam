@@ -42,7 +42,30 @@
   $: isExpanded = state.kind !== 'Collapsed' && state.kind !== 'Hidden'
 
   let isHovered = false
+  let showHoverExpansion = false
+  let hoverExpandTimeout: ReturnType<typeof setTimeout> | null = null
   $: requiresLargeWindow = isExpanded || isHovered
+
+  function onBlipMouseEnter() {
+    isHovered = true
+    if (hoverExpandTimeout != null) {
+      clearTimeout(hoverExpandTimeout)
+      hoverExpandTimeout = null
+    }
+    hoverExpandTimeout = setTimeout(() => {
+      showHoverExpansion = true
+      hoverExpandTimeout = null
+    }, 60)
+  }
+
+  function onBlipMouseLeave() {
+    isHovered = false
+    showHoverExpansion = false
+    if (hoverExpandTimeout != null) {
+      clearTimeout(hoverExpandTimeout)
+      hoverExpandTimeout = null
+    }
+  }
 
   let resizeTimeout: ReturnType<typeof setTimeout> | null = null
   $: {
@@ -216,6 +239,19 @@
     return { points, points2, points3, bars }
   })()
 
+  // WebView2 aggressively throttles JS event loops in unfocused windows, delaying IPC
+  // message delivery by up to ~1 s.  A tiny Worker posting messages at 100 ms keeps the
+  // main-thread event loop responsive so overlay-state events arrive promptly.
+  let keepAliveWorker: Worker | null = null
+  try {
+    const blob = new Blob(
+      [`setInterval(()=>postMessage(""),100)`],
+      { type: 'application/javascript' }
+    )
+    keepAliveWorker = new Worker(URL.createObjectURL(blob))
+    keepAliveWorker.onmessage = () => {}
+  } catch { /* best-effort; overlay still works without it */ }
+
   onMount(() => {
     let unlisten: (() => void) | null = null
     let unlistenSettings: (() => void) | null = null
@@ -282,6 +318,7 @@
       unlisten?.()
       unlistenSettings?.()
       if (statusTimeout) clearTimeout(statusTimeout)
+      keepAliveWorker?.terminate()
     }
   })
 </script>
@@ -292,13 +329,14 @@
     class="blip"
     class:collapsed={!isExpanded}
     class:expanded={isExpanded}
+    class:hover-expanded={showHoverExpansion}
     class:recording={state.kind === 'Recording'}
     class:processing={state.kind === 'Processing'}
     class:success={state.kind === 'Success'}
     class:error={state.kind === 'Error'}
     data-tauri-drag-region
-    on:mouseenter={() => (isHovered = true)}
-    on:mouseleave={() => (isHovered = false)}
+    on:mouseenter={onBlipMouseEnter}
+    on:mouseleave={onBlipMouseLeave}
   >
     {#if state.kind === 'Collapsed'}
       <!-- idle: just the pill shape itself, but with hover text -->
@@ -414,14 +452,13 @@
     overflow: hidden !important;
   }
 
-  /* Pill’s parent: full overlay area, transparent, centers the pill at bottom */
+  /* Pill’s parent: full overlay area, transparent, centers the pill. No border-radius so the pill is not clipped on hover. */
   .blip-root {
     width: 100vw;
     height: 100vh;
     display: flex;
     justify-content: center;
     background: transparent;
-    border-radius: 9999px;
     overflow: hidden;
   }
 
@@ -477,6 +514,12 @@
   }
 
   .blip.collapsed:hover {
+    opacity: 1;
+    animation: none;
+  }
+
+  /* Expand pill only after short delay so overlay window has time to resize (avoids clipped text) */
+  .blip.collapsed.hover-expanded {
     width: 250px;
     height: 36px;
     opacity: 1;
@@ -573,7 +616,7 @@
     white-space: nowrap;
   }
 
-  .blip.collapsed:hover .hover-hint {
+  .blip.collapsed.hover-expanded .hover-hint {
     opacity: 1;
     transition-delay: 0.05s;
   }

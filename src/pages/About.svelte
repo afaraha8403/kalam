@@ -236,7 +236,7 @@ maintainers to request a commercial license.`
   .version-label strong {
     color: var(--navy-deep);
     font-weight: 600;
-    font-family: 'DM Sans', ui-monospace, monospace;
+    font-family: 'Google Sans', ui-monospace, monospace;
   }
 
   .about-grid {
@@ -550,7 +550,7 @@ maintainers to request a commercial license.`
 
   .license-text {
     margin: 0;
-    font-family: 'DM Sans', ui-monospace, monospace;
+    font-family: 'Google Sans', ui-monospace, monospace;
     font-size: 13px;
     line-height: 1.6;
     color: var(--text-secondary);

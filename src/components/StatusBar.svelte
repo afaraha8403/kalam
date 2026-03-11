@@ -83,11 +83,11 @@
 <style>
   .status-bar {
     flex-shrink: 0;
+    width: 100%;
     height: 32px;
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 12px;
+    justify-content: space-evenly;
     padding: 0 16px;
     font-size: 12px;
     color: var(--text-secondary);
@@ -135,7 +135,7 @@
     background: var(--bg-input);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
-    font-family: 'DM Sans', monospace;
+    font-family: 'Google Sans', ui-monospace, monospace;
     font-size: 11px;
     font-weight: 600;
     border: 1px solid var(--border);

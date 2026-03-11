@@ -152,10 +152,18 @@ impl AudioCapture {
     /// Returns (samples, sample_rate). Sample rate is always 16000 when resampling was applied.
     pub async fn stop_recording(&mut self) -> anyhow::Result<(Vec<f32>, u32)> {
         self.is_recording.store(false, Ordering::SeqCst);
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+        // Allow callback thread to flush any in-flight frames, but cap wait time tightly.
+        let mut prev_len = 0usize;
+        for _ in 0..4 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(15)).await;
+            let len = self.audio_buffer.lock().unwrap().len();
+            if len == prev_len {
+                break;
+            }
+            prev_len = len;
+        }
         self._stream = None;
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         let buffer = self.audio_buffer.lock().unwrap().clone();
         let device_rate = self.config.config().sample_rate.0;

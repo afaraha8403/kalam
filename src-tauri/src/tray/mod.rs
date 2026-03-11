@@ -96,6 +96,7 @@ impl TrayManager {
 
         let (tooltip, _icon_path): (&str, Option<&str>) = match state {
             crate::audio::AudioState::Idle => ("Kalam - Ready", None),
+            crate::audio::AudioState::Starting => ("Kalam - Starting...", None),
             crate::audio::AudioState::Recording => ("Kalam - Recording...", None),
             crate::audio::AudioState::Processing => ("Kalam - Processing...", None),
         };

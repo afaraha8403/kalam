@@ -11,6 +11,14 @@ pub type CreateProviderFuture<'a> =
 
 pub struct STTProviderFactory;
 
+fn selected_api_key(config: &STTConfig) -> Option<String> {
+    config
+        .api_keys
+        .get(&config.provider)
+        .cloned()
+        .or_else(|| config.api_key.clone())
+}
+
 /// Create a provider on the current thread. Used so that reqwest::blocking::Client
 /// is never created or dropped on a tokio worker (avoids "Cannot drop a runtime" panic).
 /// For Local mode, pass Some(app_handle); for Cloud/Groq pass None.
@@ -21,17 +29,13 @@ pub fn create_provider_sync(
     match config.mode {
         STTMode::Cloud | STTMode::Hybrid | STTMode::Auto => match config.provider.as_str() {
             "groq" => {
-                let api_key = config
-                    .api_key
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
+                let api_key =
+                    selected_api_key(config).ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
                 Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?)
                     as Box<dyn STTProvider>)
             }
             "openai" => {
-                let api_key = config
-                    .api_key
-                    .as_ref()
+                let api_key = selected_api_key(config)
                     .ok_or_else(|| anyhow::anyhow!("OpenAI API key not set"))?;
                 Ok(
                     Box::new(super::openai::OpenAIProvider::new(api_key.clone())?)
@@ -85,17 +89,13 @@ impl STTProviderFactory {
             match config.mode {
                 crate::config::STTMode::Cloud => match config.provider.as_str() {
                     "groq" => {
-                        let api_key = config
-                            .api_key
-                            .as_ref()
+                        let api_key = selected_api_key(&config)
                             .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
                         Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?)
                             as Box<dyn STTProvider>)
                     }
                     "openai" => {
-                        let api_key = config
-                            .api_key
-                            .as_ref()
+                        let api_key = selected_api_key(&config)
                             .ok_or_else(|| anyhow::anyhow!("OpenAI API key not set"))?;
                         Ok(
                             Box::new(super::openai::OpenAIProvider::new(api_key.clone())?)

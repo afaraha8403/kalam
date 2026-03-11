@@ -6,7 +6,6 @@
   import { initTelemetry, optOut } from '../lib/telemetry'
   import { sidebarDictationStore } from '../lib/sidebarDictation'
   import { LANGUAGE_OPTIONS, languageLabel, isLanguageSupportedByProvider } from '../lib/languages'
-  import { exportLogsCsv } from '../lib/api/db'
   import type { AppConfig, AudioDevice, DictionaryEntry } from '../types'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
   import About from './About.svelte'
@@ -24,6 +23,8 @@
   let apiKeyInput = ''
   let addLanguageCode = ''
   let logEmpty = true
+  /** Message shown when log/CSV export is empty or fails (Advanced tab). */
+  let logExportMessage: string | null = null
   let saveError: string | null = null
   let appDataPath: string | null = null
   let openFolderError: string | null = null
@@ -81,6 +82,16 @@
   let dictionaryNewTerm = ''
   let dictionaryLoading = false
 
+  function getCurrentSttProvider(): string {
+    return config?.stt_config?.provider || 'groq'
+  }
+
+  function getStoredSttApiKey(): string | null {
+    if (!config?.stt_config) return null
+    const provider = getCurrentSttProvider()
+    return config.stt_config.api_keys?.[provider] ?? config.stt_config.api_key ?? null
+  }
+
   onMount(async () => {
     try {
       // Load settings and audio devices in parallel
@@ -116,6 +127,16 @@
         if (!config.stt_config.local_model) {
           config.stt_config.local_model = 'sensevoice'
         }
+        if (!config.stt_config.api_keys) {
+          config.stt_config.api_keys = {}
+        }
+        const sttProvider = config.stt_config.provider || 'groq'
+        if (!config.stt_config.provider) {
+          config.stt_config.provider = sttProvider
+        }
+        if (config.stt_config.api_key && !config.stt_config.api_keys[sttProvider]) {
+          config.stt_config.api_keys[sttProvider] = config.stt_config.api_key
+        }
         if (!config.waveform_style) config.waveform_style = 'Heartbeat'
         if (!config.overlay_position) config.overlay_position = 'BottomCenter'
         if (config.overlay_offset_x == null) config.overlay_offset_x = 0
@@ -142,8 +163,10 @@
         hasCommandApiKey = false
       }
 
+      await checkLogEmpty()
+
       // Check if API key is already configured
-      hasApiKey = !!config?.stt_config?.api_key
+      hasApiKey = !!getStoredSttApiKey()
       // Don't populate the input with the actual key for security
       apiKeyInput = ''
       
@@ -227,7 +250,7 @@
   }
 
   async function onSttModeChange() {
-    scheduleSave()
+    await saveSettingsImmediate()
     if (config?.stt_config?.mode === 'Cloud' || config?.stt_config?.mode === 'Hybrid') {
       try {
         await invoke('stop_all_local_models')
@@ -236,6 +259,14 @@
         console.error('Failed to stop local models on mode switch:', e)
       }
     }
+  }
+
+  async function onCloudProviderChange() {
+    if (!config) return
+    apiKeyInput = ''
+    apiKeyValid = null
+    hasApiKey = !!getStoredSttApiKey()
+    await saveSettingsImmediate()
   }
 
   async function setActiveLocalModel(modelId: string) {
@@ -351,6 +382,15 @@
     }, 400)
   }
 
+  async function saveSettingsImmediate() {
+    if (!initialLoadDone || !config) return
+    if (saveDebounceId != null) {
+      clearTimeout(saveDebounceId)
+      saveDebounceId = null
+    }
+    await saveSettings()
+  }
+
   async function saveSettings() {
     console.log('saveSettings called')
     if (!config) {
@@ -361,7 +401,8 @@
     
     // If user entered a new API key, update it
     if (apiKeyInput.trim()) {
-      config.stt_config.api_key = apiKeyInput.trim()
+      if (!config.stt_config.api_keys) config.stt_config.api_keys = {}
+      config.stt_config.api_keys[getCurrentSttProvider()] = apiKeyInput.trim()
     }
     if (config.command_config && config.command_config.provider && commandApiKeyInput.trim()) {
       if (!config.command_config.api_keys) config.command_config.api_keys = {}
@@ -378,7 +419,7 @@
     if (!Array.isArray(config.languages) || config.languages.length === 0) config.languages = ['en']
 
     console.log('Config object:', JSON.stringify(config, null, 2))
-    console.log('Saving config with api_key:', config.stt_config.api_key ? 'present' : 'missing')
+    console.log('Saving config with api_key for provider:', getCurrentSttProvider(), !!getStoredSttApiKey())
     saveError = null
     try {
       await invoke('save_settings', { newConfig: config })
@@ -389,7 +430,7 @@
       } else {
         optOut()
       }
-      hasApiKey = !!config.stt_config.api_key
+      hasApiKey = !!getStoredSttApiKey()
       apiKeyInput = '' // Clear input after save
       if (config.command_config?.provider) {
         hasCommandApiKey = !!config.command_config.api_keys?.[config.command_config.provider]
@@ -418,34 +459,27 @@
   }
 
   async function downloadLog() {
+    logExportMessage = null
     try {
-      const content = await invoke('get_app_log') as string
-      if (!content || content.trim() === '') return
-      const blob = new Blob([content], { type: 'text/plain' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `kalam-log-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.log`
-      a.click()
-      URL.revokeObjectURL(url)
+      await invoke('save_log_to_file')
+      logExportMessage = null
       await checkLogEmpty()
     } catch (e) {
-      console.error('Failed to download log:', e)
+      console.error('Failed to save log:', e)
+      const msg = e instanceof Error ? e.message : String(e)
+      logExportMessage = msg === 'Save cancelled' ? null : msg
     }
   }
 
   async function downloadLogsCsv() {
+    logExportMessage = null
     try {
-      const { csv, filename } = await exportLogsCsv()
-      const blob = new Blob([csv], { type: 'text/csv' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      a.click()
-      URL.revokeObjectURL(url)
+      await invoke('save_logs_csv_to_file')
+      logExportMessage = null
     } catch (e) {
-      console.error('Failed to download logs CSV:', e)
+      console.error('Failed to save logs CSV:', e)
+      const msg = e instanceof Error ? e.message : String(e)
+      logExportMessage = msg === 'Save cancelled' ? null : msg
     }
   }
 
@@ -535,7 +569,7 @@
   async function checkApiKey() {
     console.log('checkApiKey called')
     // Use the input value if present, otherwise use the stored key
-    const keyToCheck = apiKeyInput.trim() || config?.stt_config?.api_key
+    const keyToCheck = apiKeyInput.trim() || getStoredSttApiKey()
     
     if (!keyToCheck) {
       console.log('No API key to check')
@@ -557,6 +591,9 @@
   
   function clearApiKey() {
     if (config) {
+      const provider = getCurrentSttProvider()
+      if (!config.stt_config.api_keys) config.stt_config.api_keys = {}
+      delete config.stt_config.api_keys[provider]
       config.stt_config.api_key = null
       hasApiKey = false
       apiKeyInput = ''
@@ -859,6 +896,7 @@
           : (config.stt_config.provider || 'groq')
       )
     : 'groq'
+  $: hasApiKey = !!getStoredSttApiKey()
 </script>
 
 {#if config}
@@ -882,6 +920,7 @@
           class:active={activeTab === tab.id}
           on:click={() => {
             activeTab = tab.id
+            if (tab.id !== 'advanced') logExportMessage = null
             if (tab.id === 'advanced') checkLogEmpty()
             if (tab.id === 'dictionary') loadDictionaryEntries()
           }}
@@ -914,7 +953,7 @@
                 bind:value={config.min_hold_ms}
                 on:change={scheduleSave}
               />
-              <p class="hint">If you hold the key for less than this time, dictation is cancelled.</p>
+              <p class="hint">Applies to Hold to Dictate only: releases earlier than this are treated as short presses and cancelled.</p>
             </div>
           </div>
 
@@ -1091,7 +1130,7 @@
           {#if config.stt_config.mode === 'Cloud' || config.stt_config.mode === 'Hybrid'}
             <div class="form-group">
               <label for="cloud-provider">Cloud Provider</label>
-              <select id="cloud-provider" bind:value={config.stt_config.provider} on:change={scheduleSave}>
+              <select id="cloud-provider" bind:value={config.stt_config.provider} on:change={onCloudProviderChange}>
                 <option value="groq">Groq (whisper-large-v3-turbo)</option>
                 <option value="openai">OpenAI (whisper-1)</option>
               </select>
@@ -1601,8 +1640,7 @@
               <button
                 class="btn-secondary"
                 on:click={downloadLog}
-                disabled={logEmpty}
-                title={logEmpty ? 'No log entries yet' : 'Download current log buffer as a file'}
+                title="Save current log buffer to a file (opens Save dialog)"
               >
                 Download log
               </button>
@@ -1621,6 +1659,9 @@
                 Download log: current in-memory buffer. Download logs (CSV): full history from data.db. No transcription or sensitive data.
               {/if}
             </p>
+            {#if logExportMessage}
+              <p class="save-error" role="alert">{logExportMessage}</p>
+            {/if}
           </div>
         </section>
 
@@ -1700,6 +1741,9 @@
     scrollbar-width: none;
     box-shadow: var(--shadow-sm);
     border: 1px solid var(--border-subtle);
+    position: sticky;
+    top: 0;
+    z-index: 1;
   }
 
   .tabs::-webkit-scrollbar {

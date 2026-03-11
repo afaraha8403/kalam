@@ -10,6 +10,7 @@ pub use playback::play_sound;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AudioState {
     Idle,
+    Starting,
     Recording,
     Processing,
 }
