@@ -1,5 +1,5 @@
 ---
-description: Maintain CHANGELOG.md for significant changes; date-grouped; source for release notes
+description: Maintain CHANGELOG.md for significant changes; version-grouped with Unreleased at top; source for GitHub release notes
 alwaysApply: true
 ---
 
@@ -16,29 +16,35 @@ Update `CHANGELOG.md` (at project root) whenever you or the user:
 
 Do **not** add trivial edits (typos, comment-only, formatting-only) unless the user asks.
 
-## Format (date-grouped)
+## Format (version-based)
 
-- **Newest first.** Each section is a date: `## YYYY-MM-DD`.
-- One section per calendar day; add new entries under that day. If the section for today does not exist, add it at the top (below the title).
-- Use today’s date (YYYY-MM-DD) for the current session’s entries unless the user specifies otherwise.
+- **Unreleased at top.** The first section is `## [Unreleased]` for changes not yet in a release. Add new entries under `[Unreleased]`.
+- **Released versions below.** Each release has a section `## [vX.Y.Z]` or `## [X.Y.Z]` (e.g. `## [v0.0.1-beta.7]`, `## [1.0.0]`). Use the exact version string that will be tagged (with or without leading `v`).
+- **Newest release first** under Unreleased. When you cut a release, the previous `[Unreleased]` content can be moved under a new `## [vX.Y.Z]` section (or left in Unreleased if you prefer to document only in the release step).
+- Use exactly these labels: **Feature**, **Fix**, **Change**. One line per item; keep text concise.
 
 Structure:
 
 ```markdown
 # Changelog
 
-## YYYY-MM-DD
+## [Unreleased]
 - **Feature:** Short description.
 - **Fix:** Short description.
 - **Change:** Short description.
+
+## [v0.0.1-beta.7]
+- **Feature:** Something shipped in this version.
+- **Change:** Another change.
+
+## [v0.0.1-beta.6]
+- ...
 ```
 
-Use exactly these labels: **Feature**, **Fix**, **Change**. One line per item; keep text concise.
+## Releases and GitHub
+
+When a tag is pushed (e.g. `v0.0.1-beta.8`), the release workflow (`.github/workflows/release.yml`) looks in `CHANGELOG.md` for a section whose heading is `## [v0.0.1-beta.8]` or `## [0.0.1-beta.8]`. If found, that section (including the heading) is used as the draft release body. If not found, the release still succeeds and uses a default line. Adding a version section before tagging is optional but recommended so the release notes are populated.
 
 ## If the file is missing
 
-If `CHANGELOG.md` does not exist, create it with a title and one date section (today). Then add the relevant entry/entries.
-
-## Releases
-
-`CHANGELOG.md` is the source of truth for release notes. When creating a release (e.g. tag `v*`), the release body can be filled from the changelog (e.g. the section for the release date or a “Unreleased” section). The current workflow (`.github/workflows/release.yml`) uses a fixed `releaseBody`; when wiring release notes to the build, use the contents or a chosen section of `CHANGELOG.md`.
+If `CHANGELOG.md` does not exist, create it with a title, an `## [Unreleased]` section, and add the relevant entry/entries.

@@ -98,7 +98,8 @@ function Show-Help {
     Write-Host "  RELEASE" -ForegroundColor Yellow
     Write-Host "  -------"
     Write-Host "    release [version]      - Create a stable release (v1.0.0)"
-    Write-Host "    release-beta [version] - Create a beta release (v1.0.0-beta.1)"
+    Write-Host "    release-beta [version] - Create a beta/RC release (e.g. v1.0.0-beta.1 or v1.0.0-rc.1)"
+    Write-Host "    release-rc [version]   - Create a release candidate (e.g. v1.0.0-rc.1)"
     Write-Host "    set-version <version>  - Update version only (no commit/tag)"
     Write-Host ""
     Write-Host "  SIGNING KEYS (for auto-updater)" -ForegroundColor Yellow
@@ -219,27 +220,51 @@ switch ($Command) {
 
     "release-beta" {
         if (-not $Version) {
-            $Version = Read-Host "Enter beta version (e.g., 1.0.0-beta.1)"
+            $Version = Read-Host "Enter prerelease version (e.g., 1.0.0-beta.1 or 1.0.0-rc.1)"
         }
         
         if (-not ($Version -match '^\d+\.\d+\.\d+-(alpha|beta|rc)\.\d+$')) {
-            Write-Host "Error: Invalid beta version format." -ForegroundColor Red
-            Write-Host "Use: X.Y.Z-beta.N, X.Y.Z-alpha.N, or X.Y.Z-rc.N" -ForegroundColor Yellow
+            Write-Host "Error: Invalid prerelease version format." -ForegroundColor Red
+            Write-Host "Use: X.Y.Z-beta.N, X.Y.Z-rc.N, or X.Y.Z-alpha.N" -ForegroundColor Yellow
             exit 1
         }
         
-        $BaseVersion = $Version -replace '-.*$', ''
-        Update-Version $BaseVersion
+        Update-Version $Version
         
         git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml
-        git commit -m "chore: bump version to $BaseVersion for $Version release"
+        git commit -m "chore: bump version to $Version"
         git push origin main
         
-        git tag -a "v$Version" -m "Beta release v$Version"
+        git tag -a "v$Version" -m "Pre-release v$Version"
         git push origin "v$Version"
         
         Write-Host ""
-        Write-Host "✓ Beta release v$Version initiated!" -ForegroundColor Green
+        Write-Host "✓ Pre-release v$Version initiated!" -ForegroundColor Green
+        Write-Host "GitHub Actions will build and draft the release." -ForegroundColor Gray
+    }
+
+    "release-rc" {
+        if (-not $Version) {
+            $Version = Read-Host "Enter RC version (e.g., 1.0.0-rc.1)"
+        }
+        
+        if (-not ($Version -match '^\d+\.\d+\.\d+-rc\.\d+$')) {
+            Write-Host "Error: Invalid RC version format. Use X.Y.Z-rc.N (e.g., 1.0.0-rc.1)" -ForegroundColor Red
+            exit 1
+        }
+        
+        Update-Version $Version
+        
+        git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml
+        git commit -m "chore: bump version to $Version"
+        git push origin main
+        
+        git tag -a "v$Version" -m "Release candidate v$Version"
+        git push origin "v$Version"
+        
+        Write-Host ""
+        Write-Host "✓ Release candidate v$Version initiated!" -ForegroundColor Green
+        Write-Host "GitHub Actions will build and draft the release." -ForegroundColor Gray
     }
 
     "set-version" {

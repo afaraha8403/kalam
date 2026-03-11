@@ -60,8 +60,47 @@ jobs:
         working-directory: ./src-tauri
         run: cargo test
 
+  changelog:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract release notes from CHANGELOG
+        id: extract
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          DEFAULT='See the assets to download this version.'
+          if [ ! -f CHANGELOG.md ]; then
+            echo "$DEFAULT" > release-body.md
+          else
+            BODY=$(awk -v tag="$TAG" -v ver="$VERSION" '
+              BEGIN { found=0 }
+              /^## \[/ {
+                if (found) exit
+                line=$0
+                gsub(/^## \[|\]$/, "", line)
+                if (line == tag || line == ver) { found=1; print $0; next }
+                next
+              }
+              found { print }
+            ' CHANGELOG.md)
+            if [ -n "$BODY" ]; then
+              echo "$BODY" > release-body.md
+            else
+              echo "$DEFAULT" > release-body.md
+            fi
+          fi
+          DELIM="RELEASE_BODY_$(openssl rand -hex 8)"
+          echo "body<<$DELIM" >> $GITHUB_OUTPUT
+          cat release-body.md >> $GITHUB_OUTPUT
+          echo "$DELIM" >> $GITHUB_OUTPUT
+    outputs:
+      body: ${{ steps.extract.outputs.body }}
+
   build:
-    needs: test
+    needs: [test, changelog]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
@@ -120,8 +159,8 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Kalam ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download this version.'
+          releaseBody: ${{ needs.changelog.outputs.body }}
           releaseDraft: true
-          prerelease: ${{ contains(github.ref_name, 'beta') }}
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           releaseAssetNamePattern: '[name]-[version]-[platform]-[arch][ext]'
           args: ${{ matrix.args }}
