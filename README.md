@@ -4,11 +4,11 @@
 
 **Kalam** (كلام — *speech* in Arabic) is an open-source, cross-platform voice dictation app that turns speech into text in any application on Windows, macOS, and Linux. A free, privacy-friendly alternative to Whisperflow.
 
-[**Website**](https://afaraha8403.github.io/kalam/) · [**Documentation & manual**](https://afaraha8403.github.io/kalam/documentation.html) · [**Download (GitHub Releases)**](https://github.com/afaraha8403/kalam/releases)
+[**Website**](https://afaraha8403.github.io/kalam/) · [**Documentation & manual**](https://afaraha8403.github.io/kalam/documentation.html) · [**Download (GitHub Releases)**](https://github.com/afaraha8403/kalam/releases) — *beta pre-releases available*
 
 ---
 
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/afaraha8403/kalam?label=release)](https://github.com/afaraha8403/kalam/releases)
+[![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/afaraha8403/kalam?include_prereleases&label=release)](https://github.com/afaraha8403/kalam/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/afaraha8403/kalam/releases)
 [![License](https://img.shields.io/badge/license-Dual%20(MIT%20NC%20%2B%20Commercial)-blue.svg)](LICENSE)
 [![Tauri](https://img.shields.io/badge/Tauri-v2-FFC131?logo=tauri)](https://v2.tauri.app/)
