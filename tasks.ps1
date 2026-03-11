@@ -125,12 +125,22 @@ switch ($Command) {
 
     "build" {
         Write-Host "Building Tauri app (unsigned)..." -ForegroundColor Cyan
-        npm run tauri:build:unsigned
+        # Windows: use NSIS only to avoid MSI prerelease version error (aligns with release.yml)
+        if ($env:OS -eq "Windows_NT") {
+            npx tauri build --no-sign --bundles nsis
+        } else {
+            npm run tauri:build:unsigned
+        }
     }
 
     "build-signed" {
         Write-Host "Building Tauri app (signed; requires TAURI_SIGNING_PRIVATE_KEY)..." -ForegroundColor Cyan
-        npm run tauri build
+        # Windows: use NSIS only to avoid MSI prerelease version error (aligns with release.yml)
+        if ($env:OS -eq "Windows_NT") {
+            npx tauri build --bundles nsis
+        } else {
+            npm run tauri build
+        }
     }
 
     "deps" {
