@@ -3,6 +3,34 @@ use rdev::{listen, Event, EventType, Key};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// Sync tracked modifier state with OS physical state. Prevents ghost triggers when
+/// KeyRelease events were dropped (e.g. after Win+L or UAC). Windows-only.
+#[cfg(windows)]
+fn verify_modifiers_physical_state() {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+    // Virtual key codes: Left/Right Control, Shift, Menu(Alt), Win
+    const VK_LCONTROL: i32 = 0xA2;
+    const VK_RCONTROL: i32 = 0xA3;
+    const VK_LSHIFT: i32 = 0xA0;
+    const VK_RSHIFT: i32 = 0xA1;
+    const VK_LMENU: i32 = 0xA4;
+    const VK_RMENU: i32 = 0xA5;
+    const VK_LWIN: i32 = 0x5B;
+    const VK_RWIN: i32 = 0x5C;
+    // GetAsyncKeyState returns i16; MSB set (negative) means key is currently down
+    let ctrl = unsafe { GetAsyncKeyState(VK_LCONTROL) < 0 || GetAsyncKeyState(VK_RCONTROL) < 0 };
+    let shift = unsafe { GetAsyncKeyState(VK_LSHIFT) < 0 || GetAsyncKeyState(VK_RSHIFT) < 0 };
+    let alt = unsafe { GetAsyncKeyState(VK_LMENU) < 0 || GetAsyncKeyState(VK_RMENU) < 0 };
+    let meta = unsafe { GetAsyncKeyState(VK_LWIN) < 0 || GetAsyncKeyState(VK_RWIN) < 0 };
+    CTRL_PRESSED.store(ctrl, Ordering::SeqCst);
+    SHIFT_PRESSED.store(shift, Ordering::SeqCst);
+    ALT_PRESSED.store(alt, Ordering::SeqCst);
+    META_PRESSED.store(meta, Ordering::SeqCst);
+}
+
+#[cfg(not(windows))]
+fn verify_modifiers_physical_state() {}
+
 lazy_static! {
     static ref CTRL_PRESSED: AtomicBool = AtomicBool::new(false);
     static ref ALT_PRESSED: AtomicBool = AtomicBool::new(false);
@@ -28,6 +56,8 @@ pub struct HotkeyRegistration {
     pub active: Arc<AtomicBool>,
     pub on_press: Arc<dyn Fn() + Send + Sync>,
     pub on_release: Arc<dyn Fn() + Send + Sync>,
+    /// When set, called when a modifier-only hotkey is cancelled (e.g. user pressed another key).
+    pub on_cancel: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -208,7 +238,24 @@ fn handle_event_multi(event: Event) {
 
     match event.event_type {
         EventType::KeyPress(_) => {
+            verify_modifiers_physical_state();
+
             let regs = HOTKEY_REGISTRATIONS.lock().unwrap();
+            for (idx, reg) in regs.iter().enumerate() {
+                if reg.active.load(Ordering::SeqCst)
+                    && reg.target.main_key.is_none()
+                    && !is_modifier_key(key)
+                {
+                    reg.active.store(false, Ordering::SeqCst);
+                    if idx == 0 {
+                        HOTKEY_ACTIVE.store(false, Ordering::SeqCst);
+                    }
+                    if let Some(on_cancel) = &reg.on_cancel {
+                        on_cancel();
+                    }
+                    return;
+                }
+            }
             for (idx, reg) in regs.iter().enumerate() {
                 let activated = match reg.target.main_key {
                     Some(main_key) => {

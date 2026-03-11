@@ -1,4 +1,5 @@
 # To Do
+Do not uninstall the .kalam folder. This way the user does not loose there config! Or to be accurate, we should ask the user if they want to keep their database and their configuration when they do the uninstall.
 
 ## Done
 - [X] When the toggle is held down or is in press down and no speech or text is being picked up, Grok and possibly local models and possibly OpenAI Whisper return the words in the dictionary.

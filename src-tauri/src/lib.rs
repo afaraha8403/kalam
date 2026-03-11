@@ -164,6 +164,23 @@ impl AppState {
     }
 }
 
+async fn cancel_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<AtomicBool>) {
+    log::info!("Cancelling dictation (short press or interrupted)");
+    let mut audio_state = state.audio_state.lock().await;
+    if matches!(*audio_state, AudioState::Recording) {
+        *audio_state = AudioState::Idle;
+        is_recording.store(false, Ordering::SeqCst);
+        let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Idle);
+        let _ = state.audio_capture.lock().await.stop_recording().await;
+        emit_overlay_event(&state.app_handle, OverlayEvent::ShortPress);
+        let app_for_overlay = state.app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+            reset_overlay_state(&app_for_overlay);
+        });
+    }
+}
+
 fn create_registrations(
     app_handle: &tauri::AppHandle,
     is_recording_flag: Arc<AtomicBool>,
@@ -231,27 +248,26 @@ fn create_registrations(
                                 }
                             }
                             if is_short_press {
-                                log::info!("Short press detected, cancelling dictation");
-                                let mut audio_state = state.audio_state.lock().await;
-                                if matches!(*audio_state, AudioState::Recording) {
-                                    *audio_state = AudioState::Idle;
-                                    is_recording.store(false, Ordering::SeqCst);
-                                    let _ = state.audio_capture.lock().await.stop_recording().await;
-                                    emit_overlay_event(&state.app_handle, OverlayEvent::ShortPress);
-                                    let app_for_overlay = state.app_handle.clone();
-                                    tauri::async_runtime::spawn(async move {
-                                        tokio::time::sleep(tokio::time::Duration::from_millis(
-                                            1500,
-                                        ))
-                                        .await;
-                                        reset_overlay_state(&app_for_overlay);
-                                    });
-                                }
+                                cancel_dictation(state, is_recording).await;
                             } else {
                                 stop_dictation(state, is_recording).await;
                             }
                         });
                     }),
+                    on_cancel: Some(Arc::new({
+                        let app_handle_cancel = app_handle.clone();
+                        let is_recording_cancel = is_recording_flag.clone();
+                        let rt_cancel = rt_handle.clone();
+                        move || {
+                            let app_handle = app_handle_cancel.clone();
+                            let is_recording = is_recording_cancel.clone();
+                            let rt = rt_cancel.clone();
+                            rt.spawn(async move {
+                                let state = app_handle.state::<AppState>();
+                                cancel_dictation(state, is_recording).await;
+                            });
+                        }
+                    })),
                 });
                 log::info!("Hold dictation hotkey registered: {}", hotkey_str);
             } else {
@@ -290,6 +306,7 @@ fn create_registrations(
                         });
                     }),
                     on_release: Arc::new(|| {}),
+                    on_cancel: None,
                 });
                 log::info!("Toggle dictation hotkey registered: {}", toggle_str);
             } else {
@@ -333,6 +350,7 @@ fn create_registrations(
                         });
                     }),
                     on_release: Arc::new(|| {}),
+                    on_cancel: None,
                 });
                 log::info!("Language toggle hotkey registered: {}", toggle_str);
             } else {
@@ -398,25 +416,26 @@ fn create_registrations(
                             }
                         }
                         if is_short_press {
-                            log::info!("Command short press detected, cancelling");
-                            let mut audio_state = state.audio_state.lock().await;
-                            if matches!(*audio_state, AudioState::Recording) {
-                                *audio_state = AudioState::Idle;
-                                is_recording.store(false, Ordering::SeqCst);
-                                let _ = state.audio_capture.lock().await.stop_recording().await;
-                                emit_overlay_event(&state.app_handle, OverlayEvent::ShortPress);
-                                let app_for_overlay = state.app_handle.clone();
-                                tauri::async_runtime::spawn(async move {
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(1500))
-                                        .await;
-                                    reset_overlay_state(&app_for_overlay);
-                                });
-                            }
+                            cancel_dictation(state, is_recording).await;
                         } else {
                             stop_dictation(state, is_recording).await;
                         }
                     });
                 }),
+                on_cancel: Some(Arc::new({
+                    let app_handle_cancel = app_handle.clone();
+                    let is_recording_cancel = is_recording_flag.clone();
+                    let rt_cancel = rt_handle.clone();
+                    move || {
+                        let app_handle = app_handle_cancel.clone();
+                        let is_recording = is_recording_cancel.clone();
+                        let rt = rt_cancel.clone();
+                        rt.spawn(async move {
+                            let state = app_handle.state::<AppState>();
+                            cancel_dictation(state, is_recording).await;
+                        });
+                    }
+                })),
             });
             log::info!("Command mode hotkey registered: {}", cmd_hotkey_str);
         } else {
