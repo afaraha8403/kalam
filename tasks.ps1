@@ -218,10 +218,16 @@ switch ($Command) {
         
         git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml
         git commit -m "chore: bump version to $Version"
+        # Push version bump first so the tag points to a commit that exists on remote; only then push tag (which triggers the release workflow).
         git push origin main
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: Push to main failed. Fix and push manually, then run: git tag -a 'v$Version' -m 'Release v$Version'; git push origin 'v$Version'" -ForegroundColor Red
+            exit 1
+        }
         
         git tag -a "v$Version" -m "Release v$Version"
         git push origin "v$Version"
+        if ($LASTEXITCODE -ne 0) { exit 1 }
         
         Write-Host ""
         Write-Host "✓ Release v$Version initiated!" -ForegroundColor Green
@@ -243,10 +249,16 @@ switch ($Command) {
         
         git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml
         git commit -m "chore: bump version to $Version"
+        # Push version bump first so the tag exists on remote and the release workflow builds the bumped version.
         git push origin main
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: Push to main failed. Fix and push manually, then run: git tag -a 'v$Version' -m 'Pre-release v$Version'; git push origin 'v$Version'" -ForegroundColor Red
+            exit 1
+        }
         
         git tag -a "v$Version" -m "Pre-release v$Version"
         git push origin "v$Version"
+        if ($LASTEXITCODE -ne 0) { exit 1 }
         
         Write-Host ""
         Write-Host "✓ Pre-release v$Version initiated!" -ForegroundColor Green
@@ -267,10 +279,16 @@ switch ($Command) {
         
         git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml
         git commit -m "chore: bump version to $Version"
+        # Push version bump first so the release workflow builds the bumped version.
         git push origin main
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: Push to main failed. Fix and push manually, then run: git tag -a 'v$Version' -m 'Release candidate v$Version'; git push origin 'v$Version'" -ForegroundColor Red
+            exit 1
+        }
         
         git tag -a "v$Version" -m "Release candidate v$Version"
         git push origin "v$Version"
+        if ($LASTEXITCODE -ne 0) { exit 1 }
         
         Write-Host ""
         Write-Host "✓ Release candidate v$Version initiated!" -ForegroundColor Green

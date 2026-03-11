@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.0.1-beta.8]
+- **Fix:** Release workflow: global `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`, correct tauri-action input `assetNamePattern`, Windows build uses `--bundles nsis` only to avoid MSI prerelease version error.
+- **Change:** CI workflow: global `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` for Node 24 opt-in on all jobs.
+- **Change:** tasks.ps1: on Windows, `build` and `build-signed` use `--bundles nsis` so local builds succeed with prerelease versions (aligns with release workflow).
+
+## [0.0.1-beta.5]
 - **Change:** CI: Node 22, npm ci, frontend unit tests; build script embeds Windows .exe icon; AppConfig version handling improved; STT handles empty results and prompt echoes.
 - **Change:** Overlay and app optimization: Overlay component, Home, Snippets, History, Notes, Reminders, Tasks, lib.rs and docs.
 - **Feature:** Sidebar collapse: toggle for expanded vs icon-only view; state persisted in AppConfig.

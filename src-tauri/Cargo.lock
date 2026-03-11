@@ -2720,7 +2720,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-voice"
-version = "0.0.1"
+version = "0.0.1-beta.8"
 dependencies = [
  "active-win-pos-rs",
  "aes-gcm",
