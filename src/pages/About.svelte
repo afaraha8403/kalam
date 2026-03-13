@@ -63,27 +63,30 @@ For commercial use, resale, or use by a business, you must obtain a
 separate license from the project owner. Please reach out to the project
 maintainers to request a commercial license.`
 
-  onMount(async () => {
-    try {
-      appVersion = (await invoke('get_app_version')) as string
-    } catch {
-      appVersion = '—'
-    }
-    try {
-      const settings = (await invoke('get_settings')) as { update_channel?: 'stable' | 'beta' }
-      updateChannel = settings?.update_channel === 'beta' ? 'beta' : 'stable'
-    } catch {
-      updateChannel = 'stable'
-    }
-    const unlisten = await listen<[number, number | null, number | null]>(
-      'update-download-progress',
-      (e) => {
-        const [, , percent] = e.payload
-        updateDownloadPercent = percent != null ? Math.round(percent) : null
+  onMount(() => {
+    let unlisten: (() => void) | null = null
+    void (async () => {
+      try {
+        appVersion = (await invoke('get_app_version')) as string
+      } catch {
+        appVersion = '—'
       }
-    )
+      try {
+        const settings = (await invoke('get_settings')) as { update_channel?: 'stable' | 'beta' }
+        updateChannel = settings?.update_channel === 'beta' ? 'beta' : 'stable'
+      } catch {
+        updateChannel = 'stable'
+      }
+      unlisten = await listen<[number, number | null, number | null]>(
+        'update-download-progress',
+        (e) => {
+          const [, , percent] = e.payload
+          updateDownloadPercent = percent != null ? Math.round(percent) : null
+        }
+      )
+    })()
     return () => {
-      unlisten()
+      unlisten?.()
     }
   })
 
