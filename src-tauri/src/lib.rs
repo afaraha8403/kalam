@@ -9,10 +9,10 @@ mod hotkey;
 #[cfg(windows)]
 mod hotkey_win;
 mod injection;
-#[cfg(windows)]
-mod overlay_message_log_win;
 mod models;
 mod notifications;
+#[cfg(windows)]
+mod overlay_message_log_win;
 mod stt;
 mod system_reqs;
 mod tray;
