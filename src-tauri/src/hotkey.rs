@@ -23,6 +23,7 @@ fn force_rdev() -> bool {
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)] // Stub for non-Windows; only Windows path calls this.
 fn force_rdev() -> bool {
     false
 }
@@ -44,6 +45,7 @@ fn use_hook_hotkey() -> bool {
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)] // Stub for non-Windows; only Windows path calls this.
 fn use_same_thread_hotkey() -> bool {
     false
 }
