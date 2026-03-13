@@ -514,8 +514,7 @@
     height: 10px;
     min-height: 10px;
     opacity: 0.7;
-    box-shadow: 0 0 6px rgba(79, 193, 255, 0.15);
-    animation: idle-breathe 3s ease-in-out infinite;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.6) !important;
     cursor: default;
     transition:
@@ -527,7 +526,6 @@
 
   .blip.collapsed:hover {
     opacity: 1;
-    animation: none;
   }
 
   /* Expand pill only after short delay so overlay window has time to resize (avoids clipped text) */
@@ -544,25 +542,19 @@
     height: 48px;
     min-height: 48px;
     opacity: 1;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   }
 
   .blip.recording {
-    box-shadow:
-      0 2px 20px rgba(0, 0, 0, 0.6),
-      0 0 16px rgba(79, 193, 255, 0.15);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   }
 
   .blip.success {
-    box-shadow:
-      0 2px 20px rgba(0, 0, 0, 0.6),
-      0 0 12px rgba(74, 222, 128, 0.2);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   }
 
   .blip.error {
-    box-shadow:
-      0 2px 20px rgba(0, 0, 0, 0.6),
-      0 0 12px rgba(248, 113, 113, 0.2);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   }
 
   /* ── Content wrapper (inside the pill) ── */
@@ -687,11 +679,6 @@
   }
 
   /* ── Keyframes ── */
-  @keyframes idle-breathe {
-    0%, 100% { opacity: 0.5; }
-    50% { opacity: 0.8; }
-  }
-
   @keyframes content-in {
     from {
       opacity: 0;

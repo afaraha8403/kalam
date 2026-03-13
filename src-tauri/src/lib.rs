@@ -327,6 +327,8 @@ fn create_registrations(
                 registrations.push(HotkeyRegistration {
                     target: target_hotkey,
                     active: Arc::new(AtomicBool::new(false)),
+                    pending_activation: Arc::new(AtomicBool::new(false)),
+                    is_dictation: true,
                     on_press: Arc::new({
                         let hold_press_instant_press = hold_press_instant.clone();
                         move || {
@@ -422,6 +424,8 @@ fn create_registrations(
                 registrations.push(HotkeyRegistration {
                     target: toggle_hotkey,
                     active: Arc::new(AtomicBool::new(false)),
+                    pending_activation: Arc::new(AtomicBool::new(false)),
+                    is_dictation: true,
                     on_press: Arc::new(move || {
                         latency_trace_write("T0");
                         latency_trace_write("toggle_callback_invoked");
@@ -463,6 +467,8 @@ fn create_registrations(
                 registrations.push(HotkeyRegistration {
                     target: toggle_hotkey,
                     active: Arc::new(AtomicBool::new(false)),
+                    pending_activation: Arc::new(AtomicBool::new(false)),
+                    is_dictation: false,
                     on_press: Arc::new(move || {
                         let app_handle = app_handle_toggle.clone();
                         tauri::async_runtime::spawn(async move {
@@ -511,6 +517,8 @@ fn create_registrations(
             registrations.push(HotkeyRegistration {
                 target: cmd_target,
                 active: Arc::new(AtomicBool::new(false)),
+                pending_activation: Arc::new(AtomicBool::new(false)),
+                is_dictation: false,
                     on_press: Arc::new({
                         let cmd_press_instant_press = cmd_press_instant.clone();
                         move || {
@@ -1183,6 +1191,23 @@ async fn save_settings(
     );
     log::info!("Audio device: {:?}", new_config.audio_device);
 
+    // Reject if toggle dictation hotkey is the same as the hold to dictate hotkey
+    if let Some(ref hold) = new_config.hotkey {
+        if !hold.trim().is_empty() {
+            if let Ok(hold_hk) = parse_rdev_hotkey(hold) {
+                if let Some(ref toggle_dict) = new_config.toggle_dictation_hotkey {
+                    if !toggle_dict.trim().is_empty() {
+                        if let Ok(toggle_hk) = parse_rdev_hotkey(toggle_dict) {
+                            if hold_hk == toggle_hk {
+                                return Err("Toggle dictation hotkey cannot be the same as the hold to dictate hotkey.".to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Reject if language toggle hotkey is the same as the dictation hotkeys
     if let Some(ref toggle) = new_config.language_toggle_hotkey {
         if !toggle.trim().is_empty() {
@@ -1702,12 +1727,14 @@ fn check_model_requirements(model_id: String) -> Result<system_reqs::HardwareChe
 }
 
 const OVERLAY_LABEL: &str = "overlay";
-/// Expanded pill size (matches .blip.expanded in Overlay.svelte)
-const OVERLAY_EXPANDED_WIDTH: i32 = 250;
-const OVERLAY_EXPANDED_HEIGHT: i32 = 48;
-/// Collapsed pill size: fits .blip.collapsed (48×10) + 1px border + small margin so edges aren't clipped
-const OVERLAY_COLLAPSED_WIDTH: i32 = 52;
-const OVERLAY_COLLAPSED_HEIGHT: i32 = 14;
+/// Extra space so pill box-shadow can spill outside the window (not clipped)
+const OVERLAY_SHADOW_MARGIN: i32 = 24;
+/// Expanded pill size (matches .blip.expanded in Overlay.svelte) + shadow margin
+const OVERLAY_EXPANDED_WIDTH: i32 = 250 + OVERLAY_SHADOW_MARGIN * 2;
+const OVERLAY_EXPANDED_HEIGHT: i32 = 48 + OVERLAY_SHADOW_MARGIN * 2;
+/// Collapsed pill size: fits .blip.collapsed (48×10) + 1px border + small margin so edges aren't clipped + shadow margin
+const OVERLAY_COLLAPSED_WIDTH: i32 = 52 + OVERLAY_SHADOW_MARGIN * 2;
+const OVERLAY_COLLAPSED_HEIGHT: i32 = 14 + OVERLAY_SHADOW_MARGIN * 2;
 const OVERLAY_BOTTOM_MARGIN: i32 = 24;
 
 #[derive(serde::Serialize, Clone)]
@@ -1752,6 +1779,9 @@ fn resize_overlay(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
             OVERLAY_COLLAPSED_HEIGHT as f64
         };
 
+        // Resize first, then update position: when a window resizes, its top-left stays fixed
+        // and it grows down/right. The pill is centered via flexbox, so it would appear to move.
+        // By resizing then repositioning, we compensate so the pill stays visually fixed.
         let size = tauri::LogicalSize::new(width, height);
         let _ = overlay.set_size(tauri::Size::Logical(size));
         let _ = update_overlay_position(&app);

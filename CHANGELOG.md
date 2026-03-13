@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+- **Fix:** Pill shadow reduced to a very subtle 1-2px depth that smooths the corners/borders without creating a prominent glow effect. Removed all colored glows and large drop shadows from collapsed, expanded, recording, success, and error states.
+- **Fix:** Removed idle breathing/pulsating animation from the dormant state pill. The pill now maintains a steady opacity of 0.7 in collapsed state instead of pulsing between 0.5 and 0.8.
+- **Fix:** Overlay pill flicker on hover/expand: integrated GSAP animation library for smooth, GPU-accelerated transforms. The pill uses `scaleX`/`scaleY` transforms instead of width/height animations; content counter-scales to maintain text size and fades in/out with synchronized animations. Added initialization delay to prevent initial mount flicker.
+- **Feature:** Waveform animations enhanced with GSAP: entry/exit transitions (scale + fade), command mode crossfade between blue/pink gradients, Waves waveform has parallax layer animation. Bars waveform uses CSS transitions instead of GSAP to prevent flickering from constant data updates.
+- **Fix:** Overlay pill shadow no longer clipped: overlay window size includes 24px margin so pill box-shadow can spill; `.blip-root` set to `overflow: visible` so shadow is not cut off.
 - **Feature:** Task detail panel: wider side panel (520px), markdown toolbar (bold, italic, list, link) with Edit/Preview tabs, priority field (None/Low/Medium/High) with list badges, subtask reorder (move up/down), lighter placeholders, due/reminder layout tweaks, Save and Cancel side-by-side in footer.
 - **Feature:** Browser dev: when the app is opened in a normal browser (e.g. http://localhost:5173/), onboarding is skipped and a default config is used so the main UI can be debugged without Tauri. In Tauri, `?skipOnboarding=1` forces skipping onboarding for testing.
 - **Feature:** Windows hotkey low-latency: default hotkey path is the `WH_KEYBOARD_LL` hook (same thread as key delivery); set `KALAM_USE_RDEV=1` to use rdev (~500 ms gap accepted). Findings and env vars documented in `.doc/latency-profiling-windows.md`.

@@ -66,6 +66,10 @@ fn set_rdev_thread_priority_above_normal() {
 #[cfg(windows)]
 pub(crate) fn dispatch_key_from_win_hook(vk_code: u32, is_press: bool) {
     if let Some(key) = vk_code_to_key(vk_code) {
+        if HOTKEYS_PAUSED.load(Ordering::SeqCst) {
+            update_modifiers(key, is_press);
+            return;
+        }
         update_modifiers(key, is_press);
         apply_key_event(key, is_press);
     }
@@ -199,6 +203,10 @@ pub fn set_hotkeys_paused(paused: bool) {
 pub struct HotkeyRegistration {
     pub target: RdevHotkey,
     pub active: Arc<AtomicBool>,
+    /// True while waiting to activate this modifier-only hotkey after a short delay.
+    pub pending_activation: Arc<AtomicBool>,
+    /// When true, this registration is hold or toggle dictation; HOTKEY_ACTIVE is set for Win-key suppression.
+    pub is_dictation: bool,
     pub on_press: Arc<dyn Fn() + Send + Sync>,
     pub on_release: Arc<dyn Fn() + Send + Sync>,
     /// When set, called when a modifier-only hotkey is cancelled (e.g. user pressed another key).
@@ -213,6 +221,14 @@ pub struct RdevHotkey {
     pub meta: bool,
     pub main_key: Option<Key>,
 }
+
+/// Number of modifiers required by this hotkey. Used to sort registrations so more specific
+/// (e.g. Ctrl+Win+Shift) are tried before less specific (e.g. Ctrl+Win).
+fn modifier_count(target: &RdevHotkey) -> u32 {
+    (target.ctrl as u32) + (target.alt as u32) + (target.shift as u32) + (target.meta as u32)
+}
+
+const MODIFIER_ONLY_ACTIVATION_DELAY_MS: u64 = 90;
 
 pub fn parse_rdev_hotkey(hotkey_str: &str) -> anyhow::Result<RdevHotkey> {
     let parts: Vec<&str> = hotkey_str.split('+').map(|s| s.trim()).collect();
@@ -317,7 +333,8 @@ fn parse_rdev_key_code(key: &str) -> anyhow::Result<Key> {
 }
 
 /// Start the global key listener with multiple hotkey registrations.
-/// The first registration (index 0) is the dictation hotkey; when it is active, HOTKEY_ACTIVE is set (for Windows Win-key suppression).
+/// Registrations are sorted by modifier count (more specific first) so e.g. Ctrl+Win+Shift is tried before Ctrl+Win.
+/// When a registration with is_dictation is active, HOTKEY_ACTIVE is set (for Windows Win-key suppression).
 pub fn start_listener(registrations: Vec<HotkeyRegistration>) {
     #[allow(unused_variables)]
     let any_meta = registrations.iter().any(|r| r.target.meta);
@@ -330,7 +347,9 @@ pub fn start_listener(registrations: Vec<HotkeyRegistration>) {
 
     {
         let mut regs = HOTKEY_REGISTRATIONS.lock().unwrap();
-        *regs = registrations;
+        let mut regs_vec = registrations;
+        regs_vec.sort_by(|a, b| modifier_count(&b.target).cmp(&modifier_count(&a.target)));
+        *regs = regs_vec;
     }
 
     // Only start the listener thread once
@@ -370,7 +389,9 @@ pub fn update_registrations(registrations: Vec<HotkeyRegistration>) {
     }
 
     let mut regs = HOTKEY_REGISTRATIONS.lock().unwrap();
-    *regs = registrations;
+    let mut regs_vec = registrations;
+    regs_vec.sort_by(|a, b| modifier_count(&b.target).cmp(&modifier_count(&a.target)));
+    *regs = regs_vec;
 }
 
 fn handle_event_multi(event: Event) {
@@ -405,13 +426,14 @@ fn apply_key_event(key: Key, is_press: bool) {
         verify_modifiers_physical_state();
 
         let regs = HOTKEY_REGISTRATIONS.lock().unwrap();
-        for (idx, reg) in regs.iter().enumerate() {
+        for reg in regs.iter() {
             if reg.active.load(Ordering::SeqCst)
                 && reg.target.main_key.is_none()
                 && !is_modifier_key(key)
             {
                 reg.active.store(false, Ordering::SeqCst);
-                if idx == 0 {
+                reg.pending_activation.store(false, Ordering::SeqCst);
+                if reg.is_dictation {
                     HOTKEY_ACTIVE.store(false, Ordering::SeqCst);
                 }
                 if let Some(on_cancel) = &reg.on_cancel {
@@ -420,7 +442,7 @@ fn apply_key_event(key: Key, is_press: bool) {
                 return;
             }
         }
-        for (idx, reg) in regs.iter().enumerate() {
+        for reg in regs.iter() {
             let activated = match reg.target.main_key {
                 Some(main_key) => {
                     key == main_key
@@ -434,17 +456,24 @@ fn apply_key_event(key: Key, is_press: bool) {
                 }
             };
             if activated {
-                reg.active.store(true, Ordering::SeqCst);
-                if idx == 0 {
-                    HOTKEY_ACTIVE.store(true, Ordering::SeqCst);
+                let should_delay = reg.target.main_key.is_none()
+                    && has_more_specific_modifier_hotkey(&regs, &reg.target);
+                if should_delay {
+                    schedule_delayed_modifier_activation(reg);
+                } else {
+                    activate_registration_now(reg);
                 }
-                (reg.on_press)();
                 break;
             }
         }
     } else {
         let regs = HOTKEY_REGISTRATIONS.lock().unwrap();
-        for (idx, reg) in regs.iter().enumerate() {
+        for reg in regs.iter() {
+            if reg.target.main_key.is_none() && !modifiers_match(&reg.target) {
+                reg.pending_activation.store(false, Ordering::SeqCst);
+            }
+        }
+        for reg in regs.iter() {
             if !reg.active.load(Ordering::SeqCst) {
                 continue;
             }
@@ -454,7 +483,8 @@ fn apply_key_event(key: Key, is_press: bool) {
             };
             if release {
                 reg.active.store(false, Ordering::SeqCst);
-                if idx == 0 {
+                reg.pending_activation.store(false, Ordering::SeqCst);
+                if reg.is_dictation {
                     HOTKEY_ACTIVE.store(false, Ordering::SeqCst);
                 }
                 (reg.on_release)();
@@ -462,6 +492,62 @@ fn apply_key_event(key: Key, is_press: bool) {
             }
         }
     }
+}
+
+fn activate_registration_now(reg: &HotkeyRegistration) {
+    reg.pending_activation.store(false, Ordering::SeqCst);
+    reg.active.store(true, Ordering::SeqCst);
+    if reg.is_dictation {
+        HOTKEY_ACTIVE.store(true, Ordering::SeqCst);
+    }
+    (reg.on_press)();
+}
+
+fn schedule_delayed_modifier_activation(reg: &HotkeyRegistration) {
+    if reg.pending_activation.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let active = reg.active.clone();
+    let pending = reg.pending_activation.clone();
+    let target = reg.target.clone();
+    let on_press = reg.on_press.clone();
+    let is_dictation = reg.is_dictation;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(
+            MODIFIER_ONLY_ACTIVATION_DELAY_MS,
+        ));
+        if !pending.load(Ordering::SeqCst) {
+            return;
+        }
+        if HOTKEYS_PAUSED.load(Ordering::SeqCst) {
+            pending.store(false, Ordering::SeqCst);
+            return;
+        }
+        verify_modifiers_physical_state();
+        if modifiers_match(&target) && !active.load(Ordering::SeqCst) {
+            active.store(true, Ordering::SeqCst);
+            if is_dictation {
+                HOTKEY_ACTIVE.store(true, Ordering::SeqCst);
+            }
+            (on_press)();
+        }
+        pending.store(false, Ordering::SeqCst);
+    });
+}
+
+fn has_more_specific_modifier_hotkey(regs: &[HotkeyRegistration], target: &RdevHotkey) -> bool {
+    regs.iter().any(|reg| {
+        reg.target.main_key.is_none()
+            && modifier_count(&reg.target) > modifier_count(target)
+            && modifier_subset(target, &reg.target)
+    })
+}
+
+fn modifier_subset(base: &RdevHotkey, candidate: &RdevHotkey) -> bool {
+    (!base.ctrl || candidate.ctrl)
+        && (!base.alt || candidate.alt)
+        && (!base.shift || candidate.shift)
+        && (!base.meta || candidate.meta)
 }
 
 fn is_modifier_key(key: Key) -> bool {
@@ -516,7 +602,11 @@ fn start_willhook_listener() {
                     let is_press = matches!(ke.pressed, KeyPress::Down(_));
                     if let Some(wh_key) = ke.key {
                         if let Some(k) = willhook_key_to_rdev(wh_key) {
-                            apply_key_event(k, is_press);
+                            if HOTKEYS_PAUSED.load(Ordering::SeqCst) {
+                                update_modifiers(k, is_press);
+                            } else {
+                                apply_key_event(k, is_press);
+                            }
                         }
                     }
                 }
