@@ -40,6 +40,13 @@
     }
   }
 
+  const PRIORITY_OPTIONS: { value: number | null; label: string }[] = [
+    { value: null, label: 'None' },
+    { value: 1, label: 'Low' },
+    { value: 2, label: 'Medium' },
+    { value: 3, label: 'High' }
+  ]
+
   function openAddPanel() {
     panelMode = 'add'
     panelTaskId = null
@@ -48,7 +55,8 @@
       content: '',
       due_date: null,
       reminder_at: null,
-      subtasks: []
+      subtasks: [],
+      priority: null
     }
     isPanelOpen = true
   }
@@ -77,7 +85,8 @@
           title: draftEntry.title,
           due_date: draftEntry.due_date,
           reminder_at: draftEntry.reminder_at,
-          subtasks: draftEntry.subtasks
+          subtasks: draftEntry.subtasks,
+          priority: draftEntry.priority ?? null
         })
         await createEntry(entry)
         entries = [entry, ...entries]
@@ -156,6 +165,12 @@
     return el?.value ?? ''
   }
 
+  function setPriorityFromSelect(e: Event) {
+    const el = e.currentTarget as HTMLSelectElement | null
+    const v = el?.value ?? ''
+    draftEntry.priority = v === '' ? null : Number(v)
+  }
+
   function addSubtask() {
     draftEntry.subtasks = [...(draftEntry.subtasks || []), { title: '', is_completed: false }]
   }
@@ -170,6 +185,40 @@
   function removeSubtask(index: number) {
     if (!draftEntry.subtasks) return
     draftEntry.subtasks = draftEntry.subtasks.filter((_, i) => i !== index)
+  }
+
+  function moveSubtaskUp(index: number) {
+    if (!draftEntry.subtasks || index <= 0) return
+    const arr = [...draftEntry.subtasks]
+    ;[arr[index - 1], arr[index]] = [arr[index], arr[index - 1]]
+    draftEntry.subtasks = arr
+  }
+
+  function moveSubtaskDown(index: number) {
+    if (!draftEntry.subtasks || index >= draftEntry.subtasks.length - 1) return
+    const arr = [...draftEntry.subtasks]
+    ;[arr[index], arr[index + 1]] = [arr[index + 1], arr[index]]
+    draftEntry.subtasks = arr
+  }
+
+  let detailsTextareaEl: HTMLTextAreaElement | null = null
+  function insertMarkdown(prefix: string, suffix: string = '') {
+    const el = detailsTextareaEl
+    if (!el) return
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    const text = draftEntry.content ?? ''
+    const before = text.slice(0, start)
+    const selected = text.slice(start, end)
+    const after = text.slice(end)
+    const replacement = selected ? `${prefix}${selected}${suffix}` : `${prefix}text${suffix}`
+    draftEntry.content = before + replacement + after
+    el.focus()
+    setTimeout(() => {
+      const newStart = start + prefix.length
+      const newEnd = selected ? end + prefix.length + suffix.length : newStart + 4
+      el.setSelectionRange(newStart, newEnd)
+    }, 0)
   }
 
   function renderDetailsMarkdown(content: string): string {
@@ -273,6 +322,11 @@
               <div class="task-content">
                 <span class="task-title">{entry.title || entry.content}</span>
                 <div class="task-meta">
+                  {#if entry.priority != null && entry.priority > 0}
+                    <span class="task-priority-badge" class:high={entry.priority >= 3} class:medium={entry.priority === 2}>
+                      {entry.priority >= 3 ? 'High' : entry.priority === 2 ? 'Medium' : 'Low'}
+                    </span>
+                  {/if}
                   {#if entry.due_date}
                     <span class="task-due">
                       <Icon icon="ph:calendar-blank-duotone" />
@@ -351,13 +405,32 @@
         {/if}
       </div>
       <div class="field">
-        <label for="task-details">Details (markdown)</label>
-        <div class="details-tabs">
-          <button type="button" class:active={!detailsPreviewActive} on:click={() => (detailsPreviewActive = false)}>Edit</button>
-          <button type="button" class:active={detailsPreviewActive} on:click={() => (detailsPreviewActive = true)}>Preview</button>
+        <label for="task-details">Details</label>
+        <div class="details-toolbar">
+          <div class="details-tabs">
+            <button type="button" class:active={!detailsPreviewActive} on:click={() => (detailsPreviewActive = false)}>Edit</button>
+            <button type="button" class:active={detailsPreviewActive} on:click={() => (detailsPreviewActive = true)}>Preview</button>
+          </div>
+          {#if !detailsPreviewActive}
+            <div class="markdown-toolbar">
+              <button type="button" class="toolbar-btn" on:click={() => insertMarkdown('**', '**')} title="Bold">
+                <Icon icon="ph:text-b" />
+              </button>
+              <button type="button" class="toolbar-btn" on:click={() => insertMarkdown('*', '*')} title="Italic">
+                <Icon icon="ph:text-italic" />
+              </button>
+              <button type="button" class="toolbar-btn" on:click={() => insertMarkdown('- ')} title="Bullet list">
+                <Icon icon="ph:list-bullets" />
+              </button>
+              <button type="button" class="toolbar-btn" on:click={() => insertMarkdown('[', '](url)')} title="Link">
+                <Icon icon="ph:link" />
+              </button>
+            </div>
+          {/if}
         </div>
         {#if !detailsPreviewActive}
           <textarea
+            bind:this={detailsTextareaEl}
             id="task-details"
             class="details-textarea"
             bind:value={draftEntry.content}
@@ -370,12 +443,26 @@
           </div>
         {/if}
       </div>
-      <div class="field row">
+      <div class="field">
+        <label for="task-priority">Priority</label>
+        <select
+          id="task-priority"
+          class="field-select"
+          value={draftEntry.priority != null ? String(draftEntry.priority) : ''}
+          on:change={setPriorityFromSelect}
+        >
+          {#each PRIORITY_OPTIONS as opt}
+            <option value={opt.value ?? ''}>{opt.label}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="field dates-row">
         <div class="field-half">
           <label for="task-due">Due date</label>
           <input
             id="task-due"
             type="date"
+            class="field-input"
             value={draftEntry.due_date ? draftEntry.due_date.slice(0, 10) : ''}
             on:change={(e) => draftEntry.due_date = toISOStartOfDay(getInputValue(e))}
           />
@@ -385,6 +472,7 @@
           <input
             id="task-reminder"
             type="datetime-local"
+            class="field-input"
             value={formatDateTimeLocal(draftEntry.reminder_at || null)}
             on:change={(e) => draftEntry.reminder_at = toISODateTime(getInputValue(e))}
           />
@@ -395,6 +483,14 @@
         <div id="task-subtasks-list" class="subtasks-list" role="group">
           {#each draftEntry.subtasks ?? [] as subtask, i}
             <div class="subtask-row">
+              <div class="subtask-drag-actions">
+                <button type="button" class="action-btn subtask-move" on:click={() => moveSubtaskUp(i)} disabled={i === 0} title="Move up" aria-label="Move up">
+                  <Icon icon="ph:caret-up-duotone" />
+                </button>
+                <button type="button" class="action-btn subtask-move" on:click={() => moveSubtaskDown(i)} disabled={i === (draftEntry.subtasks?.length ?? 1) - 1} title="Move down" aria-label="Move down">
+                  <Icon icon="ph:caret-down-duotone" />
+                </button>
+              </div>
               <button type="button" class="subtask-checkbox" on:click={() => toggleSubtask(i)} aria-label="Toggle subtask">
                 <div class="check-circle" class:checked={subtask.is_completed}>
                   {#if subtask.is_completed}
@@ -421,11 +517,11 @@
       </div>
     </div>
     
-    <div slot="footer">
+    <div slot="footer" class="panel-footer-actions">
+      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
       <button class="btn-primary" on:click={savePanel} disabled={!draftEntry.title?.trim()}>
         <Icon icon="ph:check-bold" /> Save
       </button>
-      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
     </div>
   </SidePanel>
 </div>
@@ -653,8 +749,35 @@
     font-weight: 600;
   }
 
+  .task-priority-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+  }
+
+  .task-priority-badge.medium {
+    background: var(--primary-alpha);
+    color: var(--primary-dark);
+  }
+
+  .task-priority-badge.high {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--error);
+  }
+
   .task-subtask-count {
     font-weight: 500;
+  }
+
+  .panel-footer-actions {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 12px;
   }
 
   .task-actions {
@@ -800,10 +923,10 @@
   .panel-form {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 24px;
   }
 
-  .field label {
+  .panel-form .field label {
     display: block;
     font-size: 13px;
     font-weight: 600;
@@ -811,10 +934,17 @@
     margin-bottom: 6px;
   }
 
-  .field input[type="text"],
-  .field input[type="date"],
-  .field input[type="datetime-local"],
-  .field textarea {
+  .panel-form input::placeholder,
+  .panel-form textarea::placeholder {
+    color: var(--placeholder);
+  }
+
+  .field-input,
+  .panel-form input[type="text"],
+  .panel-form input[type="date"],
+  .panel-form input[type="datetime-local"],
+  .panel-form select,
+  .panel-form textarea {
     width: 100%;
     padding: 10px 12px;
     border: 1px solid var(--border-subtle);
@@ -826,19 +956,23 @@
     transition: all 0.2s;
   }
 
-  .field input[type="date"]::-webkit-calendar-picker-indicator,
-  .field input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  .panel-form .field-select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748B' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+  }
+
+  .panel-form input[type="date"]::-webkit-calendar-picker-indicator,
+  .panel-form input[type="datetime-local"]::-webkit-calendar-picker-indicator {
     cursor: pointer;
-    opacity: 0.6;
-    transition: 0.2s;
+    opacity: 0.5;
   }
 
-  .field input[type="date"]::-webkit-calendar-picker-indicator:hover,
-  .field input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
-    opacity: 1;
-  }
-
-  .field input:focus, .field textarea:focus {
+  .panel-form input:focus,
+  .panel-form select:focus,
+  .panel-form textarea:focus {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 3px var(--primary-alpha);
@@ -851,6 +985,7 @@
     display: block;
   }
 
+  .dates-row,
   .field.row {
     display: flex;
     gap: 12px;
@@ -858,12 +993,21 @@
 
   .field-half {
     flex: 1;
+    min-width: 0;
+  }
+
+  .details-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
   }
 
   .details-tabs {
     display: flex;
     gap: 4px;
-    margin-bottom: 8px;
   }
 
   .details-tabs button {
@@ -882,8 +1026,32 @@
     border-color: var(--primary);
   }
 
+  .markdown-toolbar {
+    display: flex;
+    gap: 2px;
+  }
+
+  .toolbar-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .toolbar-btn:hover {
+    background: var(--border-subtle);
+    color: var(--navy-deep);
+  }
+
   .details-textarea {
-    min-height: 120px;
+    min-height: 140px;
     resize: vertical;
   }
 
@@ -912,8 +1080,32 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding-left: 12px;
+    padding: 6px 10px 6px 8px;
+    border-radius: 10px;
     border-left: 3px solid var(--border-visible);
+    background: var(--bg-input);
+  }
+
+  .subtask-drag-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .subtask-move {
+    width: 24px;
+    height: 20px;
+    padding: 0;
+    color: var(--text-muted);
+  }
+
+  .subtask-move:hover:not(:disabled) {
+    color: var(--primary);
+  }
+
+  .subtask-move:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
   .subtask-checkbox {

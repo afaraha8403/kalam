@@ -13,7 +13,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-    UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYUP,
+    UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
+    WM_KEYUP,
 };
 
 const VK_LWIN: u32 = 0x5B;
@@ -97,5 +98,64 @@ pub fn start_win_key_suppression() {
 
         UnhookWindowsHookEx(HOOK_HANDLE as HHOOK);
         HOOK_HANDLE = 0;
+    });
+}
+
+// WH_KEYBOARD_LL hook: Windows default hotkey path (low latency) and optional OS_key_down trace when KALAM_LATENCY_DEBUG=1.
+static mut LATENCY_DEBUG_HOOK_HANDLE: HHOOK = 0 as HHOOK;
+static mut USE_HOOK_AS_MAIN: bool = false;
+
+unsafe extern "system" fn latency_debug_keyboard_proc(
+    n_code: i32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
+    if n_code == HC_ACTION as i32 && l_param != 0 {
+        let hook_struct = &*(l_param as *const KBDLLHOOKSTRUCT);
+        let vk = hook_struct.vkCode;
+        let is_press = w_param == WM_KEYDOWN as WPARAM;
+        if (std::env::var("KALAM_LATENCY_DEBUG").as_deref() == Ok("1")
+            || std::env::var("KALAM_LATENCY_DEBUG").as_deref() == Ok("true"))
+            && is_press
+        {
+            crate::latency_trace_write(&format!("OS_key_down_0x{:X}", vk));
+        }
+        if USE_HOOK_AS_MAIN {
+            crate::hotkey::dispatch_key_from_win_hook(vk, is_press);
+        }
+    }
+    CallNextHookEx(LATENCY_DEBUG_HOOK_HANDLE, n_code, w_param, l_param)
+}
+
+/// Start WH_KEYBOARD_LL hook. use_hook_as_main = Windows default hotkey path. KALAM_LATENCY_DEBUG=1 logs OS_key_down. See .doc/latency-profiling-windows.md.
+pub fn start_latency_debug_keyboard_hook(use_hook_as_main: bool) {
+    let latency_debug = std::env::var("KALAM_LATENCY_DEBUG").as_deref() == Ok("1")
+        || std::env::var("KALAM_LATENCY_DEBUG").as_deref() == Ok("true");
+    if !use_hook_as_main && !latency_debug {
+        return;
+    }
+    std::thread::spawn(move || unsafe {
+        USE_HOOK_AS_MAIN = use_hook_as_main;
+        let hmod = GetModuleHandleW(null_mut());
+        if hmod == 0 {
+            return;
+        }
+        let hook = SetWindowsHookExW(
+            WH_KEYBOARD_LL,
+            Some(latency_debug_keyboard_proc),
+            hmod,
+            0,
+        );
+        if hook == 0 {
+            return;
+        }
+        LATENCY_DEBUG_HOOK_HANDLE = hook;
+        let mut msg: MSG = zeroed();
+        while GetMessageW(&mut msg, 0 as _, 0, 0) > 0 {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        UnhookWindowsHookEx(LATENCY_DEBUG_HOOK_HANDLE);
+        LATENCY_DEBUG_HOOK_HANDLE = 0 as HHOOK;
     });
 }

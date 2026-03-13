@@ -66,7 +66,7 @@
     top: 0;
     right: 0;
     bottom: 0;
-    width: min(420px, 100vw);
+    width: min(520px, 96vw);
     background: var(--bg-card);
     border-left: 1px solid var(--border-subtle);
     z-index: 101;
@@ -122,8 +122,15 @@
     padding: 16px 20px;
     border-top: 1px solid var(--border-subtle);
     display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
     justify-content: flex-end;
+    align-items: center;
     gap: 12px;
     background: var(--bg-app);
+  }
+
+  .panel-footer :global(button) {
+    flex-shrink: 0;
   }
 </style>

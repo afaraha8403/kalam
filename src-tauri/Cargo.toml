@@ -70,6 +70,8 @@ raw-window-handle = "0.6"
 
 # Platform-specific
 [target.'cfg(windows)'.dependencies]
+# Optional: KALAM_USE_WILLHOOK=1 uses willhook for hotkeys on Windows. See .doc/latency-profiling-windows.md.
+willhook = "0.6"
 windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_UI_Input_KeyboardAndMouse",

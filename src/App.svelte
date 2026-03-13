@@ -18,6 +18,67 @@
   import Icon from '@iconify/svelte'
   import type { AppConfig } from './types'
 
+  /** True when running in a normal browser (e.g. Vite dev server), not inside Tauri. */
+  const inTauri = typeof window !== 'undefined' && !!(window as { __TAURI__?: unknown }).__TAURI__
+  /** When set, force-skip onboarding in Tauri (for testing). In browser we always skip. */
+  const skipOnboardingParam =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('skipOnboarding') === '1'
+
+  /** Minimal config for rendering the main app in browser (no backend). */
+  function defaultBrowserConfig(): AppConfig {
+    return {
+      onboarding_complete: true,
+      hotkey: null,
+      toggle_dictation_hotkey: null,
+      dictation_enabled: true,
+      sidebar_collapsed: false,
+      audio_device: null,
+      stt_config: {
+        mode: 'Cloud',
+        provider: 'groq',
+        api_keys: {},
+        local_model: null,
+        vad_preset: 'Balanced'
+      },
+      formatting: {
+        voice_commands: true,
+        filler_word_removal: true,
+        auto_punctuation: true,
+        custom_rules: [],
+        injection_method: 'Auto',
+        keystroke_delay_ms: 10,
+        clipboard_threshold: 200,
+        force_clipboard_apps: []
+      },
+      privacy: {
+        history_retention_days: 90,
+        telemetry_enabled: false,
+        sensitive_app_detection: false,
+        sensitive_app_patterns: []
+      },
+      notifications: {
+        show_completion: true,
+        show_errors: true,
+        show_updates: true,
+        sound_enabled: false
+      },
+      logging: { enabled: false, level: 'Info', max_records: 2000 },
+      snippets: [],
+      auto_start: false,
+      languages: ['en'],
+      language_toggle_hotkey: null,
+      start_in_focus: true,
+      min_hold_ms: 300,
+      command_config: {
+        enabled: false,
+        hotkey: null,
+        provider: null,
+        api_keys: {},
+        models: {}
+      }
+    }
+  }
+
   const isOverlay =
     (() => {
       try {
@@ -45,6 +106,16 @@
 
   onMount(() => {
     if (isOverlay) return
+
+    // Browser (no Tauri): skip onboarding and use defaults so the main app can be debugged.
+    if (!inTauri) {
+      isFirstRun = false
+      statusBarConfig = defaultBrowserConfig()
+      statusBarPlatform = 'web'
+      sidebarDictationStore.updateFromConfig(defaultBrowserConfig(), 'web')
+      return
+    }
+
     let unlistenReset: (() => void) | null = null
     let unlistenTrayNavigate: (() => void) | null = null
     let unlistenSettings: (() => void) | null = null
@@ -70,7 +141,7 @@
       })
       try {
         const config = (await invoke('get_settings')) as AppConfig
-        isFirstRun = !config.onboarding_complete
+        isFirstRun = skipOnboardingParam ? false : !config.onboarding_complete
         dictationEnabled = config.dictation_enabled ?? true
         sidebarCollapsed = config.sidebar_collapsed ?? false
         initTelemetry(config.privacy?.telemetry_enabled ?? false)

@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
   import { listen } from '@tauri-apps/api/event'
   import type { AppConfig, WaveformStyle, ExpandDirection } from '../types'
+
+  // T6: earliest trace in overlay JS (latency debugging; only when KALAM_LATENCY_DEBUG=1)
+  invoke('trace_latency', { event: 'T6', jsTimestamp: Date.now() * 1000 }).catch(() => {})
 
   const KINDS = ['Hidden', 'Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error', 'Status'] as const
   type OverlayEvent =
@@ -291,12 +294,21 @@
     })
 
     getCurrentWebviewWindow().listen<OverlayEvent>('overlay-state', (e) => {
+      const jsTs = Date.now() * 1000
+      invoke('trace_latency', { event: 'T7', jsTimestamp: jsTs }).catch(() => {})
       const p = e?.payload
       if (isValidPayload(p)) {
+        if (p.kind === 'Listening') {
+          invoke('trace_latency', { event: 'T7_listening', jsTimestamp: jsTs }).catch(() => {})
+        }
         state = p
-
+        tick().then(() => {
+          invoke('trace_latency', { event: 'T8', jsTimestamp: Date.now() * 1000 }).catch(() => {})
+          requestAnimationFrame(() => {
+            invoke('trace_latency', { event: 'T9', jsTimestamp: Date.now() * 1000 }).catch(() => {})
+          })
+        })
         if (statusTimeout) clearTimeout(statusTimeout)
-
         if (p.kind === 'Status' || p.kind === 'Error' || p.kind === 'Success') {
           statusTimeout = setTimeout(() => {
             state = { kind: 'Collapsed' }

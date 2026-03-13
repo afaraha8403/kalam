@@ -2814,6 +2814,7 @@ dependencies = [
  "tokio-tungstenite",
  "url",
  "uuid",
+ "willhook",
  "windows-sys 0.52.0",
  "zip 0.6.6",
 ]
@@ -6809,6 +6810,16 @@ name = "widestring"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
+
+[[package]]
+name = "willhook"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "984cc87572ddeee205caab3372ca4d84596c363e6c809294dc4514ef43f5e83e"
+dependencies = [
+ "once_cell",
+ "winapi",
+]
 
 [[package]]
 name = "winapi"

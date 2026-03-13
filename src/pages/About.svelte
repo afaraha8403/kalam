@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import { listen } from '@tauri-apps/api/event'
   import Icon from '@iconify/svelte'
 
   let appVersion = ''
@@ -10,6 +11,8 @@
   let updateVersion = ''
   let updateError = ''
   let updateChannel: 'stable' | 'beta' = 'stable'
+  let updateInstalling = false
+  let updateDownloadPercent: number | null = null
 
   const GITHUB_REPO_URL = 'https://github.com/afaraha8403/kalam'
 
@@ -72,6 +75,16 @@ maintainers to request a commercial license.`
     } catch {
       updateChannel = 'stable'
     }
+    const unlisten = await listen<[number, number | null, number | null]>(
+      'update-download-progress',
+      (e) => {
+        const [, , percent] = e.payload
+        updateDownloadPercent = percent != null ? Math.round(percent) : null
+      }
+    )
+    return () => {
+      unlisten()
+    }
   })
 
   async function onChannelChange() {
@@ -101,6 +114,23 @@ maintainers to request a commercial license.`
       updateError = e instanceof Error ? e.message : String(e)
     } finally {
       updateChecking = false
+    }
+  }
+
+  async function downloadAndInstall() {
+    if (updateInstalling) return
+    updateInstalling = true
+    updateDownloadPercent = 0
+    updateError = ''
+    try {
+      await invoke('download_and_install_update')
+      // App restarts on success; we never reach here
+    } catch (e) {
+      updateError = e instanceof Error ? e.message : String(e)
+      updateStatus = 'error'
+    } finally {
+      updateInstalling = false
+      updateDownloadPercent = null
     }
   }
 </script>
@@ -178,6 +208,24 @@ maintainers to request a commercial license.`
         <div class="status-msg success"><Icon icon="ph:check-circle-duotone" /> Up to date</div>
       {:else if updateStatus === 'available'}
         <div class="status-msg available"><Icon icon="ph:sparkle-duotone" /> Update {updateVersion} available!</div>
+        <div class="update-install-actions">
+          <button
+            type="button"
+            class="btn-install"
+            disabled={updateInstalling}
+            on:click={downloadAndInstall}
+          >
+            {#if updateInstalling}
+              {#if updateDownloadPercent != null}
+                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading… {updateDownloadPercent}%
+              {:else}
+                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading &amp; installing…
+              {/if}
+            {:else}
+              <Icon icon="ph:download-simple-duotone" /> Download and install
+            {/if}
+          </button>
+        </div>
       {:else if updateStatus === 'error'}
         <div class="status-msg error"><Icon icon="ph:warning-circle-duotone" /> {updateError}</div>
       {/if}
@@ -491,6 +539,39 @@ maintainers to request a commercial license.`
     background: var(--primary-alpha-light);
     color: var(--primary-dark);
     border: 1px solid var(--primary-alpha);
+  }
+
+  .update-install-actions {
+    margin-top: 10px;
+  }
+
+  .btn-install {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--primary);
+    color: var(--white);
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px var(--primary-alpha);
+  }
+
+  .btn-install:hover:not(:disabled) {
+    background: var(--primary-dark);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px var(--primary-alpha);
+  }
+
+  .btn-install:disabled {
+    opacity: 0.9;
+    cursor: wait;
   }
 
   .status-msg.error {

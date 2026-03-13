@@ -8,6 +8,8 @@ mod history;
 mod hotkey;
 #[cfg(windows)]
 mod hotkey_win;
+#[cfg(windows)]
+mod overlay_message_log_win;
 mod injection;
 mod models;
 mod notifications;
@@ -78,20 +80,24 @@ fn language_display_name(code: &str) -> String {
     s.to_string()
 }
 
-/// When KALAM_LATENCY_DEBUG=1 or "true", append a timestamped label to ~/.kalam/latency-debug.txt and flush.
-/// Bypasses the log pipeline so timing isn't affected by log level or buffering.
-fn latency_debug_write(label: &str) {
+/// Run counter for each "Listening" emit (cold vs warm: run 1 = first after process start, run 2+ = subsequent).
+static LISTENING_EMIT_RUN: AtomicUsize = AtomicUsize::new(0);
+
+/// When KALAM_LATENCY_DEBUG=1 or "true", append a timestamped label to ~/.kalam/latency-trace.log and flush.
+/// Uses microsecond precision. Bypasses the log pipeline so timing isn't affected by log level or buffering.
+/// Pub(crate) so hotkey_win can log OS_key_down for "before T0" latency testing.
+pub(crate) fn latency_trace_write(label: &str) {
     if std::env::var("KALAM_LATENCY_DEBUG").as_deref() != Ok("1")
         && std::env::var("KALAM_LATENCY_DEBUG").as_deref() != Ok("true")
     {
         return;
     }
     let Ok(dir) = crate::config::get_kalam_dir() else { return };
-    let path = dir.join("latency-debug.txt");
+    let path = dir.join("latency-trace.log");
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis();
+        .as_micros();
     let line = format!("{}\t{}\n", ts, label);
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
@@ -102,6 +108,77 @@ fn latency_debug_write(label: &str) {
         let _ = f.write_all(line.as_bytes());
         let _ = f.flush();
     }
+}
+
+/// Called from frontend (overlay) to record a trace point with the JS-side timestamp for correlation.
+/// Writes: rust_micros\tlabel\tjs_micros so we can compute IPC/rendering deltas.
+#[tauri::command]
+fn trace_latency(event: String, js_timestamp: Option<f64>) {
+    if std::env::var("KALAM_LATENCY_DEBUG").as_deref() != Ok("1")
+        && std::env::var("KALAM_LATENCY_DEBUG").as_deref() != Ok("true")
+    {
+        return;
+    }
+    let Ok(dir) = crate::config::get_kalam_dir() else { return };
+    let path = dir.join("latency-trace.log");
+    let rust_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros();
+    let line = match js_timestamp {
+        Some(js_us) => format!("{}\t{}\t{}\n", rust_ts, event, js_us as u64),
+        None => format!("{}\t{}\n", rust_ts, event),
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        use std::io::Write;
+        let _ = f.write_all(line.as_bytes());
+        let _ = f.flush();
+    }
+}
+
+/// Start logging Win32 messages for the overlay window (Windows only). Log file: ~/.kalam/overlay-messages.log
+#[cfg(windows)]
+#[tauri::command]
+fn start_overlay_message_log(app: tauri::AppHandle) -> Result<(), String> {
+    crate::overlay_message_log_win::start(&app)
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn start_overlay_message_log(_app: tauri::AppHandle) -> Result<(), String> {
+    Err("Overlay message log is only available on Windows".to_string())
+}
+
+/// Stop the overlay message log.
+#[cfg(windows)]
+#[tauri::command]
+fn stop_overlay_message_log() -> Result<(), String> {
+    crate::overlay_message_log_win::stop()
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn stop_overlay_message_log() -> Result<(), String> {
+    Err("Overlay message log is only available on Windows".to_string())
+}
+
+/// Start overlay message log and auto-stop after the given seconds. E.g. invoke with { seconds: 15 }, then hold the hotkey.
+#[tauri::command]
+async fn start_overlay_message_log_for_seconds(app: tauri::AppHandle, seconds: u64) -> Result<(), String> {
+    #[cfg(windows)]
+    crate::overlay_message_log_win::start(&app)?;
+    #[cfg(not(windows))]
+    let _ = app;
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(seconds)).await;
+        #[cfg(windows)]
+        let _ = crate::overlay_message_log_win::stop();
+    });
+    Ok(())
 }
 
 /// Which hotkey started the current (or last) recording: dictates whether we inject text or run command pipeline.
@@ -236,31 +313,44 @@ fn create_registrations(
                 let is_recording_press = is_recording_flag.clone();
                 let app_handle_release = app_handle.clone();
                 let is_recording_release = is_recording_flag.clone();
+                // Record press time in sync callback so hold duration uses real key-down time, not when the async task runs.
+                let hold_press_instant: Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+                    Arc::new(std::sync::Mutex::new(None));
 
                 registrations.push(HotkeyRegistration {
                     target: target_hotkey,
                     active: Arc::new(AtomicBool::new(false)),
-                    on_press: Arc::new(move || {
-                        latency_debug_write("hold_callback_invoked");
-                        log::info!("Hold hotkey pressed - callback invoked");
-                        let app_handle = app_handle_press.clone();
-                        let is_recording = is_recording_press.clone();
-                        tauri::async_runtime::spawn(async move {
-                            latency_debug_write("hold_spawn_started");
-                            let state = app_handle.state::<AppState>();
-                            let dictation_enabled = {
-                                let config = state.config.lock().await;
-                                let out = config.get_all().dictation_enabled;
-                                latency_debug_write("hold_config_acquired");
-                                out
-                            };
-                            if !dictation_enabled {
-                                return;
-                            }
-                            *state.recording_type.lock().await = RecordingType::Dictation;
-                            *state.press_start_time.lock().await = Some(std::time::Instant::now());
-                            start_dictation(state, is_recording).await;
-                        });
+                    on_press: Arc::new({
+                        let hold_press_instant_press = hold_press_instant.clone();
+                        move || {
+                            let _ = hold_press_instant_press.lock().map(|mut g| *g = Some(std::time::Instant::now()));
+                            latency_trace_write("T0");
+                            latency_trace_write("hold_callback_invoked");
+                            log::info!("Hold hotkey pressed - callback invoked");
+                            let app_handle = app_handle_press.clone();
+                            let is_recording = is_recording_press.clone();
+                            let hold_press_instant_async = hold_press_instant_press.clone();
+                            tauri::async_runtime::spawn(async move {
+                                latency_trace_write("T1");
+                                latency_trace_write("hold_spawn_started");
+                                let state = app_handle.state::<AppState>();
+                                let press_instant = hold_press_instant_async.lock().ok().and_then(|mut g| g.take());
+                                if let Some(instant) = press_instant {
+                                    *state.press_start_time.lock().await = Some(instant);
+                                }
+                                let dictation_enabled = {
+                                    let config = state.config.lock().await;
+                                    let out = config.get_all().dictation_enabled;
+                                    latency_trace_write("hold_config_acquired");
+                                    out
+                                };
+                                if !dictation_enabled {
+                                    return;
+                                }
+                                *state.recording_type.lock().await = RecordingType::Dictation;
+                                start_dictation(state, is_recording).await;
+                            });
+                        }
                     }),
                     on_release: Arc::new(move || {
                         let app_handle = app_handle_release.clone();
@@ -277,9 +367,17 @@ fn create_registrations(
                             }
                             let mut is_short_press = false;
                             if let Some(start_time) = state.press_start_time.lock().await.take() {
-                                if start_time.elapsed().as_millis() < min_hold_ms as u128 {
+                                let elapsed_ms = start_time.elapsed().as_millis();
+                                if elapsed_ms < min_hold_ms as u128 {
                                     is_short_press = true;
+                                    log::info!("Hold release: elapsed {} ms < min_hold_ms {} → short press (cancel)", elapsed_ms, min_hold_ms);
+                                    latency_trace_write(&format!("hold_release_short_elapsed_{}_min_{}", elapsed_ms, min_hold_ms));
+                                } else {
+                                    latency_trace_write(&format!("hold_release_long_elapsed_{}_min_{}", elapsed_ms, min_hold_ms));
                                 }
+                            } else {
+                                log::warn!("Hold release: no press_start_time (release raced or missed) → treating as long press");
+                                latency_trace_write("hold_release_no_start_time");
                             }
                             if is_short_press {
                                 cancel_dictation(state, is_recording).await;
@@ -318,17 +416,19 @@ fn create_registrations(
                     target: toggle_hotkey,
                     active: Arc::new(AtomicBool::new(false)),
                     on_press: Arc::new(move || {
-                        latency_debug_write("toggle_callback_invoked");
+                        latency_trace_write("T0");
+                        latency_trace_write("toggle_callback_invoked");
                         log::info!("Toggle hotkey pressed - callback invoked");
                         let app_handle = app_handle_press.clone();
                         let is_recording = is_recording_press.clone();
                         tauri::async_runtime::spawn(async move {
-                            latency_debug_write("toggle_spawn_started");
+                            latency_trace_write("T1");
+                            latency_trace_write("toggle_spawn_started");
                             let state = app_handle.state::<AppState>();
                             let dictation_enabled = {
                                 let config = state.config.lock().await;
                                 let out = config.get_all().dictation_enabled;
-                                latency_debug_write("toggle_config_acquired");
+                                latency_trace_write("toggle_config_acquired");
                                 out
                             };
                             if !dictation_enabled {
@@ -398,32 +498,44 @@ fn create_registrations(
             let is_recording_press = is_recording_flag.clone();
             let app_handle_release = app_handle.clone();
             let is_recording_release = is_recording_flag.clone();
+            let cmd_press_instant: Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+                Arc::new(std::sync::Mutex::new(None));
 
             registrations.push(HotkeyRegistration {
                 target: cmd_target,
                 active: Arc::new(AtomicBool::new(false)),
-                    on_press: Arc::new(move || {
-                        latency_debug_write("command_callback_invoked");
-                        log::info!("Command hotkey pressed");
-                        let app_handle = app_handle_press.clone();
-                        let is_recording = is_recording_press.clone();
-                        tauri::async_runtime::spawn(async move {
-                            latency_debug_write("command_spawn_started");
-                            let state = app_handle.state::<AppState>();
-                            let (dictation_enabled, cmd_enabled) = {
-                                let config = state.config.lock().await;
-                                let cfg = config.get_all();
-                                let out = (cfg.dictation_enabled, cfg.command_config.enabled);
-                                latency_debug_write("command_config_acquired");
-                                out
-                            };
-                            if !dictation_enabled || !cmd_enabled {
-                                return;
-                            }
-                            *state.recording_type.lock().await = RecordingType::Command;
-                            *state.press_start_time.lock().await = Some(std::time::Instant::now());
-                            start_dictation(state, is_recording).await;
-                        });
+                    on_press: Arc::new({
+                        let cmd_press_instant_press = cmd_press_instant.clone();
+                        move || {
+                            let _ = cmd_press_instant_press.lock().map(|mut g| *g = Some(std::time::Instant::now()));
+                            latency_trace_write("T0");
+                            latency_trace_write("command_callback_invoked");
+                            log::info!("Command hotkey pressed");
+                            let app_handle = app_handle_press.clone();
+                            let is_recording = is_recording_press.clone();
+                            let cmd_press_instant_async = cmd_press_instant_press.clone();
+                            tauri::async_runtime::spawn(async move {
+                                latency_trace_write("T1");
+                                latency_trace_write("command_spawn_started");
+                                let state = app_handle.state::<AppState>();
+                                let press_instant = cmd_press_instant_async.lock().ok().and_then(|mut g| g.take());
+                                if let Some(instant) = press_instant {
+                                    *state.press_start_time.lock().await = Some(instant);
+                                }
+                                let (dictation_enabled, cmd_enabled) = {
+                                    let config = state.config.lock().await;
+                                    let cfg = config.get_all();
+                                    let out = (cfg.dictation_enabled, cfg.command_config.enabled);
+                                    latency_trace_write("command_config_acquired");
+                                    out
+                                };
+                                if !dictation_enabled || !cmd_enabled {
+                                    return;
+                                }
+                                *state.recording_type.lock().await = RecordingType::Command;
+                                start_dictation(state, is_recording).await;
+                            });
+                        }
                     }),
                 on_release: Arc::new(move || {
                     let app_handle = app_handle_release.clone();
@@ -440,9 +552,17 @@ fn create_registrations(
                         }
                         let mut is_short_press = false;
                         if let Some(start_time) = state.press_start_time.lock().await.take() {
-                            if start_time.elapsed().as_millis() < min_hold_ms as u128 {
+                            let elapsed_ms = start_time.elapsed().as_millis();
+                            if elapsed_ms < min_hold_ms as u128 {
                                 is_short_press = true;
+                                log::info!("Command release: elapsed {} ms < min_hold_ms {} → short press (cancel)", elapsed_ms, min_hold_ms);
+                                latency_trace_write(&format!("command_release_short_elapsed_{}_min_{}", elapsed_ms, min_hold_ms));
+                            } else {
+                                latency_trace_write(&format!("command_release_long_elapsed_{}_min_{}", elapsed_ms, min_hold_ms));
                             }
+                        } else {
+                            log::warn!("Command release: no press_start_time → treating as long press");
+                            latency_trace_write("command_release_no_start_time");
                         }
                         if is_short_press {
                             cancel_dictation(state, is_recording).await;
@@ -649,6 +769,7 @@ pub fn run() {
             set_hotkeys_paused,
             get_app_version,
             check_for_updates,
+            download_and_install_update,
             request_system_permission,
             open_system_permission_page,
             get_settings,
@@ -675,6 +796,10 @@ pub fn run() {
             open_app_data_folder,
             resize_overlay,
             get_overlay_initial_state,
+            trace_latency,
+            start_overlay_message_log,
+            stop_overlay_message_log,
+            start_overlay_message_log_for_seconds,
             commands::export_logs_csv,
             commands::create_entry,
             commands::get_entries_by_type,
@@ -849,6 +974,30 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<Option<String>, Stri
         .await
         .map_err(|e| format!("{:?}", e))?;
     Ok(update.as_ref().map(|u| u.version.clone()))
+}
+
+/// Download and install the available update (uses channel from settings), then restart the app.
+/// Returns Ok(()) when install has started (app will restart). Err if no update or download/install failed.
+#[tauri::command]
+async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String> {
+    let update = check_update_with_channel(&app)
+        .await
+        .map_err(|e| format!("{:?}", e))?
+        .ok_or_else(|| "No update available.".to_string())?;
+    let app_emit = app.clone();
+    let mut downloaded: u64 = 0;
+    update
+        .download_and_install(
+            move |chunk_len, total| {
+                downloaded += chunk_len as u64;
+                let percent = total.map(|t| (downloaded as f64 / t as f64) * 100.0);
+                let _ = app_emit.emit("update-download-progress", (downloaded, total, percent));
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| format!("{:?}", e))?;
+    app.restart();
 }
 
 /// Request a system permission using OS-native methods when available.
@@ -1608,6 +1757,7 @@ fn emit_overlay_event(app: &tauri::AppHandle, event: OverlayEvent) {
     // WM_PAINT that the renderer must process, flushing any pending scripts along the way.
     #[cfg(windows)]
     nudge_overlay_renderer(app);
+    latency_trace_write("T5_after_nudge");
 }
 
 /// Force the overlay's WebView2 renderer to process pending ExecuteScript calls.
@@ -1932,7 +2082,7 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
         }
         *audio_state = AudioState::Starting;
     }
-    latency_debug_write("start_dictation_entered");
+    latency_trace_write("start_dictation_entered");
     let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Starting);
 
     log::info!("Starting dictation...");
@@ -1940,18 +2090,25 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     // Pre-resize the overlay to expanded BEFORE emitting Listening so the window is already
     // large enough when JS processes the event. Eliminates the IPC roundtrip (JS → Rust resize)
     // that was the main source of perceived delay.
+    latency_trace_write("T2_before_resize");
     let _ = resize_overlay(state.app_handle.clone(), true);
+    latency_trace_write("T2_after_resize");
+    let run = LISTENING_EMIT_RUN.fetch_add(1, Ordering::SeqCst) + 1;
+    latency_trace_write(&format!("listening_emit_run_{}", run));
+    latency_trace_write("T4_before_emit");
     emit_overlay_event(&state.app_handle, OverlayEvent::Listening);
-    latency_debug_write("after_emit_listening");
+    latency_trace_write("after_emit_listening");
     let app_handle = state.app_handle.clone();
+    latency_trace_write("T3_before_play_sound");
     if let Err(e) = play_sound(&app_handle, "dictation-started") {
         log::warn!("Failed to play dictation start sound: {}", e);
     }
-    latency_debug_write("after_play_sound");
+    latency_trace_write("T3_after_play_sound");
+    latency_trace_write("after_play_sound");
 
-    latency_debug_write("before_update_overlay_position");
+    latency_trace_write("before_update_overlay_position");
     let _ = update_overlay_position(&state.app_handle);
-    latency_debug_write("after_update_overlay_position");
+    latency_trace_write("after_update_overlay_position");
 
     #[cfg(windows)]
     {
