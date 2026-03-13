@@ -51,7 +51,9 @@ fn use_same_thread_hotkey() -> bool {
 /// Windows: set rdev thread to ABOVE_NORMAL priority when rdev is used (measured: no material improvement to ~500 ms gap).
 #[cfg(windows)]
 fn set_rdev_thread_priority_above_normal() {
-    use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL};
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL,
+    };
     let thread = unsafe { GetCurrentThread() };
     if unsafe { SetThreadPriority(thread, THREAD_PRIORITY_ABOVE_NORMAL) } == 0 {
         log::warn!("SetThreadPriority(ABOVE_NORMAL) failed for rdev thread");

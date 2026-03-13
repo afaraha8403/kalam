@@ -29,8 +29,8 @@ pub fn create_provider_sync(
     match config.mode {
         STTMode::Cloud | STTMode::Hybrid | STTMode::Auto => match config.provider.as_str() {
             "groq" => {
-                let api_key =
-                    selected_api_key(config).ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
+                let api_key = selected_api_key(config)
+                    .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
                 Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?)
                     as Box<dyn STTProvider>)
             }

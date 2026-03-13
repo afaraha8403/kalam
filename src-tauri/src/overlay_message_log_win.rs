@@ -2,10 +2,10 @@
 //! Start via Tauri command when KALAM_LATENCY_DEBUG=1; hold the hotkey; stop after a few seconds.
 
 use std::io::Write;
-use raw_window_handle::HasWindowHandle;
-use tauri::Manager;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use raw_window_handle::HasWindowHandle;
+use tauri::Manager;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetWindowThreadProcessId, IsChild, SetWindowsHookExW, UnhookWindowsHookEx,

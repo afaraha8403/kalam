@@ -8,9 +8,9 @@ mod history;
 mod hotkey;
 #[cfg(windows)]
 mod hotkey_win;
+mod injection;
 #[cfg(windows)]
 mod overlay_message_log_win;
-mod injection;
 mod models;
 mod notifications;
 mod stt;
@@ -92,7 +92,9 @@ pub(crate) fn latency_trace_write(label: &str) {
     {
         return;
     }
-    let Ok(dir) = crate::config::get_kalam_dir() else { return };
+    let Ok(dir) = crate::config::get_kalam_dir() else {
+        return;
+    };
     let path = dir.join("latency-trace.log");
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -119,7 +121,9 @@ fn trace_latency(event: String, js_timestamp: Option<f64>) {
     {
         return;
     }
-    let Ok(dir) = crate::config::get_kalam_dir() else { return };
+    let Ok(dir) = crate::config::get_kalam_dir() else {
+        return;
+    };
     let path = dir.join("latency-trace.log");
     let rust_ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -168,7 +172,10 @@ fn stop_overlay_message_log() -> Result<(), String> {
 
 /// Start overlay message log and auto-stop after the given seconds. E.g. invoke with { seconds: 15 }, then hold the hotkey.
 #[tauri::command]
-async fn start_overlay_message_log_for_seconds(app: tauri::AppHandle, seconds: u64) -> Result<(), String> {
+async fn start_overlay_message_log_for_seconds(
+    app: tauri::AppHandle,
+    seconds: u64,
+) -> Result<(), String> {
     #[cfg(windows)]
     crate::overlay_message_log_win::start(&app)?;
     #[cfg(not(windows))]
@@ -1138,7 +1145,12 @@ async fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppConfig, St
         .get(&cfg.stt_config.provider)
         .map(|s| !s.is_empty())
         .unwrap_or(false)
-        || cfg.stt_config.api_key.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+        || cfg
+            .stt_config
+            .api_key
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
     log::debug!(
         "Returning settings, selected provider api key present: {}",
         selected_api_key_present
@@ -1354,8 +1366,7 @@ async fn save_log_to_file() -> Result<(), String> {
 /// Show a native "Save as" dialog and write all logs from the database (CSV) to the chosen file.
 #[tauri::command]
 async fn save_logs_csv_to_file() -> Result<(), String> {
-    let (csv, filename) =
-        app_log::export_logs_csv().map_err(|e| e.to_string())?;
+    let (csv, filename) = app_log::export_logs_csv().map_err(|e| e.to_string())?;
     let lines = csv.trim().split('\n').filter(|s| !s.is_empty()).count();
     if lines <= 1 {
         return Err("No log entries in database.".to_string());
@@ -2119,9 +2130,11 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
             let process_name_state = state.foreground_process_name.clone();
             let hwnd_usize = hwnd as usize;
             tauri::async_runtime::spawn(async move {
-                let name = tauri::async_runtime::spawn_blocking(move || get_process_name_for_hwnd(hwnd_usize))
-                    .await
-                    .unwrap_or(None);
+                let name = tauri::async_runtime::spawn_blocking(move || {
+                    get_process_name_for_hwnd(hwnd_usize)
+                })
+                .await
+                .unwrap_or(None);
                 if let Ok(mut guard) = process_name_state.try_lock() {
                     *guard = name;
                 }

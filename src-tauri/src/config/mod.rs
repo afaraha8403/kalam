@@ -46,7 +46,11 @@ fn migrate_legacy_stt_config(config: &mut crate::config::AppConfig) {
     let provider = config.stt_config.provider.clone();
     if let Some(api_key) = config.stt_config.api_key.take() {
         if !provider.trim().is_empty() {
-            config.stt_config.api_keys.entry(provider).or_insert(api_key);
+            config
+                .stt_config
+                .api_keys
+                .entry(provider)
+                .or_insert(api_key);
         }
     }
 }

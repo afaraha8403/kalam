@@ -140,12 +140,7 @@ pub fn start_latency_debug_keyboard_hook(use_hook_as_main: bool) {
         if hmod == 0 {
             return;
         }
-        let hook = SetWindowsHookExW(
-            WH_KEYBOARD_LL,
-            Some(latency_debug_keyboard_proc),
-            hmod,
-            0,
-        );
+        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(latency_debug_keyboard_proc), hmod, 0);
         if hook == 0 {
             return;
         }
