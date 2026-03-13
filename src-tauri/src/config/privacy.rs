@@ -41,9 +41,9 @@ pub fn get_foreground_app() -> Option<(String, String)> {
 
     #[cfg(not(windows))]
     let process_name = {
-        use sysinfo::{Pid, System};
+        use sysinfo::{Pid, ProcessesToUpdate, System};
         let mut sys = System::new_all();
-        sys.refresh_processes();
+        sys.refresh_processes(ProcessesToUpdate::All);
         sys.process(Pid::from_u32(pid as u32))
             .map(|p| p.name().to_string_lossy().to_string())
             .unwrap_or_default()
