@@ -492,8 +492,8 @@
 
   .sidebar-toggle:hover {
     opacity: 1;
-    color: var(--navy-deep);
-    background: var(--bg-input);
+    color: var(--primary);
+    background: var(--primary-alpha-subtle);
   }
 
   .sidebar-toggle :global(svg) {
@@ -570,13 +570,13 @@
   }
 
   .nav-links button:hover {
-    background: var(--bg-input);
-    color: var(--navy-deep);
-    transform: translateX(4px);
+    background: var(--primary-alpha-subtle);
+    color: var(--primary-dark);
+    transform: translateX(3px);
   }
 
   .nav-links button:hover :global(.nav-icon) {
-    color: var(--navy-deep);
+    color: var(--primary);
   }
 
   .nav-links li.active button {
@@ -625,7 +625,7 @@
   }
 
   .dictation-control:hover {
-    background: var(--bg-input);
+    background: var(--warm-amber-alpha-light);
   }
 
   .dictation-info {

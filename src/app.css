@@ -1,13 +1,14 @@
 @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@100;200;300;400;500;600;700;800;900&family=Syne:wght@400..800&display=swap');
 
-/* Kalam theme — from logo SVG (navy + teal), high contrast */
+/* Kalam theme — harmonized palette from logo SVG + warmth */
 :root {
-  /* Primary teal from logo */
+  /* Primary teal from logo (unchanged core) */
   --primary: #4AAEBE;
   --primary-light: #6BBEC9;
   --primary-dark: #3B9FB6;
   --primary-alpha: rgba(74, 174, 190, 0.15);
   --primary-alpha-light: rgba(74, 174, 190, 0.08);
+  --primary-alpha-subtle: rgba(74, 174, 190, 0.04);
   
   /* Navy from logo */
   --navy-deep: #071029;
@@ -15,14 +16,34 @@
   --navy-mid: #133051;
   --navy-alpha: rgba(7, 16, 41, 0.05);
   
-  /* Surfaces — Light theme with HIGH contrast */
-  --bg-app: #E2E8F0;       /* App background (slightly darker/cooler for floating effect) */
-  --bg-dark: #CBD5E1;      /* Sidebar / App background */
-  --bg-content: #F8FAFC;   /* Main content area */
-  --bg-card: #FFFFFF;      /* Cards */
-  --bg-input: #F1F5F9;     /* Inputs and hover states (softer) */
-  --bg-input-hover: #E2E8F0;
-  --bg-elevated: #FFFFFF;  /* Modals/Overlays */
+  /* Warm accents for personality */
+  --warm-amber: #D4A574;
+  --warm-amber-alpha: rgba(212, 165, 116, 0.12);
+  --warm-amber-alpha-light: rgba(212, 165, 116, 0.06);
+  --soft-rose: #E8B4B8;
+  --soft-rose-alpha: rgba(232, 180, 184, 0.15);
+  --soft-blue: #6B9CBE;
+  --soft-purple: #9B8BB8;
+  
+  /* Harmonized stat colors (rainbow refined) */
+  --stat-streak: #D4A574;        /* Warm amber for streak/fire */
+  --stat-streak-alpha: rgba(212, 165, 116, 0.12);
+  --stat-time: #4AAEBE;          /* Primary teal for time */
+  --stat-time-alpha: rgba(74, 174, 190, 0.12);
+  --stat-words: #6B9CBE;         /* Soft blue for words */
+  --stat-words-alpha: rgba(107, 156, 190, 0.12);
+  --stat-speed: #7B8BB8;         /* Muted periwinkle for speed */
+  --stat-speed-alpha: rgba(123, 139, 184, 0.12);
+  
+  /* Surfaces — Light theme with warm neutrals */
+  --bg-app: #E8EDF2;             /* Warmer app background */
+  --bg-dark: #D1D8E0;            /* Warmer sidebar background */
+  --bg-content: #F8FAFC;         /* Main content area */
+  --bg-card: #FFFFFF;            /* Cards */
+  --bg-input: #F1F5F9;           /* Inputs and hover states */
+  --bg-input-hover: #E8EDF2;
+  --bg-elevated: #FFFFFF;        /* Modals/Overlays */
+  --bg-warm-tint: rgba(212, 165, 116, 0.04);  /* Subtle warm tint */
   
   /* Text — Dark for readability */
   --text-primary: #0F172A;
@@ -35,6 +56,7 @@
   --border-visible: #94A3B8;
   --border-bright: #4AAEBE;
   --border-subtle: #E2E8F0;
+  --border-warm: rgba(212, 165, 116, 0.3);
   
   /* Semantic */
   --success: #10B981;
@@ -42,11 +64,11 @@
   --error: #EF4444;
   --white: #FFFFFF;
 
-  /* Shadows for floating aesthetic */
-  --shadow-sm: 0 2px 4px rgba(7, 16, 41, 0.06), 0 0 0 1px rgba(7, 16, 41, 0.04);
-  --shadow-md: 0 4px 12px rgba(7, 16, 41, 0.08), 0 0 0 1px rgba(7, 16, 41, 0.04);
-  --shadow-lg: 0 12px 32px rgba(7, 16, 41, 0.12), 0 0 0 1px rgba(7, 16, 41, 0.04);
-  --shadow-inner: inset 0 2px 4px rgba(7, 16, 41, 0.04);
+  /* Shadows — Softer, navy-based */
+  --shadow-sm: 0 2px 4px rgba(7, 16, 41, 0.04), 0 0 0 1px rgba(7, 16, 41, 0.02);
+  --shadow-md: 0 3px 8px rgba(7, 16, 41, 0.05), 0 0 0 1px rgba(7, 16, 41, 0.03);
+  --shadow-lg: 0 8px 24px rgba(7, 16, 41, 0.08), 0 0 0 1px rgba(7, 16, 41, 0.03);
+  --shadow-inner: inset 0 2px 4px rgba(7, 16, 41, 0.03);
 
   /* Border Radius */
   --radius-sm: 8px;

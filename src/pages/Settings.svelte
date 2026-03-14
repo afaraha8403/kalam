@@ -82,6 +82,29 @@
   let dictionaryNewTerm = ''
   let dictionaryLoading = false
 
+  // Collapsible sections state - basic sections expanded, advanced collapsed by default
+  let collapsedSections: Record<string, boolean> = {
+    // General tab
+    general_hotkeys: false,
+    general_startup: false,
+    general_overlay: false,
+    // Dictation tab
+    dictation_audio: false,
+    dictation_stt: false,
+    dictation_formatting: false,
+    // Other tabs
+    dictionary: false,
+    command: false,
+    privacy: false,
+    advanced: true,  // Collapsed by default (advanced)
+    advanced_danger: false  // Keep danger zone visible by default
+  }
+
+  function toggleSection(section: string) {
+    collapsedSections[section] = !collapsedSections[section]
+    collapsedSections = { ...collapsedSections }
+  }
+
   function getCurrentSttProvider(): string {
     return config?.stt_config?.provider || 'groq'
   }
@@ -932,192 +955,200 @@
 
     <div class="tab-content">
       {#if activeTab === 'general'}
-        <section>
-          <h3>Dictation Hotkeys</h3>
-          <div class="form-group">
-            <label for="hotkey">Hold to Dictate</label>
-            <HotkeyCapture 
-              value={config.hotkey ?? ''} 
-              onChange={setHotkey}
-            />
-            <p class="hint">Press and hold this hotkey to dictate, release to stop.</p>
-            
-            <div class="sub-setting" style="margin-top: 12px;">
-              <label for="min-hold-ms">Short-press threshold (ms)</label>
-              <input 
-                id="min-hold-ms" 
-                type="number" 
-                min="0" 
-                max="2000" 
-                step="50"
-                bind:value={config.min_hold_ms}
-                on:change={scheduleSave}
+        <section class:collapsed={collapsedSections.general_hotkeys}>
+          <h3 on:click={() => toggleSection('general_hotkeys')}>Dictation Hotkeys</h3>
+          <div class="section-content">
+            <div class="form-group">
+              <label for="hotkey">Hold to Dictate</label>
+              <HotkeyCapture
+                value={config.hotkey ?? ''}
+                onChange={setHotkey}
               />
-              <p class="hint">Applies to Hold to Dictate only: releases earlier than this are treated as short presses and cancelled.</p>
-            </div>
-          </div>
+              <p class="hint">Press and hold this hotkey to dictate, release to stop.</p>
 
-          <div class="form-group">
-            <label for="toggle-hotkey">Toggle Dictation</label>
-            <HotkeyCapture 
-              value={config.toggle_dictation_hotkey ?? ''} 
-              onChange={setToggleHotkey}
-            />
-            <p class="hint">Press this hotkey once to start dictating, press again to stop.</p>
+              <div class="sub-setting" style="margin-top: 12px;">
+                <label for="min-hold-ms">Short-press threshold (ms)</label>
+                <input
+                  id="min-hold-ms"
+                  type="number"
+                  min="0"
+                  max="2000"
+                  step="50"
+                  bind:value={config.min_hold_ms}
+                  on:change={scheduleSave}
+                />
+                <p class="hint">Applies to Hold to Dictate only: releases earlier than this are treated as short presses and cancelled.</p>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="toggle-hotkey">Toggle Dictation</label>
+              <HotkeyCapture
+                value={config.toggle_dictation_hotkey ?? ''}
+                onChange={setToggleHotkey}
+              />
+              <p class="hint">Press this hotkey once to start dictating, press again to stop.</p>
+            </div>
           </div>
         </section>
 
-        <section>
-          <h3>Startup</h3>
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={config.auto_start} on:change={scheduleSave} />
-              Start on login
-            </label>
-          </div>
+        <section class:collapsed={collapsedSections.general_startup}>
+          <h3 on:click={() => toggleSection('general_startup')}>Startup</h3>
+          <div class="section-content">
+            <div class="form-group checkbox">
+              <label>
+                <input type="checkbox" bind:checked={config.auto_start} on:change={scheduleSave} />
+                Start on login
+              </label>
+            </div>
 
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={config.start_in_focus} on:change={scheduleSave} />
-              Start in focus (show window on startup)
-            </label>
-            <p class="hint">If disabled, app starts minimized to tray and plays a sound</p>
+            <div class="form-group checkbox">
+              <label>
+                <input type="checkbox" bind:checked={config.start_in_focus} on:change={scheduleSave} />
+                Start in focus (show window on startup)
+              </label>
+              <p class="hint">If disabled, app starts minimized to tray and plays a sound</p>
+            </div>
           </div>
         </section>
 
-        <section>
-          <h3>Overlay Appearance</h3>
-          
-          <div class="form-group">
-            <label for="waveform-style">Waveform Style</label>
-            <select id="waveform-style" bind:value={config.waveform_style} on:change={scheduleSave}>
-              <option value="Line">Line</option>
-              <option value="Symmetric">Symmetric Wave</option>
-              <option value="Heartbeat">Heartbeat</option>
-              <option value="Snake">Snake</option>
-              <option value="DoubleHelix">Double Helix</option>
-              <option value="Liquid">Liquid</option>
-              <option value="Waves">Waves</option>
-              <option value="Glitch">Glitch</option>
-              <option value="Bars">Bars</option>
-              <option value="CenterSplit">Center Split</option>
-            </select>
-            <p class="hint">Choose how your voice is visualized in the overlay pill.</p>
-          </div>
-
-          <div class="form-group">
-            <label for="overlay-expand-direction">Expand Direction</label>
-            <select id="overlay-expand-direction" bind:value={config.overlay_expand_direction} on:change={scheduleSave}>
-              <option value="Up">Upwards (Default)</option>
-              <option value="Down">Downwards</option>
-              <option value="Center">Center</option>
-            </select>
-            <p class="hint">Which direction the pill expands when you start dictating.</p>
-          </div>
-
-          <div class="form-group">
-            <label for="overlay-position">Screen Position</label>
-            <select id="overlay-position" bind:value={config.overlay_position} on:change={scheduleSave}>
-              <option value="BottomCenter">Bottom Center (Default)</option>
-              <option value="BottomLeft">Bottom Left</option>
-              <option value="BottomRight">Bottom Right</option>
-              <option value="TopCenter">Top Center</option>
-              <option value="TopLeft">Top Left</option>
-              <option value="TopRight">Top Right</option>
-              <option value="CenterLeft">Center Left</option>
-              <option value="CenterRight">Center Right</option>
-              <option value="Center">Center</option>
-            </select>
-            <p class="hint">Where the pill appears on your primary monitor.</p>
-          </div>
-
-          <div class="form-group row-group">
-            <div class="sub-setting">
-              <label for="overlay-offset-x">X Offset (px)</label>
-              <input
-                id="overlay-offset-x"
-                type="number"
-                bind:value={config.overlay_offset_x}
-                on:input={scheduleSave}
-              />
+        <section class:collapsed={collapsedSections.general_overlay}>
+          <h3 on:click={() => toggleSection('general_overlay')}>Overlay Appearance</h3>
+          <div class="section-content">
+            <div class="form-group">
+              <label for="waveform-style">Waveform Style</label>
+              <select id="waveform-style" bind:value={config.waveform_style} on:change={scheduleSave}>
+                <option value="Line">Line</option>
+                <option value="Symmetric">Symmetric Wave</option>
+                <option value="Heartbeat">Heartbeat</option>
+                <option value="Snake">Snake</option>
+                <option value="DoubleHelix">Double Helix</option>
+                <option value="Liquid">Liquid</option>
+                <option value="Waves">Waves</option>
+                <option value="Glitch">Glitch</option>
+                <option value="Bars">Bars</option>
+                <option value="CenterSplit">Center Split</option>
+              </select>
+              <p class="hint">Choose how your voice is visualized in the overlay pill.</p>
             </div>
-            <div class="sub-setting">
-              <label for="overlay-offset-y">Y Offset (px)</label>
-              <input
-                id="overlay-offset-y"
-                type="number"
-                bind:value={config.overlay_offset_y}
-                on:input={scheduleSave}
-              />
+
+            <div class="form-group">
+              <label for="overlay-expand-direction">Expand Direction</label>
+              <select id="overlay-expand-direction" bind:value={config.overlay_expand_direction} on:change={scheduleSave}>
+                <option value="Up">Upwards (Default)</option>
+                <option value="Down">Downwards</option>
+                <option value="Center">Center</option>
+              </select>
+              <p class="hint">Which direction the pill expands when you start dictating.</p>
             </div>
+
+            <div class="form-group">
+              <label for="overlay-position">Screen Position</label>
+              <select id="overlay-position" bind:value={config.overlay_position} on:change={scheduleSave}>
+                <option value="BottomCenter">Bottom Center (Default)</option>
+                <option value="BottomLeft">Bottom Left</option>
+                <option value="BottomRight">Bottom Right</option>
+                <option value="TopCenter">Top Center</option>
+                <option value="TopLeft">Top Left</option>
+                <option value="TopRight">Top Right</option>
+                <option value="CenterLeft">Center Left</option>
+                <option value="CenterRight">Center Right</option>
+                <option value="Center">Center</option>
+              </select>
+              <p class="hint">Where the pill appears on your primary monitor.</p>
+            </div>
+
+            <div class="form-group row-group">
+              <div class="sub-setting">
+                <label for="overlay-offset-x">X Offset (px)</label>
+                <input
+                  id="overlay-offset-x"
+                  type="number"
+                  bind:value={config.overlay_offset_x}
+                  on:input={scheduleSave}
+                />
+              </div>
+              <div class="sub-setting">
+                <label for="overlay-offset-y">Y Offset (px)</label>
+                <input
+                  id="overlay-offset-y"
+                  type="number"
+                  bind:value={config.overlay_offset_y}
+                  on:input={scheduleSave}
+                />
+              </div>
+            </div>
+            <p class="hint">Fine-tune the position by adding horizontal (X) or vertical (Y) pixel offsets.</p>
           </div>
-          <p class="hint">Fine-tune the position by adding horizontal (X) or vertical (Y) pixel offsets.</p>
         </section>
 
       {:else if activeTab === 'dictation'}
-        <section>
-          <h3>Audio Input</h3>
-          <div class="form-group">
-            <label for="microphone">
-              Microphone
-              <button class="btn-refresh" on:click={refreshAudioDevices} title="Refresh device list">
-                ↻
-              </button>
-            </label>
-            <select id="microphone" bind:value={config.audio_device} on:change={scheduleSave}>
+        <section class:collapsed={collapsedSections.dictation_audio}>
+          <h3 on:click={() => toggleSection('dictation_audio')}>Audio Input</h3>
+          <div class="section-content">
+            <div class="form-group">
+              <label for="microphone">
+                Microphone
+                <button class="btn-refresh" on:click={refreshAudioDevices} title="Refresh device list">
+                  ↻
+                </button>
+              </label>
+              <select id="microphone" bind:value={config.audio_device} on:change={scheduleSave}>
+                {#if audioDevices.length === 0}
+                  <option value="">No devices found</option>
+                {:else}
+                  {#each audioDevices as device}
+                    <option value={device.id === 'default' ? '' : device.id}>
+                      {device.is_default ? 'Default — ' + device.name : device.name}
+                    </option>
+                  {/each}
+                {/if}
+              </select>
               {#if audioDevices.length === 0}
-                <option value="">No devices found</option>
+                <p class="hint warning">No audio devices found. Try refreshing the list.</p>
               {:else}
-                {#each audioDevices as device}
-                  <option value={device.id === 'default' ? '' : device.id}>
-                    {device.is_default ? 'Default — ' + device.name : device.name}
-                  </option>
-                {/each}
-              {/if}
-            </select>
-            {#if audioDevices.length === 0}
-              <p class="hint warning">No audio devices found. Try refreshing the list.</p>
-            {:else}
-              <p class="hint">{audioDevices.length} audio device(s) available</p>
-            {/if}
-          </div>
-
-          <div class="form-group">
-            <span class="label-text">Test Microphone</span>
-            {#if testingMic}
-              <button class="btn-secondary" on:click={stopTestRecording}>
-                Stop
-              </button>
-            {:else}
-              <button class="btn-secondary" on:click={startTestRecording}>
-                Start
-              </button>
-            {/if}
-            <p class="hint">Record with Start/Stop, then hear playback. The bar shows how loud your mic picked up the recording.</p>
-            <div class="mic-level-container">
-              <div class="mic-level" role="meter" aria-label="Microphone input level" aria-valuenow={Math.round(micLevel * 100)} aria-valuemin={0} aria-valuemax={100}>
-                <div class="mic-bar" style="width: {micLevel * 100}%"></div>
-              </div>
-              {#if testingMic}
-                <span class="mic-status">Recording… Click Stop when done.</span>
-              {:else if micLevel > 0}
-                <span class="mic-status">Volume captured: {Math.round(micLevel * 100)}% — higher means your mic heard you louder</span>
+                <p class="hint">{audioDevices.length} audio device(s) available</p>
               {/if}
             </div>
-          </div>
 
-          <div class="form-group">
-            <label for="vad-preset">VAD Sensitivity</label>
-            <select id="vad-preset" bind:value={config.stt_config.vad_preset} on:change={scheduleSave}>
-              <option value="Fast">Fast (0.8s silence)</option>
-              <option value="Balanced">Balanced (1.5s silence)</option>
-              <option value="Accurate">Accurate (2.5s silence)</option>
-            </select>
+            <div class="form-group">
+              <span class="label-text">Test Microphone</span>
+              {#if testingMic}
+                <button class="btn-secondary" on:click={stopTestRecording}>
+                  Stop
+                </button>
+              {:else}
+                <button class="btn-secondary" on:click={startTestRecording}>
+                  Start
+                </button>
+              {/if}
+              <p class="hint">Record with Start/Stop, then hear playback. The bar shows how loud your mic picked up the recording.</p>
+              <div class="mic-level-container">
+                <div class="mic-level" role="meter" aria-label="Microphone input level" aria-valuenow={Math.round(micLevel * 100)} aria-valuemin={0} aria-valuemax={100}>
+                  <div class="mic-bar" style="width: {micLevel * 100}%"></div>
+                </div>
+                {#if testingMic}
+                  <span class="mic-status">Recording… Click Stop when done.</span>
+                {:else if micLevel > 0}
+                  <span class="mic-status">Volume captured: {Math.round(micLevel * 100)}% — higher means your mic heard you louder</span>
+                {/if}
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="vad-preset">VAD Sensitivity</label>
+              <select id="vad-preset" bind:value={config.stt_config.vad_preset} on:change={scheduleSave}>
+                <option value="Fast">Fast (0.8s silence)</option>
+                <option value="Balanced">Balanced (1.5s silence)</option>
+                <option value="Accurate">Accurate (2.5s silence)</option>
+              </select>
+            </div>
           </div>
         </section>
 
-        <section>
-          <h3>Speech-to-Text Mode</h3>
+        <section class:collapsed={collapsedSections.dictation_stt}>
+          <h3 on:click={() => toggleSection('dictation_stt')}>Speech-to-Text Mode</h3>
+          <div class="section-content">
           <div class="form-group">
             <label for="stt-mode">Mode</label>
             <select id="stt-mode" bind:value={config.stt_config.mode} on:change={onSttModeChange}>
@@ -1301,103 +1332,109 @@
               <p class="hint">Press to switch between the first two languages. A notification is shown on toggle.</p>
             </div>
           {/if}
+          </div>
         </section>
 
-        <section>
-          <h3>Text Formatting</h3>
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={config.formatting.voice_commands} on:change={scheduleSave} />
-              Enable voice commands ("period", "new line", etc.)
-            </label>
-          </div>
+        <section class:collapsed={collapsedSections.dictation_formatting}>
+          <h3 on:click={() => toggleSection('dictation_formatting')}>Text Formatting</h3>
+          <div class="section-content">
+            <div class="form-group checkbox">
+              <label>
+                <input type="checkbox" bind:checked={config.formatting.voice_commands} on:change={scheduleSave} />
+                Enable voice commands ("period", "new line", etc.)
+              </label>
+            </div>
 
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={config.formatting.filler_word_removal} on:change={scheduleSave} />
-              Remove filler words ("um", "uh", "like")
-            </label>
-          </div>
+            <div class="form-group checkbox">
+              <label>
+                <input type="checkbox" bind:checked={config.formatting.filler_word_removal} on:change={scheduleSave} />
+                Remove filler words ("um", "uh", "like")
+              </label>
+            </div>
 
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={config.formatting.auto_punctuation} on:change={scheduleSave} />
-              Auto-punctuation
-            </label>
-          </div>
+            <div class="form-group checkbox">
+              <label>
+                <input type="checkbox" bind:checked={config.formatting.auto_punctuation} on:change={scheduleSave} />
+                Auto-punctuation
+              </label>
+            </div>
 
-          <div class="form-group">
-            <label for="injection-method">Text Injection Method</label>
-            <select id="injection-method" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
-              <option value="Auto">Auto (recommended)</option>
-              <option value="Keystrokes">Keystrokes only</option>
-              <option value="Clipboard">Clipboard only</option>
-            </select>
+            <div class="form-group">
+              <label for="injection-method">Text Injection Method</label>
+              <select id="injection-method" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
+                <option value="Auto">Auto (recommended)</option>
+                <option value="Keystrokes">Keystrokes only</option>
+                <option value="Clipboard">Clipboard only</option>
+              </select>
+            </div>
           </div>
         </section>
 
       {:else if activeTab === 'dictionary'}
-        <section>
-          <h3>Custom vocabulary</h3>
-          {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
-            <p class="hint" style="margin-bottom: 16px;">
-              Custom words improve cloud transcription. In Local mode (or when Hybrid uses the local engine), entries are saved but not applied to recognition.
-            </p>
-          {:else}
-            <p class="hint" style="margin-bottom: 16px;">
-              These words and phrases are sent to the cloud transcription engine to improve accuracy (e.g. names, brands).
-            </p>
-          {/if}
-          <div class="form-group">
-            <label for="dictionary-new-term">Add term</label>
-            <div class="input-group" style="display: flex; gap: 8px; align-items: center;">
-              <input
-                id="dictionary-new-term"
-                type="text"
-                bind:value={dictionaryNewTerm}
-                placeholder="e.g. Kalam, Balacode"
-                on:keydown={(e) => e.key === 'Enter' && addDictionaryTerm()}
-              />
-              <button
-                type="button"
-                class="btn-secondary"
-                disabled={!dictionaryNewTerm.trim() || dictionaryLoading}
-                on:click={addDictionaryTerm}
-              >
-                Add
-              </button>
-            </div>
-          </div>
-          <div class="form-group">
-            <span class="label-text">Current terms</span>
-            {#if dictionaryLoading && dictionaryEntries.length === 0}
-              <p class="hint">Loading…</p>
-            {:else if dictionaryEntries.length === 0}
-              <p class="hint">No terms yet. Add words or phrases above to improve cloud transcription.</p>
+        <section class:collapsed={collapsedSections.dictionary}>
+          <h3 on:click={() => toggleSection('dictionary')}>Custom vocabulary</h3>
+          <div class="section-content">
+            {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
+              <p class="hint" style="margin-bottom: 16px;">
+                Custom words improve cloud transcription. In Local mode (or when Hybrid uses the local engine), entries are saved but not applied to recognition.
+              </p>
             {:else}
-              <ul class="dictionary-list">
-                {#each dictionaryEntries as entry (entry.id)}
-                  <li>
-                    <span class="dictionary-term">{entry.term}</span>
-                    <button
-                      type="button"
-                      class="btn-icon btn-remove"
-                      title="Remove"
-                      on:click={() => deleteDictionaryEntry(entry.id)}
-                    >
-                      ×
-                    </button>
-                  </li>
-                {/each}
-              </ul>
+              <p class="hint" style="margin-bottom: 16px;">
+                These words and phrases are sent to the cloud transcription engine to improve accuracy (e.g. names, brands).
+              </p>
             {/if}
+            <div class="form-group">
+              <label for="dictionary-new-term">Add term</label>
+              <div class="input-group" style="display: flex; gap: 8px; align-items: center;">
+                <input
+                  id="dictionary-new-term"
+                  type="text"
+                  bind:value={dictionaryNewTerm}
+                  placeholder="e.g. Kalam, Balacode"
+                  on:keydown={(e) => e.key === 'Enter' && addDictionaryTerm()}
+                />
+                <button
+                  type="button"
+                  class="btn-secondary"
+                  disabled={!dictionaryNewTerm.trim() || dictionaryLoading}
+                  on:click={addDictionaryTerm}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <span class="label-text">Current terms</span>
+              {#if dictionaryLoading && dictionaryEntries.length === 0}
+                <p class="hint">Loading…</p>
+              {:else if dictionaryEntries.length === 0}
+                <p class="hint">No terms yet. Add words or phrases above to improve cloud transcription.</p>
+              {:else}
+                <ul class="dictionary-list">
+                  {#each dictionaryEntries as entry (entry.id)}
+                    <li>
+                      <span class="dictionary-term">{entry.term}</span>
+                      <button
+                        type="button"
+                        class="btn-icon btn-remove"
+                        title="Remove"
+                        on:click={() => deleteDictionaryEntry(entry.id)}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
           </div>
         </section>
 
       {:else if activeTab === 'command'}
-        <section>
-          <h3>Command Mode</h3>
-          <p class="hint">Use a dedicated hotkey to speak a command. The app creates a note, task, or reminder instead of typing. Without an LLM you must say "new note", "new task", or "new reminder" followed by your content. With an LLM provider, you can speak naturally—the app infers the type and extracts dates, times, repetition, and description from what you say.</p>
+        <section class:collapsed={collapsedSections.command}>
+          <h3 on:click={() => toggleSection('command')}>Command Mode</h3>
+          <div class="section-content">
+            <p class="hint">Use a dedicated hotkey to speak a command. The app creates a note, task, or reminder instead of typing. Without an LLM you must say "new note", "new task", or "new reminder" followed by your content. With an LLM provider, you can speak naturally—the app infers the type and extracts dates, times, repetition, and description from what you say.</p>
 
           <div class="form-group checkbox">
             <label>
@@ -1545,11 +1582,13 @@
               {/if}
             {/if}
           {/if}
+          </div>
         </section>
 
       {:else if activeTab === 'privacy'}
-        <section>
-          <h3>Privacy</h3>
+        <section class:collapsed={collapsedSections.privacy}>
+          <h3 on:click={() => toggleSection('privacy')}>Privacy</h3>
+          <div class="section-content">
           <p class="hint" style="margin-bottom: 16px;">
             Read our full <a href="https://afaraha8403.github.io/kalam/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
           </p>
@@ -1578,11 +1617,13 @@
             </label>
             <p class="hint">No audio or text is ever sent. Only metrics like session duration.</p>
           </div>
+          </div>
         </section>
 
       {:else if activeTab === 'advanced'}
-        <section>
-          <h3>App Data & Logging</h3>
+        <section class:collapsed={collapsedSections.advanced}>
+          <h3 on:click={() => toggleSection('advanced')}>App Data & Logging</h3>
+          <div class="section-content">
           <p class="hint" style="margin-bottom: 16px;">
             When enabled, the app keeps a bounded in-memory log (no transcription or personal data).
             Logs are stored in memory and in the database (data.db) in the app data folder—no separate .log files are created. Use the buttons below to export for support.
@@ -1666,7 +1707,8 @@
         </section>
 
         <section class="danger-zone">
-          <h4>Danger Zone</h4>
+          <h4 on:click={() => toggleSection('advanced_danger')}>Danger Zone</h4>
+          <div class="section-content">
           <p class="hint" style="margin-bottom: 12px;">Reset removes all configuration, history, and data. You will see the onboarding again as if the app were newly installed.</p>
           {#if resetError}
             <p class="save-error" role="alert" style="margin-bottom: 12px;">{resetError}</p>
@@ -1678,6 +1720,7 @@
           >
             {resetting ? 'Resetting…' : 'Reset entire application'}
           </button>
+          </div>
         </section>
 
       {:else if activeTab === 'about'}
@@ -1723,9 +1766,9 @@
   }
 
   header h2 {
-    font-size: 28px;
-    font-weight: 800;
-    letter-spacing: -0.04em;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
     color: var(--navy-deep);
     margin: 0;
   }
@@ -1751,27 +1794,40 @@
   }
 
   .tab {
-    padding: 12px 20px;
+    padding: 10px 18px;
     background: transparent;
     border: none;
     border-radius: var(--radius-md);
     color: var(--text-secondary);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
-    transition: color 0.2s ease, background 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s ease;
+    transition: all 0.2s ease;
     white-space: nowrap;
+    position: relative;
   }
 
   .tab:hover {
-    color: var(--navy-deep);
-    background: var(--bg-input);
+    color: var(--primary-dark);
+    background: var(--primary-alpha-subtle);
   }
 
   .tab.active {
     background: var(--primary-alpha);
     color: var(--primary-dark);
-    box-shadow: 0 2px 8px var(--primary-alpha);
+    font-weight: 600;
+  }
+
+  .tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 20px;
+    height: 3px;
+    background: var(--primary);
+    border-radius: 2px;
   }
 
   .tab-content section {
@@ -1823,14 +1879,41 @@
     border-color: var(--border);
   }
 
+  section.collapsed {
+    padding-bottom: 20px;
+  }
+
+  section.collapsed .section-content {
+    display: none;
+  }
+
   section h3 {
-    font-size: 17px;
-    font-weight: 700;
-    margin: 0 0 24px 0;
-    padding-bottom: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 20px 0;
+    padding-bottom: 12px;
     color: var(--navy-deep);
     border-bottom: 1px solid var(--border-subtle);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+
+  section h3::before {
+    content: '▼';
+    font-size: 10px;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+  }
+
+  section.collapsed h3::before {
+    transform: rotate(-90deg);
+  }
+
+  section h3:hover::before {
+    color: var(--primary);
   }
 
   .form-group {
@@ -2480,7 +2563,22 @@
     color: var(--error);
     margin-bottom: 12px;
     font-size: 16px;
-    font-weight: 700;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+
+  .danger-zone h4::before {
+    content: '▼';
+    font-size: 10px;
+    opacity: 0.6;
+    transition: transform 0.2s ease;
+  }
+
+  .danger-zone.collapsed h4::before {
+    transform: rotate(-90deg);
   }
 
   .btn-danger {

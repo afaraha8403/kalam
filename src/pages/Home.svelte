@@ -234,11 +234,25 @@
       </div>
     {:else if entries.length === 0}
       <div class="state-container empty-state">
-        <div class="empty-icon-wrapper">
-          <Icon icon="ph:microphone-stage-duotone" class="empty-icon" />
+        <div class="empty-visual">
+          <div class="empty-mic-pulse">
+            <div class="pulse-ring r1"></div>
+            <div class="pulse-ring r2"></div>
+            <div class="pulse-ring r3"></div>
+            <div class="mic-core">
+              <Icon icon="ph:microphone-stage-duotone" class="empty-icon" />
+            </div>
+          </div>
+          <div class="sound-waves">
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+          </div>
         </div>
-        <h3>No transcriptions yet</h3>
-        <p>Press Ctrl+Win to start dictating!</p>
+        <h3>Ready to capture your voice</h3>
+        <p>Press <kbd>Ctrl+Win</kbd> and speak to create your first transcription</p>
       </div>
     {:else}
       <div class="timeline">
@@ -322,8 +336,8 @@
   }
 
   .stat-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.06);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
     border-color: var(--border-visible);
   }
 
@@ -341,10 +355,10 @@
     font-size: 24px;
   }
 
-  .streak-card .stat-icon-wrapper { background: rgba(249, 115, 22, 0.1); color: #f97316; }
-  .time-card .stat-icon-wrapper { background: rgba(16, 185, 129, 0.1); color: #10b981; }
-  .words-card .stat-icon-wrapper { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
-  .speed-card .stat-icon-wrapper { background: rgba(168, 85, 247, 0.1); color: #a855f7; }
+  .streak-card .stat-icon-wrapper { background: var(--stat-streak-alpha); color: var(--stat-streak); }
+  .time-card .stat-icon-wrapper { background: var(--stat-time-alpha); color: var(--stat-time); }
+  .words-card .stat-icon-wrapper { background: var(--stat-words-alpha); color: var(--stat-words); }
+  .speed-card .stat-icon-wrapper { background: var(--stat-speed-alpha); color: var(--stat-speed); }
 
   .stat-content {
     display: flex;
@@ -354,10 +368,9 @@
 
   .stat-label {
     font-size: 13px;
-    font-weight: 700;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-weight: 500;
+    color: var(--text-secondary);
+    letter-spacing: 0.01em;
   }
 
   .stat-value-row {
@@ -367,8 +380,8 @@
   }
 
   .stat-value {
-    font-size: 32px;
-    font-weight: 800;
+    font-size: 28px;
+    font-weight: 600;
     color: var(--navy-deep);
     line-height: 1;
     letter-spacing: -0.02em;
@@ -423,7 +436,7 @@
 
   .widget-header h2 {
     font-size: 18px;
-    font-weight: 700;
+    font-weight: 600;
     color: var(--navy-deep);
     margin: 0;
     flex: 1;
@@ -432,6 +445,16 @@
   .widget-icon {
     font-size: 22px;
     color: var(--primary);
+  }
+
+  /* Tasks widget uses warm amber */
+  .dashboard-widget:nth-child(1) .widget-icon {
+    color: var(--warm-amber);
+  }
+
+  /* Reminders widget uses soft rose */
+  .dashboard-widget:nth-child(2) .widget-icon {
+    color: var(--soft-rose);
   }
 
   .link-btn {
@@ -635,37 +658,44 @@
     border-color: rgba(239, 68, 68, 0.2);
   }
 
-  /* Timeline */
+  /* Timeline — Calendar/Agenda Style */
   .timeline {
     display: flex;
     flex-direction: column;
-    gap: 40px;
+    gap: 32px;
   }
 
   .day-group {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .day-group:nth-child(odd) {
+    background: linear-gradient(180deg, var(--bg-card) 0%, rgba(212, 165, 116, 0.02) 100%);
   }
 
   .day-header {
     display: flex;
     align-items: center;
-    gap: 16px;
-    position: sticky;
-    top: -48px;
-    background: var(--bg-content);
-    padding: 8px 0;
-    z-index: 10;
+    gap: 12px;
+    padding: 0 0 12px;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .day-label {
-    font-size: 14px;
-    font-weight: 800;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--navy);
     white-space: nowrap;
+    padding: 6px 12px;
+    background: var(--primary-alpha-subtle);
+    border-radius: var(--radius-sm);
   }
 
   .day-line {
@@ -677,7 +707,7 @@
   .day-entries {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
   }
 
   .history-card {
@@ -691,8 +721,8 @@
   }
 
   .history-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.04);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
     border-color: var(--border-visible);
   }
 
@@ -710,9 +740,8 @@
     align-items: center;
     gap: 6px;
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 500;
     color: var(--text-muted);
-    letter-spacing: 0.02em;
   }
 
   .history-badges {
@@ -721,23 +750,22 @@
   }
 
   .badge {
-    padding: 4px 10px;
-    border-radius: 8px;
+    padding: 3px 8px;
+    border-radius: 6px;
     font-size: 11px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-weight: 500;
+    letter-spacing: 0;
   }
 
   .mode-badge {
-    background: var(--primary-alpha-light);
-    color: var(--primary-dark);
-    border: 1px solid var(--primary-alpha);
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
   }
 
   .lang-badge {
-    background: var(--bg-input);
-    color: var(--text-secondary);
+    background: transparent;
+    color: var(--text-muted);
     border: 1px solid var(--border-subtle);
   }
 
@@ -812,35 +840,127 @@
 
   .empty-state {
     text-align: center;
+    padding: 48px 24px;
   }
 
-  .empty-icon-wrapper {
+  /* Empty state visual illustration */
+  .empty-visual {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+
+  .empty-mic-pulse {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .pulse-ring {
+    position: absolute;
+    border-radius: 50%;
+    border: 2px solid var(--warm-amber);
+    opacity: 0;
+  }
+
+  .pulse-ring.r1 {
+    width: 80px;
+    height: 80px;
+    animation: pulse-ring 2.5s ease-out infinite;
+  }
+
+  .pulse-ring.r2 {
     width: 64px;
     height: 64px;
-    background: var(--primary-alpha);
+    animation: pulse-ring 2.5s ease-out 0.4s infinite;
+  }
+
+  .pulse-ring.r3 {
+    width: 48px;
+    height: 48px;
+    animation: pulse-ring 2.5s ease-out 0.8s infinite;
+  }
+
+  @keyframes pulse-ring {
+    0% { transform: scale(0.8); opacity: 0.5; }
+    50% { transform: scale(1.1); opacity: 0.2; }
+    100% { transform: scale(0.8); opacity: 0.5; }
+  }
+
+  .mic-core {
+    width: 56px;
+    height: 56px;
+    background: linear-gradient(135deg, var(--primary-alpha) 0%, var(--warm-amber-alpha) 100%);
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 8px;
+    position: relative;
+    z-index: 1;
   }
 
   .empty-icon {
-    font-size: 32px;
+    font-size: 28px;
     color: var(--primary);
   }
 
+  /* Sound wave bars */
+  .sound-waves {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+  }
+
+  .wave-bar {
+    width: 4px;
+    background: linear-gradient(to top, var(--warm-amber), var(--primary-light));
+    border-radius: 2px;
+    animation: wave-bar 1.2s ease-in-out infinite;
+  }
+
+  .wave-bar:nth-child(1) { height: 8px; animation-delay: 0s; }
+  .wave-bar:nth-child(2) { height: 16px; animation-delay: 0.1s; }
+  .wave-bar:nth-child(3) { height: 20px; animation-delay: 0.2s; }
+  .wave-bar:nth-child(4) { height: 16px; animation-delay: 0.3s; }
+  .wave-bar:nth-child(5) { height: 8px; animation-delay: 0.4s; }
+
+  @keyframes wave-bar {
+    0%, 100% { transform: scaleY(1); opacity: 0.6; }
+    50% { transform: scaleY(0.6); opacity: 0.3; }
+  }
+
   .empty-state h3 {
-    font-size: 20px;
-    font-weight: 700;
+    font-size: 18px;
+    font-weight: 600;
     color: var(--navy-deep);
     margin: 0;
   }
 
   .empty-state p {
-    font-size: 15px;
-    max-width: 300px;
+    font-size: 14px;
+    max-width: 320px;
     margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .empty-state kbd {
+    background: var(--bg-input);
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    font-family: 'Google Sans', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    color: var(--navy-deep);
+    box-shadow: 0 2px 0 var(--border);
   }
 
   @media (max-width: 768px) {

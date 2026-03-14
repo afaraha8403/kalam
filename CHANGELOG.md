@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+- **Change:** UI color palette harmonized with logo: new warm amber (`--warm-amber`) and soft rose (`--soft-rose`) accents; stat cards use logo-derived colors (amber, teal, soft blue, periwinkle) instead of bright rainbow; warmer neutrals throughout.
+- **Feature:** Empty state redesigned with animated visual illustration: pulsing microphone rings, sound wave bars, gradient background, and clearer CTA with styled hotkey.
+- **Change:** History timeline redesigned with calendar/agenda-style day grouping: grouped by date in bordered cards with subtle warm tint on alternating days.
+- **Change:** Sidebar hover states colorized: teal tints on nav items, warm amber on dictation control, creating more responsive feel.
+- **Change:** Settings tabs improved: active tab indicator, better hover colors, reduced font weights.
+- **Feature:** Settings sections are now collapsible (starting with General tab): click section header to expand/collapse; advanced sections collapsed by default.
+- **Change:** Typography quieter: reduced font weights throughout (800→600, 700→500, 600→500); removed uppercase labels; softer animations (4px→2px lift, gentler shadows).
+- **Change:** Badge styling refined: removed uppercase and reduced weight; subtler borders instead of colored backgrounds.
 - **Fix:** Pill shadow reduced to a very subtle 1-2px depth that smooths the corners/borders without creating a prominent glow effect. Removed all colored glows and large drop shadows from collapsed, expanded, recording, success, and error states.
 - **Fix:** Removed idle breathing/pulsating animation from the dormant state pill. The pill now maintains a steady opacity of 0.7 in collapsed state instead of pulsing between 0.5 and 0.8.
 - **Fix:** Overlay pill flicker on hover/expand: integrated GSAP animation library for smooth, GPU-accelerated transforms. The pill uses `scaleX`/`scaleY` transforms instead of width/height animations; content counter-scales to maintain text size and fades in/out with synchronized animations. Added initialization delay to prevent initial mount flicker.
