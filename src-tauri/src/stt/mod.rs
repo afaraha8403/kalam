@@ -10,6 +10,51 @@ pub mod sidecars;
 
 use crate::audio::vad::{VADConfig, VADProcessor};
 use crate::stt::provider::STTProvider;
+use std::fmt;
+
+/// Structured error for transcription failures so callers can decide retry.
+#[derive(Debug)]
+pub enum TranscriptionError {
+    /// Network/connection/timeout; retriable when transient.
+    Network { retriable: bool },
+    /// API returned HTTP status; 429 and 5xx are retriable.
+    Api { status: u16, retriable: bool },
+    /// Local server (e.g. SenseVoice/Whisper) issue.
+    Local { server_down: bool },
+    /// Unknown or non-classified error.
+    Unknown(String),
+}
+
+impl fmt::Display for TranscriptionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TranscriptionError::Network { retriable } => {
+                write!(f, "Network error (retriable: {})", retriable)
+            }
+            TranscriptionError::Api { status, retriable } => {
+                write!(f, "API error status {} (retriable: {})", status, retriable)
+            }
+            TranscriptionError::Local { server_down } => {
+                write!(f, "Local server error (server_down: {})", server_down)
+            }
+            TranscriptionError::Unknown(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl std::error::Error for TranscriptionError {}
+
+impl TranscriptionError {
+    /// True if the caller should retry (e.g. 429, 5xx, timeout).
+    pub fn is_retriable(&self) -> bool {
+        match self {
+            TranscriptionError::Network { retriable } => *retriable,
+            TranscriptionError::Api { retriable, .. } => *retriable,
+            TranscriptionError::Local { server_down } => *server_down,
+            TranscriptionError::Unknown(_) => false,
+        }
+    }
+}
 
 /// Overlap between consecutive chunks in samples (0.5s at 16kHz).
 const CHUNK_OVERLAP_SAMPLES: usize = 8000;

@@ -3,7 +3,7 @@
 use reqwest::blocking::multipart::{Form, Part};
 
 use super::provider::STTProvider;
-use super::TranscriptionResult;
+use super::{TranscriptionError, TranscriptionResult};
 
 pub struct GroqProvider {
     api_key: String,
@@ -66,20 +66,32 @@ impl STTProvider for GroqProvider {
             form = form.text("prompt", p.to_string());
         }
 
-        let response = self
-            .client
+        let response = self.client
             .post("https://api.groq.com/openai/v1/audio/transcriptions")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
-            .send()?;
+            .send()
+            .map_err(|e| {
+                // Classify reqwest errors as network (timeout, connection) -> retriable.
+                let retriable = e.is_timeout().unwrap_or(false)
+                    || e.is_connect().unwrap_or(false)
+                    || e.is_connection_refused().unwrap_or(false);
+                anyhow::anyhow!(TranscriptionError::Network { retriable })
+            })?;
 
+        let status_code = response.status().as_u16();
         if !response.status().is_success() {
-            let status = response.status();
             let _ = response.text(); // consume body
-            return Err(anyhow::anyhow!("Groq API error: status {}", status));
+            let retriable = status_code == 429 || (500..600).contains(&status_code);
+            return Err(anyhow::anyhow!(TranscriptionError::Api {
+                status: status_code,
+                retriable,
+            }));
         }
 
-        let result: GroqResponse = response.json()?;
+        let result: GroqResponse = response.json().map_err(|e| {
+            anyhow::anyhow!(TranscriptionError::Unknown(e.to_string()))
+        })?;
 
         Ok(TranscriptionResult {
             text: result.text,

@@ -425,6 +425,10 @@
           <h1>Permissions</h1>
           <p class="subtitle">Kalam needs mic access to hear you, and accessibility to type for you.</p>
 
+          <div class="perm-trust">
+            <p>Kalam runs on your device. We use the <strong>microphone</strong> only for your voice to transcribe—we don't store raw audio. <strong>Accessibility</strong> lets us type the transcribed text into other apps. On macOS, the system may also ask for <strong>Input Monitoring</strong> (keyboard): we use it only to detect your dictation hotkey in any app; we do not record or send your keystrokes.</p>
+          </div>
+
           <div class="perm-list">
             <div class="perm-row">
               <div class="perm-icon-wrap"><span class="perm-icon">🎤</span></div>
@@ -450,6 +454,16 @@
                 <button type="button" class="btn-outline-sm" on:click={() => openPermissionPage('accessibility')}>Open Settings</button>
               {/if}
             </div>
+            {#if platform === 'darwin'}
+            <div class="perm-row">
+              <div class="perm-icon-wrap"><span class="perm-icon">⌨️</span></div>
+              <div class="perm-info">
+                <strong>Input Monitoring</strong>
+                <span>Lets your dictation hotkey work in any app. We only detect the hotkey—we don't record keystrokes.</span>
+              </div>
+              <span class="perm-hint">You'll be prompted when you first use the hotkey</span>
+            </div>
+            {/if}
           </div>
 
           <div class="mic-test">
@@ -1017,6 +1031,25 @@
   }
 
   /* ── Step 3: Permissions ── */
+  .perm-trust {
+    margin-bottom: 20px;
+    padding: 14px 18px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .perm-trust p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .perm-trust strong {
+    color: var(--navy-deep);
+  }
+
   .perm-list {
     display: flex;
     flex-direction: column;
@@ -1075,6 +1108,12 @@
     font-size: 12px;
     color: var(--success);
     font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .perm-hint {
+    font-size: 12px;
+    color: var(--text-muted);
     white-space: nowrap;
   }
 

@@ -22,7 +22,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio_util::sync::CancellationToken;
 
 /// App icon for window and taskbar (used in setup so dev and production show the same icon).
 const WINDOW_ICON: tauri::image::Image<'static> = tauri::include_image!("icons/32x32.png");
@@ -214,6 +215,8 @@ pub struct AppState {
     pub recording_type: Arc<Mutex<RecordingType>>,
     /// Whether the overlay OS window is expanded (300x120) or collapsed (80x80). Used by update_overlay_position.
     pub overlay_expanded: Arc<AtomicBool>,
+    /// Cancellation token for the current transcription run. Replaced at start of each run; cancel_transcription cancels it.
+    pub transcription_cancel: Arc<RwLock<CancellationToken>>,
 }
 
 impl AppState {
@@ -270,6 +273,7 @@ impl AppState {
             local_model_manager,
             recording_type: Arc::new(Mutex::new(RecordingType::Dictation)),
             overlay_expanded: Arc::new(AtomicBool::new(false)),
+            transcription_cancel: Arc::new(RwLock::new(CancellationToken::new())),
         })
     }
 }
@@ -811,6 +815,7 @@ pub fn run() {
             open_app_data_folder,
             resize_overlay,
             get_overlay_initial_state,
+            cancel_transcription,
             trace_latency,
             start_overlay_message_log,
             stop_overlay_message_log,
@@ -1748,7 +1753,13 @@ enum OverlayEvent {
         level: f32,
         is_command: bool,
     },
-    Processing,
+    /// Processing with progress: elapsed/expected for timeout hint, attempt for retry badge.
+    Processing {
+        elapsed_secs: u32,
+        expected_secs: u32,
+        attempt: u32,
+        message: Option<String>,
+    },
     #[allow(dead_code)] // Reserved for future "transcription succeeded" UI
     Success,
     Error {
@@ -1758,6 +1769,8 @@ enum OverlayEvent {
         message: String,
         highlight: Option<String>,
     },
+    /// User clicked cancel; show briefly then return to idle.
+    Cancelling,
 }
 
 #[tauri::command]
@@ -1840,6 +1853,16 @@ fn nudge_overlay_renderer(app: &tauri::AppHandle) {
 
 /// Returns the initial overlay state (Collapsed or Hidden) for the overlay to fetch when it mounts.
 /// Used because the startup emit can happen before the overlay webview has registered its listener.
+#[tauri::command]
+async fn cancel_transcription(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    log::info!("User requested transcription cancellation");
+    let mut guard = state.transcription_cancel.write().await;
+    guard.cancel();
+    drop(guard);
+    emit_overlay_event(&state.app_handle, OverlayEvent::Cancelling);
+    Ok(())
+}
+
 #[tauri::command]
 fn get_overlay_initial_state(state: tauri::State<AppState>) -> OverlayEvent {
     let dictation_enabled = if let Ok(config) = state.config.try_lock() {
@@ -2215,11 +2238,13 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
 
 /// Input for the blocking transcription thread. Provider is always created on the OS thread
 /// so reqwest::blocking::Client is never created/dropped on a tokio worker.
+/// audio_data is Arc so the job can be cloned for retries without copying the buffer.
+#[derive(Clone)]
 enum TranscribeJob {
     FromConfig {
         stt_config: STTConfig,
         app_handle: Option<tauri::AppHandle>,
-        audio_data: Vec<f32>,
+        audio_data: Arc<Vec<f32>>,
         sample_rate: u32,
         vad_config: VADConfig,
         language: Option<String>,
@@ -2482,6 +2507,56 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
     Ok(())
 }
 
+/// Compute transcription timeout from historical latency (today's average) with tiered logic.
+/// Cloud vs local use different minimums and cold-start defaults.
+fn calculate_transcription_timeout(config: &AppConfig) -> std::time::Duration {
+    use crate::config::privacy::effective_stt_config;
+    use crate::config::STTMode;
+    use std::time::Duration;
+
+    let stt = effective_stt_config(config);
+    let tc = &stt.transcription_timeout;
+    let is_cloud = matches!(stt.mode, STTMode::Cloud | STTMode::Hybrid | STTMode::Auto);
+
+    let (min_secs, default_secs) = if is_cloud {
+        (tc.timeout_min_seconds_cloud, 45u64)
+    } else {
+        (tc.timeout_min_seconds_local, 75u64)
+    };
+    let max_secs = tc.timeout_max_seconds;
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let Ok(conn) = db::open_db() else {
+        log::debug!("Timeout: no DB, using default {}s", default_secs);
+        return Duration::from_secs(default_secs);
+    };
+    let Ok(Some(row)) = db::get_daily_stats(&conn, Some(&today)) else {
+        log::debug!("Timeout: no stats for today, using default {}s", default_secs);
+        return Duration::from_secs(default_secs);
+    };
+
+    // Need at least 3 samples today to adapt; otherwise use default.
+    if row.transcriptions_count < 3 {
+        log::debug!(
+            "Timeout: only {} samples today, using default {}s",
+            row.transcriptions_count,
+            default_secs
+        );
+        return Duration::from_secs(default_secs);
+    }
+    let Some(avg_ms) = row.latency_avg_ms else {
+        return Duration::from_secs(default_secs);
+    };
+    let avg_secs = (avg_ms as f64) / 1000.0;
+    let computed = (avg_secs * tc.timeout_multiplier) + (tc.timeout_buffer_seconds as f64);
+    let timeout_secs = (computed as u64).clamp(min_secs, max_secs);
+    log::info!(
+        "Transcription timeout: avg {}ms -> {}s (clamped to [{}, {}])",
+        avg_ms, timeout_secs, min_secs, max_secs
+    );
+    Duration::from_secs(timeout_secs)
+}
+
 fn run_transcribe_job(job: TranscribeJob) -> anyhow::Result<crate::stt::TranscriptionResult> {
     let TranscribeJob::FromConfig {
         stt_config,
@@ -2501,7 +2576,7 @@ fn run_transcribe_job(job: TranscribeJob) -> anyhow::Result<crate::stt::Transcri
     );
     crate::stt::transcribe_chunked(
         &*provider,
-        &audio_data,
+        audio_data.as_slice(),
         sample_rate,
         &vad_config,
         language,
@@ -2522,7 +2597,15 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         log::info!("Stopping dictation...");
         *audio_state = AudioState::Processing;
         is_recording.store(false, Ordering::SeqCst);
-        emit_overlay_event(&state.app_handle, OverlayEvent::Processing);
+        emit_overlay_event(
+            &state.app_handle,
+            OverlayEvent::Processing {
+                elapsed_secs: 0,
+                expected_secs: 120,
+                attempt: 1,
+                message: None,
+            },
+        );
         let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Processing);
 
         // Play end sound
@@ -2620,32 +2703,143 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                 | crate::config::STTMode::Hybrid
                 | crate::config::STTMode::Auto => None,
             };
+            let audio_data = Arc::new(audio_data);
             let job = TranscribeJob::FromConfig {
                 stt_config: stt_config.clone(),
-                app_handle: app_handle_for_job,
-                audio_data,
+                app_handle: app_handle_for_job.clone(),
+                audio_data: audio_data.clone(),
                 sample_rate,
                 vad_config,
                 language: config.languages.first().cloned(),
                 vocabulary: vocabulary.clone(),
             };
+            let timeout_duration = calculate_transcription_timeout(&config);
+            let expected_secs = timeout_duration.as_secs() as u32;
             log::info!(
-                "Starting transcription (provider will be created on OS thread, chunked + prompt chaining)"
+                "Starting transcription (provider will be created on OS thread, chunked + prompt chaining), timeout {:?}",
+                timeout_duration
             );
-            let start = std::time::Instant::now();
-            std::thread::spawn(move || {
-                let result = run_transcribe_job(job);
-                let _ = tx.send(result);
+
+            // Cancel token for this run; cancel_transcription command will cancel it.
+            let cancel_token = CancellationToken::new();
+            {
+                let mut guard = state.transcription_cancel.write().await;
+                *guard = cancel_token.clone();
+            }
+            let progress_app = app_handle.clone();
+            let progress_token = cancel_token.clone();
+            let current_attempt = Arc::new(AtomicUsize::new(1));
+            let progress_attempt = current_attempt.clone();
+            let progress_handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                let mut elapsed: u32 = 0;
+                loop {
+                    interval.tick().await;
+                    if progress_token.is_cancelled() {
+                        break;
+                    }
+                    elapsed = elapsed.saturating_add(1);
+                    let attempt = progress_attempt.load(Ordering::SeqCst) as u32;
+                    let message = if elapsed > expected_secs && attempt == 1 {
+                        Some("Taking longer than usual...".to_string())
+                    } else if attempt > 1 {
+                        Some(format!("Retrying (attempt {}/3)...", attempt))
+                    } else {
+                        None
+                    };
+                    emit_overlay_event(
+                        &progress_app,
+                        OverlayEvent::Processing {
+                            elapsed_secs: elapsed,
+                            expected_secs,
+                            attempt,
+                            message,
+                        },
+                    );
+                }
             });
 
-            match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
-                Ok(Ok(Ok(result))) => {
+            const MAX_ATTEMPTS: u32 = 3;
+            let start = std::time::Instant::now();
+            let mut last_error: Option<anyhow::Error> = None;
+            let mut result = None;
+            for attempt in 1..=MAX_ATTEMPTS {
+                current_attempt.store(attempt as usize, Ordering::SeqCst);
+                if cancel_token.is_cancelled() {
+                    log::info!("Transcription cancelled by user");
+                    progress_handle.abort();
+                    last_error = None;
+                    result = None;
+                    break;
+                }
+                let (tx, rx) = oneshot::channel();
+                let job_attempt = job.clone();
+                std::thread::spawn(move || {
+                    let r = run_transcribe_job(job_attempt);
+                    let _ = tx.send(r);
+                });
+
+                let wait_fut = tokio::time::timeout(timeout_duration, rx);
+                tokio::select! {
+                    biased;
+                    _ = cancel_token.cancelled() => {
+                        log::info!("Transcription cancelled by user (during wait)");
+                        progress_handle.abort();
+                        last_error = None;
+                        result = None;
+                        break;
+                    }
+                    res = wait_fut => match res {
+                        Ok(Ok(Ok(transcription_result))) => {
+                            progress_handle.abort();
+                            result = Some(transcription_result);
+                            last_error = None;
+                            break;
+                        }
+                        Ok(Ok(Err(e))) => {
+                            last_error = Some(e);
+                            let retriable = last_error
+                                .as_ref()
+                                .and_then(|e| e.downcast_ref::<crate::stt::TranscriptionError>())
+                                .map_or(false, |te| te.is_retriable());
+                            if retriable && attempt < MAX_ATTEMPTS {
+                                let backoff_secs = 1u64 << (attempt - 1);
+                                log::info!(
+                                    "Transcription attempt {} failed (retriable), backing off {}s",
+                                    attempt, backoff_secs
+                                );
+                                tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                            } else {
+                                progress_handle.abort();
+                                break;
+                            }
+                        }
+                        Ok(Err(_)) => {
+                            progress_handle.abort();
+                            last_error = Some(anyhow::anyhow!("Transcription thread panicked"));
+                            break;
+                        }
+                        Err(_) => {
+                            progress_handle.abort();
+                            last_error = Some(anyhow::anyhow!("Transcription timed out"));
+                            break;
+                        }
+                    }
+                }
+                if result.is_some() {
+                    break;
+                }
+            }
+
+            match result {
+                Some(transcription_result) => {
                     let latency_ms = start.elapsed().as_millis() as u32;
-                    if result.text.trim().is_empty() {
+                    if transcription_result.text.trim().is_empty() {
                         log::info!("Transcription empty (no speech), skipping save and injection");
                     } else if recording_type == RecordingType::Command {
                         if let Err(e) =
-                            run_command_pipeline(&result.text, &config, &app_handle).await
+                            run_command_pipeline(&transcription_result.text, &config, &app_handle).await
                         {
                             log::error!("Command pipeline failed: {}", e);
                             emit_overlay_event(
@@ -2658,7 +2852,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                         let prev_text = last_injected_text.lock().await.clone();
                         let prev_ref = prev_text.as_str();
                         let (formatted, actions) = crate::formatting::format_text(
-                            &result.text,
+                            &transcription_result.text,
                             &config.formatting,
                             &config.snippets,
                             len,
@@ -2756,32 +2950,22 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                         }
                     }
                 }
-                Ok(Ok(Err(e))) => {
-                    log::error!("Transcription failed: {}", e);
-                    emit_overlay_event(
-                        &app_handle,
-                        OverlayEvent::Error {
-                            message: "Transcription failed".to_string(),
-                        },
-                    );
-                }
-                Ok(Err(_)) => {
-                    log::error!("Transcription thread failed or panicked");
-                    emit_overlay_event(
-                        &app_handle,
-                        OverlayEvent::Error {
-                            message: "Thread failed".to_string(),
-                        },
-                    );
-                }
-                Err(_) => {
-                    log::warn!("Transcription timed out after 120s");
-                    emit_overlay_event(
-                        &app_handle,
-                        OverlayEvent::Error {
-                            message: "Timed out".to_string(),
-                        },
-                    );
+                None => {
+                    if let Some(ref e) = last_error {
+                        log::error!("Transcription failed: {}", e);
+                        let message = if e.to_string().contains("timed out") {
+                            format!("Timed out after {}s", timeout_duration.as_secs())
+                        } else {
+                            e.to_string()
+                        };
+                        emit_overlay_event(
+                            &app_handle,
+                            OverlayEvent::Error {
+                                message,
+                            },
+                        );
+                    }
+                    // When last_error is None, user cancelled — no error overlay (Cancelling already shown).
                 }
             }
 

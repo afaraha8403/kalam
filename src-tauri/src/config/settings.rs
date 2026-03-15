@@ -202,6 +202,49 @@ pub enum RecordingMode {
     Toggle,
 }
 
+/// Configuration for dynamic transcription timeout (based on historical latency).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptionTimeoutConfig {
+    #[serde(default = "default_timeout_min_cloud")]
+    pub timeout_min_seconds_cloud: u64,
+    #[serde(default = "default_timeout_min_local")]
+    pub timeout_min_seconds_local: u64,
+    #[serde(default = "default_timeout_max_seconds")]
+    pub timeout_max_seconds: u64,
+    #[serde(default = "default_timeout_multiplier")]
+    pub timeout_multiplier: f64,
+    #[serde(default = "default_timeout_buffer_seconds")]
+    pub timeout_buffer_seconds: u64,
+}
+
+fn default_timeout_min_cloud() -> u64 {
+    20
+}
+fn default_timeout_min_local() -> u64 {
+    30
+}
+fn default_timeout_max_seconds() -> u64 {
+    120
+}
+fn default_timeout_multiplier() -> f64 {
+    2.0
+}
+fn default_timeout_buffer_seconds() -> u64 {
+    10
+}
+
+impl Default for TranscriptionTimeoutConfig {
+    fn default() -> Self {
+        Self {
+            timeout_min_seconds_cloud: default_timeout_min_cloud(),
+            timeout_min_seconds_local: default_timeout_min_local(),
+            timeout_max_seconds: default_timeout_max_seconds(),
+            timeout_multiplier: default_timeout_multiplier(),
+            timeout_buffer_seconds: default_timeout_buffer_seconds(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct STTConfig {
     pub mode: STTMode,
@@ -213,6 +256,8 @@ pub struct STTConfig {
     pub api_key: Option<String>,
     pub local_model: Option<String>,
     pub vad_preset: VADPreset,
+    #[serde(default)]
+    pub transcription_timeout: TranscriptionTimeoutConfig,
 }
 
 impl Default for STTConfig {
@@ -224,6 +269,7 @@ impl Default for STTConfig {
             api_key: None,
             local_model: None,
             vad_preset: VADPreset::Balanced,
+            transcription_timeout: TranscriptionTimeoutConfig::default(),
         }
     }
 }

@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+- **Feature:** Transcription handling: dynamic timeout from today's average latency (tiered cloud vs local, min/max clamp), retry up to 3 attempts with exponential backoff for retriable cloud errors (429, 5xx, network).
+- **Feature:** Overlay processing UX: progress hint when elapsed exceeds expected time, retry badge (attempt 2/3), cancel button (hover or after 5s) to abort transcription, and "Cancelling..." state.
+- **Feature:** Prototype Notes: Full notes flow aligned with main app. Notes list has scope tabs (Notes / Archive / Trash), search bar, label filters; cards show title, content preview, tags, reminder, updated date; drag-and-drop reorder (active scope); click card or "New Note" opens full-page note detail. Note detail: edit title, content, color palette, reminder datetime, pin, labels (add/remove/suggestions); Save, Cancel, Delete; create and update mock notes.
+- **Feature:** Prototype UI: Completely reimagined with a sleek, minimalist, Apple/OpenAI-inspired aesthetic. Features: Inter typography; high-contrast monochrome color scheme (pure white/black backgrounds, subtle gray elevated surfaces); removed all heavy borders in favor of soft shadows and background tints; weightless sidebar; prominent pill-shaped dictation button with pulse animation; clean, airy layout with generous whitespace; refined timeline and cards.
+- **Change:** Document macOS Input Monitoring in README and explain permissions and privacy on the onboarding Permissions step.
 - **Change:** UI color palette harmonized with logo: new warm amber (`--warm-amber`) and soft rose (`--soft-rose`) accents; stat cards use logo-derived colors (amber, teal, soft blue, periwinkle) instead of bright rainbow; warmer neutrals throughout.
 - **Feature:** Empty state redesigned with animated visual illustration: pulsing microphone rings, sound wave bars, gradient background, and clearer CTA with styled hotkey.
 - **Change:** History timeline redesigned with calendar/agenda-style day grouping: grouped by date in bordered cards with subtle warm tint on alternating days.

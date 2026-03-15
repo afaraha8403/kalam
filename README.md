@@ -48,7 +48,7 @@ Use a **separate hotkey** from dictation. When you press it and speak, Kalam cre
 2. **Configure** (Settings → Audio & dictation):
    - **Cloud:** enter your [Groq](https://console.groq.com) or OpenAI API key and pick the provider.
    - **Local:** choose SenseVoice or Whisper Base; the app will download the engine and model when needed.
-3. **Dictate:** press **Ctrl+Win** (Windows), **Ctrl+Super** (Linux), or **Ctrl+Cmd** (macOS), hold while you speak, then release. Text is inserted into the app that had focus.
+3. **Dictate:** press **Ctrl+Win** (Windows), **Ctrl+Super** (Linux), or **Ctrl+Cmd** (macOS), hold while you speak, then release. Text is inserted into the app that had focus. On macOS, when you first use the hotkey, allow **Input Monitoring** if prompted—required for the hotkey to work in other apps.
 
 For setup details, API keys, and the full user manual, see the [**documentation**](https://afaraha8403.github.io/kalam/documentation.html).
 
@@ -106,6 +106,10 @@ All commands (including release and signing): `./tasks.ps1 help`
 - **Local mode** processes everything on-device.
 - **History** is stored locally (SQLite) with optional AES-256 encryption.
 - **Telemetry** is opt-in and off by default.
+
+### Permissions on macOS
+
+When you first use the dictation hotkey, macOS may show a prompt such as *"Kalam would like to monitor input from your keyboard"* or *"This application can record your keystrokes."* That is **Input Monitoring**. Kalam needs it only so the **global hotkey** (e.g. Ctrl+Cmd) works in any app. We use it solely to detect your hotkey press; we do not record, log, or send your keystrokes. Audio is handled as described above (in-memory or to your chosen STT provider).
 
 ## Contributing
 

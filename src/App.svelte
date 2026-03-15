@@ -15,8 +15,14 @@
   import Tasks from './components/views/Tasks.svelte'
   import Reminders from './components/views/Reminders.svelte'
   import StatusBar from './components/StatusBar.svelte'
+  import Prototype from './pages/Prototype.svelte'
   import Icon from '@iconify/svelte'
   import type { AppConfig } from './types'
+
+  /** Show alternate prototype UI when URL has ?page=prototype (main interface unchanged). */
+  const showPrototype =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('page') === 'prototype'
 
   /** True when running in a normal browser (e.g. Vite dev server), not inside Tauri. */
   const inTauri = typeof window !== 'undefined' && !!(window as { __TAURI__?: unknown }).__TAURI__
@@ -233,6 +239,17 @@
   <Overlay />
 {:else if isFirstRun}
   <Onboarding on:complete={handleOnboardingComplete} />
+{:else if showPrototype}
+  <Prototype
+    currentPage={currentPage}
+    navigate={navigate}
+    dictationEnabled={dictationEnabled}
+    setDictation={setDictation}
+    statusBarConfig={statusBarConfig}
+    dbStatus={dbStatus}
+    statusBarPlatform={statusBarPlatform}
+    lastLatencyMs={lastLatencyMs}
+  />
 {:else}
   <div class="app-shell">
     <main class="app">

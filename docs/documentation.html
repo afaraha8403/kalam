@@ -546,12 +546,25 @@ cd kalam
                         </ul>
 
                         <h3 id="snippets">Snippets</h3>
-                        <p><strong>Snippets</strong> are short triggers that expand to longer text when they appear in the transcribed output.</p>
+                        <p><strong>Snippets</strong> are short triggers that expand to longer text when they appear in the transcribed output. Expansion runs during formatting, before text is injected into the target app. Longer triggers are matched first so that e.g. <code>@@workemail</code> is not partially replaced by a shorter snippet.</p>
                         <ul>
                             <li>Add, edit, remove: <strong>Main window → Snippets</strong> or <strong>tray → Snippets</strong></li>
                             <li>Each snippet has a <strong>trigger</strong> and an <strong>expansion</strong></li>
                             <li>Triggers are matched before injection — use distinct triggers to avoid accidental expansion in normal speech</li>
                         </ul>
+
+                        <h4>Examples</h4>
+                        <p>Create snippets in the app with a trigger (what you say or what appears in the transcript) and the text to insert instead:</p>
+                        <ul>
+                            <li><strong>Trigger</strong> <code>@@email</code> → <strong>Expansion</strong> <code>hello@example.com</code> — say “at sign at sign email” (or your STT’s equivalent) to insert your email.</li>
+                            <li><strong>Trigger</strong> <code>@@sig</code> → <strong>Expansion</strong> <code>Best regards,\nYour Name</code> — sign-off with a newline in the expansion.</li>
+                            <li><strong>Trigger</strong> <code>;;address</code> → <strong>Expansion</strong> <code>123 Main St, City, Country</code> — use a prefix like <code>;;</code> so the trigger is unlikely in normal speech.</li>
+                            <li><strong>Trigger</strong> <code>@@disclaimer</code> → <strong>Expansion</strong> a full paragraph of legal or standard text — ideal for repeated boilerplate.</li>
+                        </ul>
+                        <div class="doc-callout doc-callout--tip">
+                            <p class="doc-callout-title">Tip</p>
+                            <p>Use a consistent prefix for triggers (e.g. <code>@@</code> or <code>;;</code>) so you can say them deliberately (“at sign at sign email”) and avoid expanding words you say in normal conversation.</p>
+                        </div>
 
                         <h3 id="history">History</h3>
                         <p>Kalam stores past transcriptions locally: text, timestamp, mode, language, duration. Data is in SQLite; see <a href="#privacy-data">Privacy and data</a> for encryption and retention.</p>

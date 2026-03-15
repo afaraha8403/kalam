@@ -8,17 +8,18 @@
   // T6: earliest trace in overlay JS (latency debugging; only when KALAM_LATENCY_DEBUG=1)
   invoke('trace_latency', { event: 'T6', jsTimestamp: Date.now() * 1000 }).catch(() => {})
 
-  const KINDS = ['Hidden', 'Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error', 'Status'] as const
+  const KINDS = ['Hidden', 'Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error', 'Status', 'Cancelling'] as const
   type OverlayEvent =
     | { kind: 'Hidden' }
     | { kind: 'Collapsed' }
     | { kind: 'Listening' }
     | { kind: 'ShortPress' }
     | { kind: 'Recording'; level: number; is_command: boolean }
-    | { kind: 'Processing' }
+    | { kind: 'Processing'; elapsed_secs?: number; expected_secs?: number; attempt?: number; message?: string | null }
     | { kind: 'Success' }
     | { kind: 'Error'; message: string }
     | { kind: 'Status'; message: string; highlight?: string }
+    | { kind: 'Cancelling' }
 
   let state: OverlayEvent = { kind: 'Hidden' }
   let prevLevel = 0
@@ -36,8 +37,30 @@
       if (rec.level !== undefined && typeof rec.level !== 'number') return false
       if (rec.is_command !== undefined && typeof rec.is_command !== 'boolean') return false
     }
+    if (k === 'Processing') {
+      const proc = p as { elapsed_secs?: unknown, expected_secs?: unknown, attempt?: unknown, message?: unknown }
+      if (proc.elapsed_secs !== undefined && typeof proc.elapsed_secs !== 'number') return false
+      if (proc.expected_secs !== undefined && typeof proc.expected_secs !== 'number') return false
+      if (proc.attempt !== undefined && typeof proc.attempt !== 'number') return false
+      if (proc.message !== undefined && proc.message !== null && typeof proc.message !== 'string') return false
+    }
     return true
   }
+
+  async function cancelTranscription() {
+    try {
+      await invoke('cancel_transcription')
+    } catch (e) {
+      console.error('Cancel transcription failed:', e)
+    }
+  }
+
+  $: showCancelButton = state.kind === 'Processing' && (isHovered || (state.elapsed_secs ?? 0) >= 5)
+  $: processingElapsed = state.kind === 'Processing' ? (state.elapsed_secs ?? 0) : 0
+  $: processingExpected = state.kind === 'Processing' ? (state.expected_secs ?? 120) : 120
+  $: processingAttempt = state.kind === 'Processing' ? (state.attempt ?? 1) : 1
+  $: processingMessage = state.kind === 'Processing' ? (state.message ?? null) : null
+  $: processingTakingLong = state.kind === 'Processing' && processingElapsed > processingExpected
 
   $: rawLevel = state.kind === 'Recording' ? Number(state.level) || 0 : 0
   $: isCommand = state.kind === 'Recording' ? Boolean(state.is_command) : false
@@ -309,7 +332,7 @@
           })
         })
         if (statusTimeout) clearTimeout(statusTimeout)
-        if (p.kind === 'Status' || p.kind === 'Error' || p.kind === 'Success') {
+        if (p.kind === 'Status' || p.kind === 'Error' || p.kind === 'Success' || p.kind === 'Cancelling') {
           statusTimeout = setTimeout(() => {
             state = { kind: 'Collapsed' }
           }, 3000)
@@ -344,6 +367,7 @@
     class:hover-expanded={showHoverExpansion}
     class:recording={state.kind === 'Recording'}
     class:processing={state.kind === 'Processing'}
+    class:processing-long={state.kind === 'Processing' && processingTakingLong}
     class:success={state.kind === 'Success'}
     class:error={state.kind === 'Error'}
     data-tauri-drag-region
@@ -427,9 +451,25 @@
       </div>
     {:else if state.kind === 'Processing'}
       <div class="content processing-anim">
+        {#if processingTakingLong}
+          <div class="progress-hint">
+            <span class="hint-text">{processingMessage || 'Taking longer than usual...'}</span>
+            <span class="time">{processingElapsed}s</span>
+          </div>
+        {/if}
+        {#if processingAttempt > 1}
+          <span class="retry-badge">Retry {processingAttempt}/3</span>
+        {/if}
         <div class="dot-pulse">
           <span /><span /><span />
         </div>
+        {#if showCancelButton}
+          <button type="button" class="cancel-btn" on:click={cancelTranscription} title="Cancel transcription">&#10005;</button>
+        {/if}
+      </div>
+    {:else if state.kind === 'Cancelling'}
+      <div class="content status-message cancelling-message">
+        <span class="label">Cancelling...</span>
       </div>
     {:else if state.kind === 'Success'}
       <div class="content status-icon success-icon">
@@ -671,6 +711,81 @@
 
   .dot-pulse span:nth-child(3) {
     animation-delay: 0.3s;
+  }
+
+  /* ── Processing: progress hint and cancel ── */
+  .processing-anim {
+    position: relative;
+  }
+
+  .progress-hint {
+    position: absolute;
+    top: -22px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.85);
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    color: #fbbf24;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .progress-hint .hint-text {
+    color: #fbbf24;
+  }
+
+  .progress-hint .time {
+    color: rgba(255, 255, 255, 0.6);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .retry-badge {
+    position: absolute;
+    top: -18px;
+    right: 8px;
+    background: #4fc1ff;
+    color: #0a0a0c;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .cancel-btn {
+    position: absolute;
+    right: 8px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  .blip:hover .cancel-btn,
+  .blip.processing-long .cancel-btn {
+    opacity: 1;
+  }
+
+  .cancel-btn:hover {
+    background: rgba(248, 113, 113, 0.3);
+    color: #f87171;
+  }
+
+  .cancelling-message .label {
+    color: rgba(255, 255, 255, 0.8);
   }
 
   /* ── Status icons ── */
