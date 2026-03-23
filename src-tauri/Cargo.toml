@@ -42,7 +42,10 @@ zip = "0.6"
 
 # General
 tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7", features = ["sync"] }
+# Dev-only: HTTP bridge so browser (Vite dev) can read DB when Tauri app is running
+axum = { version = "0.7", optional = true }
+tower-http = { version = "0.5", features = ["cors"], optional = true }
+tokio-util = { version = "0.7" }
 rfd = "0.14"
 url = "2"
 serde = { version = "1", features = ["derive"] }
@@ -92,3 +95,7 @@ libappindicator = "0.9"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+dev-bridge = ["dep:axum", "dep:tower-http"]
+
+[dev-dependencies]
+hound = "3.5"

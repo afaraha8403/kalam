@@ -11,6 +11,11 @@ use crate::config::get_kalam_dir;
 const DATA_DB: &str = "data.db";
 const VEC_EMBEDDING_DIM: u32 = 384;
 
+/// Full row projection for `row_to_entry` (column indices 0..=26). Keep INSERT/UPDATE aligned.
+const SELECT_ENTRY_ROW: &str = "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags, \
+     color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at, target_app, duration_ms, \
+     word_count, stt_latency_ms, stt_mode, dictation_language, session_mode, stt_provider";
+
 static VEC_EXTENSION_REGISTERED: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
 
 fn ensure_vec_extension_registered() -> anyhow::Result<()> {
@@ -110,6 +115,40 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         }
     }
 
+    // Schema: target app + recording duration for history rows (overview dashboard).
+    let has_target_app: i64 = conn.query_row(
+        "SELECT COUNT(1) FROM pragma_table_info('entries') WHERE name = 'target_app'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_target_app == 0 {
+        conn.execute("ALTER TABLE entries ADD COLUMN target_app TEXT", [])?;
+        conn.execute("ALTER TABLE entries ADD COLUMN duration_ms INTEGER", [])?;
+    }
+
+    // History detail: word count, STT latency, effective mode, language, dictation vs command.
+    let has_word_count: i64 = conn.query_row(
+        "SELECT COUNT(1) FROM pragma_table_info('entries') WHERE name = 'word_count'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_word_count == 0 {
+        conn.execute("ALTER TABLE entries ADD COLUMN word_count INTEGER", [])?;
+        conn.execute("ALTER TABLE entries ADD COLUMN stt_latency_ms INTEGER", [])?;
+        conn.execute("ALTER TABLE entries ADD COLUMN stt_mode TEXT", [])?;
+        conn.execute("ALTER TABLE entries ADD COLUMN dictation_language TEXT", [])?;
+        conn.execute("ALTER TABLE entries ADD COLUMN session_mode TEXT", [])?;
+    }
+
+    let has_stt_provider: i64 = conn.query_row(
+        "SELECT COUNT(1) FROM pragma_table_info('entries') WHERE name = 'stt_provider'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_stt_provider == 0 {
+        conn.execute("ALTER TABLE entries ADD COLUMN stt_provider TEXT", [])?;
+    }
+
     // Dictionary table for custom vocabulary (sent as prompt to cloud STT)
     conn.execute_batch(
         r#"
@@ -135,6 +174,182 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         );
         "#,
     )?;
+
+    #[cfg(debug_assertions)]
+    maybe_seed_dev_sample_notes_if_empty(conn)?;
+
+    Ok(())
+}
+
+/// Debug / `tauri dev` only: if there are no notes yet, insert a small set so the Notes UI is testable.
+/// Release builds (`--release`) never run this. Clearing all notes during dev will re-seed on next DB open.
+#[cfg(debug_assertions)]
+fn maybe_seed_dev_sample_notes_if_empty(conn: &Connection) -> anyhow::Result<()> {
+    use chrono::{Duration, Utc};
+    use uuid::Uuid;
+
+    let note_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM entries WHERE entry_type = 'note'",
+        [],
+        |row| row.get(0),
+    )?;
+    if note_count > 0 {
+        return Ok(());
+    }
+
+    let tomorrow = Utc::now() + Duration::days(1);
+    let specs: Vec<crate::models::Entry> = vec![
+        crate::models::Entry {
+            id: Uuid::new_v4().to_string(),
+            entry_type: "note".into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            sync_status: "pending".into(),
+            title: Some("Pinned recap".into()),
+            content: "**Actions**\n- Sync with design on voice UX\n- Draft changelog bullets\n\nSample content for the masonry layout.".into(),
+            attachments: vec![],
+            tags: vec!["work".into(), "meetings".into()],
+            color: None,
+            is_pinned: true,
+            priority: None,
+            due_date: None,
+            subtasks: None,
+            is_completed: None,
+            reminder_at: None,
+            rrule: None,
+            archived_at: None,
+            deleted_at: None,
+            target_app: None,
+            duration_ms: None,
+            word_count: None,
+            stt_latency_ms: None,
+            stt_mode: None,
+            dictation_language: None,
+            session_mode: None,
+            stt_provider: None,
+        },
+        crate::models::Entry {
+            id: Uuid::new_v4().to_string(),
+            entry_type: "note".into(),
+            created_at: Utc::now() - Duration::minutes(5),
+            updated_at: Utc::now() - Duration::minutes(5),
+            sync_status: "pending".into(),
+            title: Some("Reading list".into()),
+            content: "Essays on calm software, local-first sync, and accessibility for dictation.".into(),
+            attachments: vec![],
+            tags: vec!["personal".into(), "ideas".into()],
+            color: None,
+            is_pinned: false,
+            priority: None,
+            due_date: None,
+            subtasks: None,
+            is_completed: None,
+            reminder_at: None,
+            rrule: None,
+            archived_at: None,
+            deleted_at: None,
+            target_app: None,
+            duration_ms: None,
+            word_count: None,
+            stt_latency_ms: None,
+            stt_mode: None,
+            dictation_language: None,
+            session_mode: None,
+            stt_provider: None,
+        },
+        crate::models::Entry {
+            id: Uuid::new_v4().to_string(),
+            entry_type: "note".into(),
+            created_at: Utc::now() - Duration::minutes(10),
+            updated_at: Utc::now() - Duration::minutes(10),
+            sync_status: "pending".into(),
+            title: Some("Groceries".into()),
+            content: "- Oats\n- Berries\n- Yogurt".into(),
+            attachments: vec![],
+            tags: vec!["personal".into()],
+            color: Some("#FFF9C4".into()),
+            is_pinned: false,
+            priority: None,
+            due_date: None,
+            subtasks: None,
+            is_completed: None,
+            reminder_at: None,
+            rrule: None,
+            archived_at: None,
+            deleted_at: None,
+            target_app: None,
+            duration_ms: None,
+            word_count: None,
+            stt_latency_ms: None,
+            stt_mode: None,
+            dictation_language: None,
+            session_mode: None,
+            stt_provider: None,
+        },
+        crate::models::Entry {
+            id: Uuid::new_v4().to_string(),
+            entry_type: "note".into(),
+            created_at: Utc::now() - Duration::minutes(15),
+            updated_at: Utc::now() - Duration::minutes(15),
+            sync_status: "pending".into(),
+            title: Some("Label filter demo".into()),
+            content: "Use the chips to filter by work or personal.".into(),
+            attachments: vec![],
+            tags: vec!["work".into()],
+            color: None,
+            is_pinned: false,
+            priority: None,
+            due_date: None,
+            subtasks: None,
+            is_completed: None,
+            reminder_at: None,
+            rrule: None,
+            archived_at: None,
+            deleted_at: None,
+            target_app: None,
+            duration_ms: None,
+            word_count: None,
+            stt_latency_ms: None,
+            stt_mode: None,
+            dictation_language: None,
+            session_mode: None,
+            stt_provider: None,
+        },
+        crate::models::Entry {
+            id: Uuid::new_v4().to_string(),
+            entry_type: "note".into(),
+            created_at: Utc::now() - Duration::minutes(20),
+            updated_at: Utc::now() - Duration::minutes(20),
+            sync_status: "pending".into(),
+            title: Some("Reminder sample".into()),
+            content: "Shows the bell row when reminder_at is set.".into(),
+            attachments: vec![],
+            tags: vec!["demo".into()],
+            color: None,
+            is_pinned: false,
+            priority: None,
+            due_date: None,
+            subtasks: None,
+            is_completed: None,
+            reminder_at: Some(tomorrow),
+            rrule: None,
+            archived_at: None,
+            deleted_at: None,
+            target_app: None,
+            duration_ms: None,
+            word_count: None,
+            stt_latency_ms: None,
+            stt_mode: None,
+            dictation_language: None,
+            session_mode: None,
+            stt_provider: None,
+        },
+    ];
+
+    for e in specs {
+        insert_entry(conn, &e)?;
+        insert_embedding_stub(conn, &e.id)?;
+    }
 
     Ok(())
 }
@@ -313,6 +528,182 @@ pub fn get_aggregate_stats(conn: &Connection) -> anyhow::Result<AggregateStats> 
     })
 }
 
+// ---------------------------------------------------------------------------
+// Overview dashboard aggregates (UTC date bucketing; matches daily_stats dates)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WordsByDay {
+    pub date: String,
+    pub words: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppCount {
+    pub app: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FlowPoint {
+    pub created_at: String,
+    pub target_app: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ActivityDay {
+    pub date: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DashboardStats {
+    pub words_dictated_7d: Vec<WordsByDay>,
+    pub top_apps_7d: Vec<AppCount>,
+    pub total_time_dictating_7d_ms: i64,
+    pub dictation_flow_7d: Vec<FlowPoint>,
+    pub session_lengths_7d_ms: Vec<i64>,
+    /// Mean word count per history row among the same timed sessions as `session_lengths_7d_ms` (last 7d, `duration_ms` > 0).
+    pub avg_words_per_dictation_7d: Option<f64>,
+    pub activity_heatmap_14d: Vec<ActivityDay>,
+    pub streak_days: i64,
+    pub total_words: i64,
+}
+
+/// JSON-friendly dashboard payload for the Overview page charts.
+pub fn get_dashboard_stats(conn: &Connection) -> anyhow::Result<DashboardStats> {
+    use chrono::Duration;
+    use std::collections::HashMap;
+
+    let agg = get_aggregate_stats(conn)?;
+    let today_naive = chrono::Utc::now().date_naive();
+    let cutoff_7d = (chrono::Utc::now() - Duration::days(7)).to_rfc3339();
+
+    // Last 7 UTC calendar days, words from daily_stats (zeros if no row).
+    let mut words_dictated_7d = Vec::with_capacity(7);
+    for i in (0..7).rev() {
+        let d = today_naive - Duration::days(i);
+        let ds = d.format("%Y-%m-%d").to_string();
+        let words: i64 = match conn.query_row(
+            "SELECT COALESCE(words_count, 0) FROM daily_stats WHERE date = ?1",
+            rusqlite::params![&ds],
+            |row| row.get::<_, i64>(0),
+        ) {
+            Ok(w) => w,
+            Err(rusqlite::Error::QueryReturnedNoRows) => 0,
+            Err(e) => return Err(e.into()),
+        };
+        words_dictated_7d.push(WordsByDay { date: ds, words });
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(NULLIF(TRIM(target_app), ''), '(unknown)'), COUNT(*) FROM entries \
+         WHERE entry_type = 'history' AND created_at >= ?1 \
+         GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 8",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![&cutoff_7d], |row| {
+        Ok(AppCount {
+            app: row.get(0)?,
+            count: row.get(1)?,
+        })
+    })?;
+    let top_apps_7d: Vec<AppCount> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let total_time_dictating_7d_ms: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(duration_ms), 0) FROM entries \
+         WHERE entry_type = 'history' AND created_at >= ?1 AND duration_ms IS NOT NULL AND duration_ms > 0",
+        rusqlite::params![&cutoff_7d],
+        |row| row.get(0),
+    )?;
+
+    let flow_start = cutoff_7d.clone();
+    let flow_end = chrono::Utc::now().to_rfc3339();
+    let mut stmt = conn.prepare(
+        "SELECT created_at, target_app FROM entries \
+         WHERE entry_type = 'history' AND created_at >= ?1 AND created_at <= ?2 \
+         ORDER BY created_at ASC",
+    )?;
+    let flow_rows = stmt.query_map(rusqlite::params![&flow_start, &flow_end], |row| {
+        let created_at: String = row.get(0)?;
+        let target_app: Option<String> = row.get(1)?;
+        Ok(FlowPoint {
+            created_at,
+            target_app,
+        })
+    })?;
+    let dictation_flow_7d: Vec<FlowPoint> = flow_rows.collect::<rusqlite::Result<Vec<_>>>()?;
+
+    // Timed dictations only: same rows drive avg duration (frontend) and avg words below.
+    let mut stmt = conn.prepare(
+        "SELECT duration_ms, content FROM entries \
+         WHERE entry_type = 'history' AND created_at >= ?1 AND duration_ms IS NOT NULL AND duration_ms > 0 \
+         ORDER BY duration_ms ASC LIMIT 2000",
+    )?;
+    let sl_rows = stmt.query_map(rusqlite::params![&cutoff_7d], |row| {
+        let ms: i64 = row.get(0)?;
+        let content: String = row.get(1)?;
+        Ok((ms, content))
+    })?;
+    let mut session_lengths_7d_ms: Vec<i64> = Vec::new();
+    let mut words_sum: i64 = 0;
+    let mut timed_n: i64 = 0;
+    for r in sl_rows {
+        let (ms, content) = r?;
+        session_lengths_7d_ms.push(ms);
+        words_sum += content.split_whitespace().count() as i64;
+        timed_n += 1;
+    }
+    let avg_words_per_dictation_7d = if timed_n > 0 {
+        Some((words_sum as f64) / (timed_n as f64))
+    } else {
+        None
+    };
+
+    let start_14 = today_naive - Duration::days(13);
+    let heatmap_cutoff = start_14
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow::anyhow!("invalid heatmap start"))?
+        .and_utc()
+        .to_rfc3339();
+    let mut stmt = conn.prepare(
+        "SELECT substr(created_at, 1, 10) AS d, COUNT(*) FROM entries \
+         WHERE entry_type = 'history' AND created_at >= ?1 \
+         GROUP BY d",
+    )?;
+    let hm_rows = stmt.query_map(rusqlite::params![&heatmap_cutoff], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let mut hm_map: HashMap<String, i64> = HashMap::new();
+    for r in hm_rows {
+        let (d, c) = r?;
+        hm_map.insert(d, c);
+    }
+    let mut activity_heatmap_14d = Vec::with_capacity(14);
+    let mut d = start_14;
+    while d <= today_naive {
+        let key = d.format("%Y-%m-%d").to_string();
+        activity_heatmap_14d.push(ActivityDay {
+            count: *hm_map.get(&key).unwrap_or(&0),
+            date: key,
+        });
+        d = d
+            .succ_opt()
+            .ok_or_else(|| anyhow::anyhow!("heatmap date overflow"))?;
+    }
+
+    Ok(DashboardStats {
+        words_dictated_7d,
+        top_apps_7d,
+        total_time_dictating_7d_ms,
+        dictation_flow_7d,
+        session_lengths_7d_ms,
+        avg_words_per_dictation_7d,
+        activity_heatmap_14d,
+        streak_days: agg.streak_days,
+        total_words: agg.total_words,
+    })
+}
+
 /// Embedding dimension used by vec_entries. Must match the virtual table definition.
 pub fn embedding_dimension() -> u32 {
     VEC_EMBEDDING_DIM
@@ -335,8 +726,9 @@ pub fn insert_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
     conn.execute(
         r#"
         INSERT INTO entries (id, entry_type, created_at, updated_at, sync_status, title, content,
-            attachments, tags, color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+            attachments, tags, color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at,
+            target_app, duration_ms, word_count, stt_latency_ms, stt_mode, dictation_language, session_mode, stt_provider)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)
         "#,
         rusqlite::params![
             e.id,
@@ -358,6 +750,14 @@ pub fn insert_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
             e.rrule,
             archived_at,
             deleted_at,
+            e.target_app,
+            e.duration_ms.map(|n| n as i64),
+            e.word_count.map(|n| n as i64),
+            e.stt_latency_ms.map(|n| n as i64),
+            e.stt_mode,
+            e.dictation_language,
+            e.session_mode,
+            e.stt_provider,
         ],
     )?;
     Ok(())
@@ -427,6 +827,17 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<crate::models::Entry> {
             .ok()
             .map(|d| d.with_timezone(&chrono::Utc))
     });
+    let target_app: Option<String> = row.get::<_, Option<String>>(19)?;
+    let duration_raw: Option<i64> = row.get::<_, Option<i64>>(20)?;
+    let duration_ms = duration_raw.and_then(|n| u32::try_from(n).ok());
+    let word_count_raw: Option<i64> = row.get::<_, Option<i64>>(21)?;
+    let word_count = word_count_raw.and_then(|n| u32::try_from(n).ok());
+    let stt_latency_raw: Option<i64> = row.get::<_, Option<i64>>(22)?;
+    let stt_latency_ms = stt_latency_raw.and_then(|n| u32::try_from(n).ok());
+    let stt_mode: Option<String> = row.get(23)?;
+    let dictation_language: Option<String> = row.get(24)?;
+    let session_mode: Option<String> = row.get(25)?;
+    let stt_provider: Option<String> = row.get(26)?;
     Ok(crate::models::Entry {
         id,
         entry_type,
@@ -447,6 +858,14 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<crate::models::Entry> {
         rrule,
         archived_at,
         deleted_at,
+        target_app,
+        duration_ms,
+        word_count,
+        stt_latency_ms,
+        stt_mode,
+        dictation_language,
+        session_mode,
+        stt_provider,
     })
 }
 
@@ -457,13 +876,12 @@ pub fn get_entries_with_reminder(
     limit: i64,
     offset: i64,
 ) -> anyhow::Result<Vec<crate::models::Entry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
-         FROM entries
+    let mut stmt = conn.prepare(&format!(
+        "{} FROM entries
          WHERE (entry_type = 'reminder') OR (entry_type = 'note' AND reminder_at IS NOT NULL AND deleted_at IS NULL)
          ORDER BY reminder_at ASC LIMIT ?1 OFFSET ?2",
-    )?;
+        SELECT_ENTRY_ROW
+    ))?;
     let rows = stmt.query_map(rusqlite::params![limit, offset], row_to_entry)?;
     let mut out = Vec::new();
     for row in rows {
@@ -479,14 +897,13 @@ pub fn get_entries_for_reminders_view(
     limit: i64,
     offset: i64,
 ) -> anyhow::Result<Vec<crate::models::Entry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
-         FROM entries
+    let mut stmt = conn.prepare(&format!(
+        "{} FROM entries
          WHERE (entry_type = 'reminder') OR (entry_type = 'task' AND reminder_at IS NOT NULL)
          ORDER BY COALESCE(is_completed, 0), reminder_at IS NULL, reminder_at ASC, updated_at DESC
          LIMIT ?1 OFFSET ?2",
-    )?;
+        SELECT_ENTRY_ROW
+    ))?;
     let rows = stmt.query_map(rusqlite::params![limit, offset], row_to_entry)?;
     let mut out = Vec::new();
     for row in rows {
@@ -516,10 +933,8 @@ pub fn get_entries_by_type(
         ("", " ORDER BY updated_at DESC")
     };
     let sql = format!(
-        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
-         FROM entries WHERE entry_type = ?1{}{} LIMIT ?2 OFFSET ?3",
-        where_extra, order_by
+        "{} FROM entries WHERE entry_type = ?1{}{} LIMIT ?2 OFFSET ?3",
+        SELECT_ENTRY_ROW, where_extra, order_by
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params![entry_type, limit, offset], row_to_entry)?;
@@ -530,38 +945,42 @@ pub fn get_entries_by_type(
     Ok(out)
 }
 
-/// Tasks due on the given ISO date (YYYY-MM-DD). Incomplete tasks only.
+/// Tasks whose `due_date` falls in `[day_start_iso, day_end_iso)` (half-open).
+/// Bounds should be the user's local calendar day expressed as UTC instants (from the frontend).
+/// Incomplete, active tasks only (not archived/deleted).
 pub fn get_tasks_due_on(
     conn: &Connection,
-    iso_date: &str,
+    day_start_iso: &str,
+    day_end_iso: &str,
     limit: i64,
 ) -> anyhow::Result<Vec<crate::models::Entry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
-         FROM entries WHERE entry_type = 'task' AND COALESCE(is_completed, 0) = 0 AND date(due_date) = ?1
-         ORDER BY due_date ASC LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![iso_date, limit], row_to_entry)?;
+    let mut stmt = conn.prepare(&format!(
+        "{} FROM entries WHERE entry_type = 'task' AND COALESCE(is_completed, 0) = 0 AND deleted_at IS NULL AND archived_at IS NULL
+         AND due_date IS NOT NULL AND due_date >= ?1 AND due_date < ?2
+         ORDER BY due_date ASC LIMIT ?3",
+        SELECT_ENTRY_ROW
+    ))?;
+    let rows = stmt.query_map(rusqlite::params![day_start_iso, day_end_iso, limit], row_to_entry)?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|e| e.into())
 }
 
-/// Reminders (or notes/tasks with reminder_at) due on the given ISO date. Order: reminder_at ASC.
+/// Reminders (or notes/tasks with `reminder_at`) firing in `[day_start_iso, day_end_iso)` (half-open).
+/// Same local-day semantics as tasks.
 pub fn get_reminders_due_on(
     conn: &Connection,
-    iso_date: &str,
+    day_start_iso: &str,
+    day_end_iso: &str,
     limit: i64,
 ) -> anyhow::Result<Vec<crate::models::Entry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
-         FROM entries
+    let mut stmt = conn.prepare(&format!(
+        "{} FROM entries
          WHERE (entry_type = 'reminder' OR (entry_type IN ('note','task') AND reminder_at IS NOT NULL))
-         AND deleted_at IS NULL AND date(reminder_at) = ?1
-         ORDER BY reminder_at ASC LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![iso_date, limit], row_to_entry)?;
+         AND deleted_at IS NULL AND reminder_at IS NOT NULL AND reminder_at >= ?1 AND reminder_at < ?2
+         ORDER BY reminder_at ASC LIMIT ?3",
+        SELECT_ENTRY_ROW
+    ))?;
+    let rows = stmt.query_map(rusqlite::params![day_start_iso, day_end_iso, limit], row_to_entry)?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|e| e.into())
 }
@@ -586,12 +1005,10 @@ pub fn search_notes(
     let out = if has_label {
         let label = label.unwrap().to_string();
         let sql = format!(
-            "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-             color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
-             FROM entries WHERE entry_type = 'note' AND {} AND (title LIKE ?1 OR content LIKE ?2)
+            "{} FROM entries WHERE entry_type = 'note' AND {} AND (title LIKE ?1 OR content LIKE ?2)
              AND EXISTS (SELECT 1 FROM json_each(entries.tags) WHERE json_each.value = ?3)
              ORDER BY is_pinned DESC, updated_at DESC LIMIT ?4 OFFSET ?5",
-            where_scope
+            SELECT_ENTRY_ROW, where_scope
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(
@@ -601,11 +1018,9 @@ pub fn search_notes(
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     } else {
         let sql = format!(
-            "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-             color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
-             FROM entries WHERE entry_type = 'note' AND {} AND (title LIKE ?1 OR content LIKE ?2)
+            "{} FROM entries WHERE entry_type = 'note' AND {} AND (title LIKE ?1 OR content LIKE ?2)
              ORDER BY is_pinned DESC, updated_at DESC LIMIT ?3 OFFSET ?4",
-            where_scope
+            SELECT_ENTRY_ROW, where_scope
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(
@@ -663,11 +1078,10 @@ pub fn empty_trash(conn: &Connection) -> anyhow::Result<i64> {
 
 /// Get a single entry by id.
 pub fn get_entry(conn: &Connection, id: &str) -> anyhow::Result<Option<crate::models::Entry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, entry_type, created_at, updated_at, sync_status, title, content, attachments, tags,
-         color, is_pinned, priority, due_date, subtasks, is_completed, reminder_at, rrule, archived_at, deleted_at
-         FROM entries WHERE id = ?1",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "{} FROM entries WHERE id = ?1",
+        SELECT_ENTRY_ROW
+    ))?;
     let mut rows = stmt.query(rusqlite::params![id])?;
     Ok(rows.next()?.map(|row| row_to_entry(row)).transpose()?)
 }
@@ -691,8 +1105,10 @@ pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
         UPDATE entries SET entry_type = ?1, created_at = ?2, updated_at = ?3, sync_status = ?4,
             title = ?5, content = ?6, attachments = ?7, tags = ?8, color = ?9, is_pinned = ?10,
             priority = ?11, due_date = ?12, subtasks = ?13, is_completed = ?14, reminder_at = ?15, rrule = ?16,
-            archived_at = ?17, deleted_at = ?18
-        WHERE id = ?19
+            archived_at = ?17, deleted_at = ?18, target_app = ?19, duration_ms = ?20,
+            word_count = ?21, stt_latency_ms = ?22, stt_mode = ?23, dictation_language = ?24, session_mode = ?25,
+            stt_provider = ?26
+        WHERE id = ?27
         "#,
         rusqlite::params![
             e.entry_type,
@@ -713,6 +1129,14 @@ pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
             e.rrule,
             archived_at,
             deleted_at,
+            e.target_app,
+            e.duration_ms.map(|n| n as i64),
+            e.word_count.map(|n| n as i64),
+            e.stt_latency_ms.map(|n| n as i64),
+            e.stt_mode,
+            e.dictation_language,
+            e.session_mode,
+            e.stt_provider,
             e.id,
         ],
     )?;
@@ -788,6 +1212,14 @@ pub fn migrate_snippets_from_config(snippets: &[crate::config::Snippet]) -> anyh
             rrule: None,
             archived_at: None,
             deleted_at: None,
+            target_app: None,
+            duration_ms: None,
+            word_count: None,
+            stt_latency_ms: None,
+            stt_mode: None,
+            dictation_language: None,
+            session_mode: None,
+            stt_provider: None,
         };
         insert_entry(&conn, &entry)?;
         insert_embedding_stub(&conn, &id)?;

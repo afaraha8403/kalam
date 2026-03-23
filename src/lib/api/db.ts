@@ -1,5 +1,17 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '$lib/backend'
 import type { Entry, Subtask } from '../../types'
+
+/** Unify snake_case and camelCase from IPC/JSON so history detail stats stay populated. */
+function normalizeUnifiedEntry(raw: Entry | null): Entry | null {
+  if (!raw || typeof raw !== 'object') return raw
+  const o = raw as Record<string, unknown>
+  if (o.stt_latency_ms == null && typeof o.sttLatencyMs === 'number') o.stt_latency_ms = o.sttLatencyMs
+  if (o.word_count == null && typeof o.wordCount === 'number') o.word_count = o.wordCount
+  if (o.stt_mode == null && typeof o.sttMode === 'string') o.stt_mode = o.sttMode
+  if (o.stt_provider == null && typeof o.sttProvider === 'string') o.stt_provider = o.sttProvider
+  if (o.duration_ms == null && typeof o.durationMs === 'number') o.duration_ms = o.durationMs
+  return raw
+}
 
 export async function createEntry(entry: Entry): Promise<void> {
   await invoke('create_entry', { entry })
@@ -75,7 +87,8 @@ export function permanentlyDeleteEntry(id: string): Promise<boolean> {
 }
 
 export async function getEntry(id: string): Promise<Entry | null> {
-  return invoke<Entry | null>('get_entry', { id })
+  const e = await invoke<Entry | null>('get_entry', { id })
+  return normalizeUnifiedEntry(e)
 }
 
 export async function updateEntry(entry: Entry): Promise<boolean> {
@@ -120,6 +133,14 @@ export function newEntry(
     rrule: string | null
     archived_at: string | null
     deleted_at: string | null
+    target_app?: string | null
+    duration_ms?: number | null
+    word_count?: number | null
+    stt_latency_ms?: number | null
+    stt_mode?: string | null
+    dictation_language?: string | null
+    session_mode?: string | null
+    stt_provider?: string | null
   }> = {}
 ): Entry {
   const now = new Date().toISOString()
@@ -142,6 +163,14 @@ export function newEntry(
     reminder_at: opts.reminder_at ?? null,
     rrule: opts.rrule ?? null,
     archived_at: opts.archived_at ?? null,
-    deleted_at: opts.deleted_at ?? null
+    deleted_at: opts.deleted_at ?? null,
+    target_app: opts.target_app ?? undefined,
+    duration_ms: opts.duration_ms ?? undefined,
+    word_count: opts.word_count ?? undefined,
+    stt_latency_ms: opts.stt_latency_ms ?? undefined,
+    stt_mode: opts.stt_mode ?? undefined,
+    dictation_language: opts.dictation_language ?? undefined,
+    session_mode: opts.session_mode ?? undefined,
+    stt_provider: opts.stt_provider ?? undefined
   }
 }

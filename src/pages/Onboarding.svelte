@@ -1,8 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte'
   import { onMount } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
-  import { listen } from '@tauri-apps/api/event'
+  import { invoke, listenSafe } from '$lib/backend'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
   import { LANGUAGE_OPTIONS, languageLabel } from '../lib/languages'
   import type { AppConfig } from '../types'
@@ -49,7 +48,7 @@
 
   onMount(() => {
     const setup = async () => {
-      const unlisten = await listen<string>('dictation-result', (e) => {
+      const unlisten = await listenSafe<string>('dictation-result', (e) => {
         if (typeof e.payload === 'string') {
           demoTranscription = e.payload
         }
@@ -410,7 +409,7 @@
             <div class="checkboxes">
               <label class="check-row">
                 <input type="checkbox" bind:checked={termsAgreed} />
-                <span>I agree to the <a href="https://afaraha8403.github.io/kalam/terms.html" target="_blank" rel="noopener noreferrer">Terms and Conditions</a> and <a href="https://afaraha8403.github.io/kalam/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a></span>
+                <span>I agree to the <a href="https://kalam.stream/terms.html" target="_blank" rel="noopener noreferrer">Terms and Conditions</a> and <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a></span>
               </label>
               <label class="check-row">
                 <input type="checkbox" bind:checked={notificationsOptIn} />

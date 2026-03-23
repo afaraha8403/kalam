@@ -1,8 +1,12 @@
 <!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
+<html lang="en" class="scroll-smooth" data-theme="dark">
 <head>
+    <!-- Anti-flash: restore saved theme before first paint -->
+    <script>(function(){try{var t=localStorage.getItem('kalam-site-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})()</script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-F3WK2BDF59"></script>
     <script>
@@ -11,71 +15,640 @@
       gtag('js', new Date());
       gtag('config', 'G-F3WK2BDF59');
     </script>
-    <title>Documentation | Kalam — Voice Typing &amp; Dictation for Windows, Mac, Linux</title>
+
+    <title>Documentation | Kalam — Voice Typing & Dictation for Windows, Mac, Linux</title>
+
+    <!-- SEO Meta Tags -->
     <meta name="description" content="Setup and user manual for Kalam: voice typing and dictation on Windows, Mac, Linux. BYOK, offline mode, hotkeys, snippets.">
-    <meta name="keywords" content="Kalam documentation, voice typing setup, dictation Windows Mac Linux, Kalam user manual">
-    <link rel="canonical" href="https://afaraha8403.github.io/kalam/documentation.html">
-    <!-- OpenGraph / Social sharing (WhatsApp, Facebook, LinkedIn, etc.) -->
-    <meta property="og:title" content="Documentation | Kalam — Voice Typing &amp; Dictation for Windows, Mac, Linux">
-    <meta property="og:description" content="Setup and user manual for Kalam: voice typing and dictation on Windows, Mac, Linux. BYOK, offline mode, hotkeys, snippets.">
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="https://afaraha8403.github.io/kalam/documentation.html">
-    <meta property="og:image" content="https://afaraha8403.github.io/kalam/logo.svg">
-    <meta property="og:image:alt" content="Kalam — Voice typing documentation">
-    <meta property="og:site_name" content="Kalam Voice">
-    <meta property="og:locale" content="en_US">
+    <meta name="keywords" content="voice typing, voice typing for computer, wispr flow alternative, wisprflow open source, whisperflow, whisperflow for computer, open source voice dictation, speech to text desktop, free voice dictation, dictation software Windows Mac Linux, voice dictation, open source, speech to text, tauri, rust, privacy, cross-platform, local STT">
+    <meta name="author" content="Kalam Voice">
+    <link rel="canonical" href="https://kalam.stream/documentation.html">
+
     <!-- Twitter Card -->
-    <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Documentation | Kalam — Voice Typing &amp; Dictation">
-    <meta name="twitter:description" content="Setup and user manual for Kalam: voice typing and dictation on Windows, Mac, Linux. BYOK, offline mode, hotkeys, snippets.">
-    <meta name="twitter:image" content="https://afaraha8403.github.io/kalam/logo.svg">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Kalam — Free Open-Source Voice Typing for PC & Mac | Wispr Flow Alternative">
+    <meta name="twitter:description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline.">
+    <meta name="twitter:image" content="https://kalam.stream/logo.svg">
+    <meta name="twitter:image:alt" content="Kalam — Free open-source voice typing for your computer">
+
+    <!-- Structured Data (JSON-LD) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Kalam",
+      "description": "Free open-source voice typing for Windows, Mac, and Linux. Turns your voice into text in any app. Wispr Flow and Whisperflow alternative with BYOK or fully offline.",
+      "applicationCategory": "ProductivityApplication",
+      "operatingSystem": "Windows, macOS, Linux",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "url": "https://kalam.stream/"
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {"@type": "Question", "name": "Is Kalam free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Kalam is open source and free. You can use cloud transcription with your own API key (Groq has a free tier) or run fully offline with local models—no subscription."}},
+        {"@type": "Question", "name": "Is Kalam like Wispr Flow or Whisperflow?", "acceptedAnswer": {"@type": "Answer", "text": "Yes—same idea (voice typing in any app). Kalam is free, open source, and runs on Windows, Mac, and Linux (desktop only); Wispr Flow is paid and also on mobile."}},
+        {"@type": "Question", "name": "What platforms does Kalam support?", "acceptedAnswer": {"@type": "Answer", "text": "Kalam runs on Windows, macOS, and Linux (desktop only). We are not building for Android or iOS."}},
+        {"@type": "Question", "name": "Does Kalam work offline?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. You can use a local STT model (SenseVoice or Whisper) so no audio leaves your device. No API key required for offline mode."}},
+        {"@type": "Question", "name": "Do I need an API key?", "acceptedAnswer": {"@type": "Answer", "text": "Only for cloud transcription (e.g. Groq). Sign up at Groq Console, get a free key, and add it in Settings → STT Provider. For local mode, no key is needed."}},
+        {"@type": "Question", "name": "Is my audio stored or sent somewhere?", "acceptedAnswer": {"@type": "Answer", "text": "Audio is not stored to disk (in-memory only). In cloud mode it's sent to the provider over TLS and not retained. In local mode, nothing leaves your machine."}},
+        {"@type": "Question", "name": "How do I start dictating?", "acceptedAnswer": {"@type": "Answer", "text": "Press Ctrl+Win (Windows) or Ctrl+Cmd (macOS), hold while you speak, then release. Text is typed into the app that had focus when you pressed the key."}}
+      ]
+    }
+    </script>
+
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <script src="https://code.iconify.design/iconify-icon/3.0.2/iconify-icon.min.js"></script>
+
+    <!-- Inter — same as .kalam-sleek --font-sleek in App.svelte (page titles, body, UI) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Syne:wght@400..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind (layout/spacing utilities only; colors via CSS vars) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['"DM Sans"', 'sans-serif'],
-                        heading: ['Syne', 'sans-serif'],
-                        mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
-                    },
-                    colors: {
-                        primary: { DEFAULT: '#4AAEBE', light: '#6BBEC9', dark: '#3B9FB6' },
-                        navy: { deep: '#071029', DEFAULT: '#0B1A34', mid: '#133051' },
-                        app: { bg: '#EAEFF5', content: '#FFFFFF', card: '#FFFFFF', input: '#F4F7F9' },
-                        text: { primary: '#0F172A', secondary: '#334155', muted: '#64748B' }
-                    },
-                    boxShadow: {
-                        'app-sm': '0 2px 8px rgba(7, 16, 41, 0.04)',
-                        'app-md': '0 4px 20px rgba(7, 16, 41, 0.06)',
-                        'doc-sidebar': '4px 0 24px -4px rgba(7, 16, 41, 0.06)',
-                    },
-                    borderRadius: { xl: '24px' },
-                }
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'system-ui', 'sans-serif'],
             }
+          }
         }
+      }
     </script>
+
+    <style>
+      /* ─── Design tokens: mirrors .kalam-sleek.dark exactly ─── */
+      :root, [data-theme="dark"] {
+        color-scheme: dark;
+        --bg:          #000000;  /* app --bg */
+        --bg-elevated: #111111;  /* slightly warmer than pure black for sections */
+        --bg-card:     #1c1c1e;  /* app --bg-elevated */
+        --bg-input:    #2c2c2e;  /* app --bg-input */
+        --text:        #f5f5f7;  /* Apple text white */
+        --text-2:      #aeaeb2;  /* secondary */
+        --text-3:      #8e8e93;  /* muted (WCAG AA compliant) */
+        --border:      rgba(255,255,255,0.07);
+        --border-hi:   rgba(255,255,255,0.13);
+        --primary:     #4AAEBE;
+        --primary-dim: rgba(74,174,190,0.15);
+        --primary-mid: rgba(74,174,190,0.28);
+        --btn-primary-text: #000000;
+        --sh-sm: 0 1px 3px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
+        --sh-md: 0 6px 24px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05);
+        --sh-lg: 0 24px 64px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.06);
+        --sh-xl: 0 32px 80px rgba(0,0,0,0.92), 0 0 0 1px rgba(255,255,255,0.06);
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --bg:          #fafafa;
+        --bg-elevated: #f4f4f5;
+        --bg-card:     #ffffff;
+        --bg-input:    #e4e4e7;
+        --text:        #09090b;
+        --text-2:      #52525b;
+        --text-3:      #71717a;  /* muted (WCAG AA compliant) */
+        --border:      rgba(0,0,0,0.08);
+        --border-hi:   rgba(0,0,0,0.14);
+        --primary:     #2c889e;  /* Darkened slightly for better contrast with white text */
+        --primary-dim: rgba(44,136,158,0.10);
+        --primary-mid: rgba(44,136,158,0.22);
+        --btn-primary-text: #ffffff;
+        --sh-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.04);
+        --sh-md: 0 8px 24px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.04);
+        --sh-lg: 0 24px 64px rgba(0,0,0,0.12), 0 8px 24px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.05);
+        --sh-xl: 0 32px 80px rgba(0,0,0,0.16), 0 16px 32px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.05);
+      }
+
+      /* ─── Base ─── */
+      *, *::before, *::after { box-sizing: border-box; margin: 0; }
+      html { scroll-behavior: smooth; }
+      * { scrollbar-width: none; }
+      *::-webkit-scrollbar { width: 0; height: 0; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        transition: background .2s, color .15s;
+      }
+      ::selection { background: var(--primary-mid); color: var(--text); }
+      
+      /* Accessibility: Focus states */
+      :focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+        border-radius: 2px;
+      }
+      a:focus-visible, button:focus-visible, details:focus-visible {
+        border-radius: 8px;
+      }
+
+      /* ─── Nav ─── */
+      .site-nav {
+        background: rgba(0,0,0,0.78);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--border);
+      }
+      [data-theme="light"] .site-nav {
+        background: rgba(250,250,250,0.90);
+      }
+      .nav-link { color: var(--text-2); font-weight: 500; transition: color .15s; text-decoration: none; }
+      .nav-link:hover { color: var(--text); }
+
+      /* Platform logos (external SVGs can't use currentColor — tint to match --text-2) */
+      .platform-icon {
+        display: block;
+        flex-shrink: 0;
+        object-fit: contain;
+      }
+      .platform-icon--glyph {
+        width: 1.125rem;
+        height: 1.125rem;
+      }
+      /* macOS wordmark is wide — cap width, single-line height */
+      .platform-icon--macos {
+        height: 0.9rem;
+        width: auto;
+        max-width: 3.75rem;
+      }
+      [data-theme="dark"] .platform-icon--tint {
+        filter: brightness(0) saturate(100%) invert(0.78);
+        opacity: 0.92;
+      }
+      [data-theme="light"] .platform-icon--tint {
+        filter: brightness(0) saturate(100%) invert(0.32);
+        opacity: 0.9;
+      }
+      /* Windows row: optical align with macOS wordmark + Linux glyph */
+      .platform-row-windows {
+        transform: translateY(2px);
+      }
+
+      /* ─── Buttons ─── */
+      .btn-primary {
+        background: var(--primary);
+        color: var(--btn-primary-text);
+        font-weight: 600;
+        font-size: 0.9375rem;
+        border-radius: 10px;
+        padding: .75rem 1.625rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+        text-decoration: none;
+        white-space: nowrap;
+        position: relative;
+        overflow: hidden;
+      }
+      [data-theme="light"] .btn-primary {
+        border: 1px solid rgba(0, 0, 0, 0.05);
+      }
+      .btn-primary::after {
+        content: '';
+        position: absolute;
+        top: -50%; left: -50%;
+        width: 200%; height: 200%;
+        background: radial-gradient(circle, rgba(255,255,255,0.3) 0%, transparent 60%);
+        opacity: 0;
+        transform: scale(0.5);
+        transition: opacity 0.3s, transform 0.3s;
+        pointer-events: none;
+      }
+      .btn-primary:hover { 
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px var(--primary-dim);
+      }
+      .btn-primary:hover::after {
+        opacity: 1;
+        transform: scale(1);
+      }
+      .btn-primary:active {
+        transform: translateY(1px);
+        box-shadow: 0 2px 4px var(--primary-dim);
+      }
+
+      .btn-secondary {
+        background: var(--bg-card);
+        color: var(--text);
+        font-weight: 500;
+        font-size: 0.9375rem;
+        border-radius: 10px;
+        padding: .75rem 1.625rem;
+        border: 1px solid var(--border-hi);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .btn-secondary:hover { 
+        background: var(--bg-input); 
+        transform: translateY(-2px);
+        box-shadow: var(--sh-sm);
+      }
+      .btn-secondary:active {
+        transform: translateY(1px);
+      }
+
+      .btn-ghost {
+        background: var(--primary-dim);
+        color: var(--primary);
+        font-weight: 500;
+        font-size: 0.875rem;
+        border-radius: 10px;
+        padding: .65rem 1.375rem;
+        border: 1px solid var(--primary-mid);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+        text-decoration: none;
+      }
+      .btn-ghost:hover { 
+        background: var(--primary-mid); 
+        transform: translateY(-2px);
+      }
+      .btn-ghost:active {
+        transform: translateY(1px);
+      }
+
+      /* ─── Hero ─── */
+      .hero-section {
+        position: relative;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      /* Single clean radial — teal glow at top center, like a lamp */
+      .hero-glow {
+        position: absolute;
+        top: -200px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 1000px;
+        height: 700px;
+        background: radial-gradient(ellipse at center top, var(--primary-dim) 0%, transparent 62%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      /* ─── Platform pills hover ─── */
+      .platform-pill {
+        transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), color 0.2s;
+        cursor: default;
+      }
+      .platform-pill:hover {
+        transform: translateY(-2px);
+        color: var(--text);
+      }
+      .platform-pill:hover .platform-icon--tint {
+        filter: brightness(0) saturate(100%) invert(1);
+        opacity: 1;
+      }
+      [data-theme="light"] .platform-pill:hover .platform-icon--tint {
+        filter: brightness(0) saturate(100%) invert(0);
+      }
+
+      /* ─── Faux app shell in hero ─── */
+      .app-shell {
+        border-radius: 14px;
+        border: 1px solid var(--border-hi);
+        background: var(--bg-card);
+        box-shadow: var(--sh-xl);
+        overflow: hidden;
+        transform: perspective(1000px) rotateX(2deg) rotateY(-4deg) rotateZ(1deg);
+        transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+        transform-origin: center right;
+      }
+      .app-shell:hover {
+        transform: perspective(1000px) rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(1.02);
+      }
+      .app-shell-bar {
+        height: 38px;
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        gap: 6px;
+      }
+      .shell-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+      .shell-spacer { flex: 1; }
+      .shell-pill { width: 72px; height: 14px; border-radius: 4px; background: var(--border-hi); }
+      .app-shell-body { display: flex; }
+      .app-sidebar {
+        width: 50px;
+        background: #0d0d0d;
+        border-right: 1px solid rgba(255,255,255,0.05);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 12px 0;
+        gap: 9px;
+      }
+      .sidebar-icon {
+        width: 30px; height: 30px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.05);
+      }
+      .sidebar-icon.on { background: rgba(74,174,190,0.18); }
+      .app-content { flex: 1; padding: 14px; }
+      .mock-line { border-radius: 4px; background: rgba(255,255,255,0.06); margin-bottom: 7px; height: 8px; }
+      .mock-stat-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; margin-top: 12px; }
+      .mock-stat {
+        border-radius: 8px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.06);
+        height: 52px;
+        padding: 8px;
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      .mock-bar { height: 5px; border-radius: 3px; }
+
+      /* ─── Scroll Reveal Animations ─── */
+      .reveal-on-scroll {
+        opacity: 0;
+        transform: translateY(30px);
+        transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .reveal-on-scroll.is-visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .stagger-1 { transition-delay: 0.1s; }
+      .stagger-2 { transition-delay: 0.2s; }
+      .stagger-3 { transition-delay: 0.3s; }
+      .stagger-4 { transition-delay: 0.4s; }
+
+      /* ─── Photo divider ─── */
+      .photo-divider {
+        background-image:
+          linear-gradient(to bottom, var(--bg) 0%, transparent 12%, transparent 88%, var(--bg) 100%),
+          linear-gradient(rgba(0,0,0,.6), rgba(0,0,0,.6)),
+          url('hero-bg.webp');
+        background-size: cover;
+        background-position: center;
+      }
+
+      /* ─── Image Placeholders ─── */
+      @keyframes shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+      }
+      .img-placeholder {
+        background: var(--bg-input);
+        border: 1px dashed var(--border-hi);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-3);
+        font-weight: 500;
+        position: relative;
+        overflow: hidden;
+      }
+      .img-placeholder::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at top left, var(--primary-dim), transparent 70%);
+        opacity: 0.5;
+      }
+      .img-placeholder::after {
+        content: '';
+        position: absolute;
+        top: 0; right: 0; bottom: 0; left: 0;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
+        transform: translateX(-100%);
+        animation: shimmer 3s infinite;
+        pointer-events: none;
+      }
+      [data-theme="light"] .img-placeholder::after {
+        background: linear-gradient(90deg, transparent, rgba(0,0,0,0.02), transparent);
+      }
+      .img-placeholder iconify-icon {
+        font-size: 1.75rem;
+        margin-bottom: 0.5rem;
+        color: var(--primary);
+        opacity: 0.8;
+      }
+
+      /* ─── Section helpers ─── */
+      .s-base { background: var(--bg); }
+      .s-raise { background: var(--bg-elevated); }
+      .divider { border-top: 1px solid var(--border); }
+
+      /* ─── Cards — borderless; depth from shadow only ─── */
+      .card {
+        background: var(--bg-card);
+        border: none;
+        border-radius: 14px;
+        padding: 1.625rem;
+        box-shadow: var(--sh-sm);
+        transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+      .card:hover { 
+        box-shadow: var(--sh-md); 
+        transform: translateY(-4px);
+      }
+      .card:hover .ibadge {
+        transform: scale(1.08) rotate(-4deg);
+        background: var(--primary-dim);
+        color: var(--primary);
+      }
+
+      /* ─── Icon badge — neutral surface like app icon buttons (no pastel fills) ─── */
+      .ibadge {
+        width: 40px; height: 40px;
+        border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        margin-bottom: 1rem;
+        font-size: 1.125rem;
+        background: var(--bg-input);
+        color: var(--text-2);
+        border: none;
+        transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+      .ibadge iconify-icon { color: inherit; opacity: 0.92; }
+
+      /* ─── Section text — matches .kalam-sleek .page-title (Inter 600, tight tracking) ─── */
+      .eyebrow {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        color: var(--primary);
+        margin-bottom: .625rem;
+      }
+      .s-heading {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-weight: 600;
+        letter-spacing: -0.04em;
+        color: var(--text);
+        line-height: 1.08;
+      }
+      @keyframes slideUpFade {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .hero-title {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-size: clamp(2.5rem, 5.5vw, 4rem);
+        font-weight: 600;
+        letter-spacing: -0.04em;
+        line-height: 1.05;
+        color: var(--text);
+        animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+      .hero-title span {
+        display: inline-block;
+        opacity: 0;
+        animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
+      }
+      .s-body { color: var(--text-2); line-height: 1.7; }
+      .h3-card {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-weight: 600;
+        color: var(--text);
+        letter-spacing: -0.02em;
+      }
+
+      /* ─── Bento ─── */
+      .bento { display: grid; gap: 10px; }
+      @media (min-width: 768px) {
+        .bento { grid-template-columns: repeat(3,1fr); }
+        .bento-wide { grid-column: span 2; }
+      }
+
+      /* ─── Steps ─── */
+      .step-num {
+        width: 40px; height: 40px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        font-size: 0.9375rem;
+        background: var(--bg-card);
+        color: var(--text);
+        border: none;
+        flex-shrink: 0;
+        transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+      .step-card:hover .step-num {
+        transform: scale(1.1) rotate(5deg);
+        background: var(--primary-dim);
+        color: var(--primary);
+      }
+      .step-card {
+        transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+      .step-card:hover {
+        transform: translateY(-4px);
+      }
+
+      /* ─── FAQ ─── */
+      .faq-item { border-bottom: 1px solid var(--border); padding: 1.25rem 0; }
+      .faq-item:last-child { border-bottom: none; }
+      .faq-q { font-family: 'Inter', sans-serif; font-weight: 600; color: var(--text); margin-bottom: .4rem; }
+      .faq-a { color: var(--text-2); line-height: 1.65; }
+
+      /* ─── Compare table — full Kalam column outline ─── */
+      .ctable { color: var(--text-2); }
+      .ctable .kalam-col-head { color: var(--primary); font-weight: 600; }
+      .kalam-col-cell {
+        border-left: 2px solid var(--primary);
+        border-right: 2px solid var(--primary);
+        background: var(--primary-dim);
+      }
+      .kalam-col-first {
+        border-top: 2px solid var(--primary);
+        border-radius: 10px 10px 0 0;
+      }
+      .kalam-col-mid {
+        border-top: 1px solid var(--border);
+      }
+      .kalam-col-last {
+        border-top: 1px solid var(--border);
+        border-bottom: 2px solid var(--primary);
+        border-radius: 0 0 10px 10px;
+      }
+      .c-check { color: var(--primary); }
+
+      /* ─── KBD ─── */
+      .kbd {
+        display: inline-block;
+        padding: 1px 7px;
+        font-size: .72em;
+        font-family: ui-monospace, 'Cascadia Code', monospace;
+        border-radius: 5px;
+        border: 1px solid var(--border);
+        background: var(--bg-card);
+        color: var(--text-2);
+      }
+
+      /* ─── Theme toggle ─── */
+      #theme-toggle {
+        transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.15s;
+      }
+      #theme-toggle:active {
+        transform: scale(0.9) rotate(-15deg);
+      }
+      [data-theme="dark"]  .t-sun  { display: block; }
+      [data-theme="dark"]  .t-moon { display: none;  }
+      [data-theme="light"] .t-sun  { display: none;  }
+      [data-theme="light"] .t-moon { display: block; }
+
+      /* ─── details/summary ─── */
+      details summary::-webkit-details-marker { display: none; }
+      details[open] summary svg.chevron { transform: rotate(180deg); }
+      summary svg.chevron { transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1); }
+      
+      /* Mobile menu icon swap */
+      details[open] summary .menu-open { display: none; }
+      details[open] summary .menu-close { display: block; }
+      details:not([open]) summary .menu-open { display: block; }
+      details:not([open]) summary .menu-close { display: none; }
+
+      /* ─── Accessibility: Reduced Motion ─── */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+        html { scroll-behavior: auto; }
+      }
+
+      /* ─── Mobile compare scroll ─── */
+      @media (max-width: 640px) {
+        .ctable-wrap { margin-left: -1.25rem; margin-right: -1.25rem; padding-left: 1.25rem; }
+      }
+
+      @supports (padding: env(safe-area-inset-top)) {
+        .site-nav { padding-top: max(0px, env(safe-area-inset-top)); }
+      }
+    </style>
+
     <style>
         :root {
-            --doc-accent-setup: #3B9FB6;
+            --doc-accent-setup: var(--primary);
             --doc-accent-manual: #6366f1;
-            --doc-nav-hover: rgba(74, 174, 190, 0.12);
+            --doc-nav-hover: var(--bg-input);
             --doc-section-border: 3px;
-        }
-        body {
-            background: linear-gradient(180deg, #EAEFF5 0%, #e2e9f1 100%);
-            color: #0F172A;
-            font-feature-settings: "ss01", "ss02";
-        }
-        .glass-nav {
-            background: rgba(255,255,255,0.88);
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            border-bottom: 1px solid rgba(7, 16, 41, 0.06);
         }
         /* Sticky sidebar */
         .doc-sidebar {
@@ -87,14 +660,14 @@
         }
         .doc-sidebar::-webkit-scrollbar { width: 6px; }
         .doc-sidebar::-webkit-scrollbar-track { background: transparent; }
-        .doc-sidebar::-webkit-scrollbar-thumb { background: rgba(7, 16, 41, 0.15); border-radius: 3px; }
+        .doc-sidebar::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 3px; }
         .doc-nav-group-title {
-            font-family: Syne, sans-serif;
+            font-family: 'Inter', sans-serif;
             font-weight: 600;
             font-size: 0.7rem;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            color: #64748B;
+            color: var(--text-3);
             margin-bottom: 0.5rem;
             padding-left: 0.75rem;
         }
@@ -104,7 +677,7 @@
             padding: 0.4rem 0.75rem;
             border-radius: 8px;
             font-size: 0.9rem;
-            color: #334155;
+            color: var(--text-2);
             text-decoration: none;
             border-left: 3px solid transparent;
             margin-left: 0;
@@ -112,84 +685,85 @@
         }
         .doc-nav-link:hover {
             background: var(--doc-nav-hover);
-            color: #0F172A;
+            color: var(--text);
         }
         .doc-nav-link.is-active {
-            background: rgba(74, 174, 190, 0.1);
-            color: #0B1A34;
+            background: var(--primary-dim);
+            color: var(--text);
             border-left-color: var(--doc-accent-setup);
             font-weight: 500;
         }
-        .doc-nav-group--manual .doc-nav-link.is-active { border-left-color: var(--doc-accent-manual); }
+        .doc-nav-group--manual .doc-nav-link.is-active { border-left-color: var(--doc-accent-manual); background: rgba(99, 102, 241, 0.1); }
         /* Content sections */
         .doc-content h2 {
-            font-family: Syne, sans-serif;
+            font-family: 'Inter', sans-serif;
             font-weight: 700;
-            color: #071029;
+            color: var(--text);
             margin-top: 2.5rem;
             margin-bottom: 0.75rem;
             padding-bottom: 0.5rem;
-            border-bottom: 1px solid #E2E8F0;
+            border-bottom: 1px solid var(--border);
             scroll-margin-top: 6rem;
         }
         .doc-content h2:first-child { margin-top: 0; }
         .doc-content h3 {
-            font-family: Syne, sans-serif;
+            font-family: 'Inter', sans-serif;
             font-weight: 600;
-            color: #0B1A34;
+            color: var(--text);
             margin-top: 1.75rem;
             margin-bottom: 0.5rem;
             scroll-margin-top: 6rem;
         }
-        .doc-content p { margin-bottom: 1rem; color: #334155; line-height: 1.65; }
-        .doc-content ul { margin-bottom: 1rem; padding-left: 1.5rem; color: #334155; line-height: 1.75; list-style-type: disc; }
+        .doc-content p { margin-bottom: 1rem; color: var(--text-2); line-height: 1.65; }
+        .doc-content ul { margin-bottom: 1rem; padding-left: 1.5rem; color: var(--text-2); line-height: 1.75; list-style-type: disc; }
         .doc-content ul ul { margin-top: 0.35rem; margin-bottom: 0.35rem; list-style-type: circle; }
-        .doc-content ol { margin-bottom: 1rem; padding-left: 1.5rem; color: #334155; line-height: 1.75; list-style-type: decimal; }
+        .doc-content ol { margin-bottom: 1rem; padding-left: 1.5rem; color: var(--text-2); line-height: 1.75; list-style-type: decimal; }
         .doc-content li { margin-bottom: 0.35rem; }
         .doc-content li:last-child { margin-bottom: 0; }
-        .doc-content h4 { font-family: Syne, sans-serif; font-weight: 600; color: #0B1A34; margin-top: 1.25rem; margin-bottom: 0.4rem; font-size: 1rem; scroll-margin-top: 6rem; }
-        .doc-content a { color: #3B9FB6; transition: color 0.15s ease; }
-        .doc-content a:hover { color: #2d8a9e; text-decoration: underline; }
+        .doc-content h4 { font-family: 'Inter', sans-serif; font-weight: 600; color: var(--text); margin-top: 1.25rem; margin-bottom: 0.4rem; font-size: 1rem; scroll-margin-top: 6rem; }
+        .doc-content a { color: var(--primary); transition: color 0.15s ease; }
+        .doc-content a:hover { text-decoration: underline; }
         .doc-content code {
-            font-family: "JetBrains Mono", ui-monospace, monospace;
-            background: #F1F5F9;
+            font-family: ui-monospace, 'Cascadia Code', monospace;
+            background: var(--bg-input);
             padding: 0.2em 0.45em;
             border-radius: 6px;
             font-size: 0.875em;
-            border: 1px solid #E2E8F0;
+            border: 1px solid var(--border);
+            color: var(--text);
         }
         .doc-content pre {
-            font-family: "JetBrains Mono", ui-monospace, monospace;
-            background: #0B1A34;
-            color: #E2E8F0;
+            font-family: ui-monospace, 'Cascadia Code', monospace;
+            background: var(--bg-elevated);
+            color: var(--text);
             padding: 1.25rem 1.5rem;
             border-radius: 12px;
             overflow-x: auto;
             margin-bottom: 1rem;
-            box-shadow: 0 4px 14px rgba(7, 16, 41, 0.15);
+            border: 1px solid var(--border);
         }
         .doc-content pre code { background: transparent; padding: 0; border: none; color: inherit; font-size: 0.9rem; }
         /* Section blocks for visual division */
         .doc-block {
-            background: #FFFFFF;
+            background: var(--bg-card);
             border-radius: 16px;
-            border: 1px solid rgba(7, 16, 41, 0.06);
-            box-shadow: 0 2px 12px rgba(7, 16, 41, 0.04);
+            border: 1px solid var(--border);
+            box-shadow: var(--sh-md);
             padding: 2rem 2.25rem;
             margin-bottom: 2rem;
         }
         .doc-block--setup { border-left: var(--doc-section-border) solid var(--doc-accent-setup); }
         .doc-block--manual { border-left: var(--doc-section-border) solid var(--doc-accent-manual); }
         .doc-block-title {
-            font-family: Syne, sans-serif;
+            font-family: 'Inter', sans-serif;
             font-weight: 700;
             font-size: 1rem;
             letter-spacing: 0.04em;
             text-transform: uppercase;
-            color: #64748B;
+            color: var(--text-3);
             margin-bottom: 1.25rem;
             padding-bottom: 0.5rem;
-            border-bottom: 1px dashed #E2E8F0;
+            border-bottom: 1px dashed var(--border);
         }
         .doc-block--setup .doc-block-title { color: var(--doc-accent-setup); }
         .doc-block--manual .doc-block-title { color: var(--doc-accent-manual); }
@@ -207,13 +781,13 @@
             padding: 0.5rem 0.75rem;
             border-radius: 8px;
             font-size: 0.9rem;
-            color: #334155;
+            color: var(--text-2);
             text-decoration: none;
             transition: background 0.15s ease, color 0.15s ease;
         }
         .doc-toc-grid a:hover {
             background: rgba(99, 102, 241, 0.08);
-            color: #0B1A34;
+            color: var(--text);
         }
         /* Mobile nav */
         .doc-mobile-nav-trigger {
@@ -225,22 +799,22 @@
             width: 48px;
             height: 48px;
             border-radius: 14px;
-            background: #0B1A34;
-            color: white;
-            border: none;
-            box-shadow: 0 8px 24px rgba(7, 16, 41, 0.25);
+            background: var(--bg-card);
+            color: var(--text);
+            border: 1px solid var(--border);
+            box-shadow: var(--sh-md);
             cursor: pointer;
             align-items: center;
             justify-content: center;
             transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
-        .doc-mobile-nav-trigger:hover { transform: scale(1.05); box-shadow: 0 10px 28px rgba(7, 16, 41, 0.3); }
+        .doc-mobile-nav-trigger:hover { transform: scale(1.05); box-shadow: var(--sh-lg); }
         .doc-mobile-drawer {
             display: none;
             position: fixed;
             inset: 0;
             z-index: 50;
-            background: rgba(7, 16, 41, 0.4);
+            background: rgba(0, 0, 0, 0.6);
             backdrop-filter: blur(4px);
             padding: 5rem 1rem 2rem;
             overflow-y: auto;
@@ -250,10 +824,11 @@
             position: relative;
             top: 0;
             max-height: none;
-            background: #FFFFFF;
+            background: var(--bg-card);
             border-radius: 16px;
             padding: 1.5rem;
-            box-shadow: 0 20px 50px rgba(7, 16, 41, 0.2);
+            box-shadow: var(--sh-lg);
+            border: 1px solid var(--border);
         }
         @media (max-width: 1023px) {
             .doc-sidebar-wrap { display: none; }
@@ -267,43 +842,75 @@
             margin: 1.25rem 0;
             padding: 1rem 1.25rem;
             border-radius: 12px;
-            border-left: 4px solid #64748B;
-            background: #F8FAFC;
-            color: #334155;
+            border-left: 4px solid var(--text-3);
+            background: var(--bg-input);
+            color: var(--text-2);
             font-size: 0.9375rem;
             line-height: 1.6;
         }
         .doc-callout p:last-child { margin-bottom: 0; }
-        .doc-callout strong { color: #0F172A; }
-        .doc-callout--tip { border-left-color: var(--doc-accent-setup); background: rgba(74, 174, 190, 0.08); }
-        .doc-callout--note { border-left-color: var(--doc-accent-manual); background: rgba(99, 102, 241, 0.08); }
+        .doc-callout strong { color: var(--text); }
+        .doc-callout--tip { border-left-color: var(--doc-accent-setup); background: var(--primary-dim); }
+        .doc-callout--note { border-left-color: var(--doc-accent-manual); background: rgba(99, 102, 241, 0.1); }
         .doc-callout--warning { border-left-color: #EAB308; background: rgba(234, 179, 8, 0.1); }
-        .doc-callout-title { font-family: Syne, sans-serif; font-weight: 600; font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.04em; color: #64748B; margin-bottom: 0.35rem; }
+        .doc-callout-title { font-family: 'Inter', sans-serif; font-weight: 600; font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); margin-bottom: 0.35rem; }
         .doc-callout--tip .doc-callout-title { color: var(--doc-accent-setup); }
         .doc-callout--note .doc-callout-title { color: var(--doc-accent-manual); }
         .doc-callout--warning .doc-callout-title { color: #A16207; }
     </style>
+    
 </head>
-<body class="antialiased min-h-screen flex flex-col">
+<body>
 
-    <nav class="fixed w-full z-50 glass-nav">
-        <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex justify-between items-center">
-            <a href="index.html" class="flex items-center gap-3">
-                <img src="favicon.svg" alt="Kalam" class="w-8 h-8">
-                <span class="font-heading font-bold text-2xl text-navy-deep">Kalam</span>
-            </a>
-            <div class="flex items-center gap-6">
-                <a href="index.html#features" class="text-text-secondary hover:text-primary font-medium hidden sm:block transition-colors">Features</a>
-                <a href="documentation.html" class="text-primary font-medium hidden sm:block">Documentation</a>
-                <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="text-navy-deep hover:text-primary font-medium flex items-center gap-2 transition-colors">
-                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
-                    <span class="hidden sm:inline">GitHub</span>
-                </a>
-            </div>
-        </div>
-    </nav>
+<!-- ═══════════════════════════════════════════ NAV ══ -->
+<nav class="site-nav fixed w-full z-50">
+  <div class="max-w-6xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between gap-4">
 
-    <div class="flex-1 pt-24 pb-16 px-4 sm:px-6">
+    <a href="index.html" class="flex items-center gap-3 shrink-0 group" style="text-decoration:none">
+      <img src="favicon.svg" alt="Kalam" width="44" height="44" class="group-hover:scale-105 transition-transform" style="width:44px;height:44px">
+      <span class="font-semibold text-[1.125rem] tracking-tight" style="color:var(--text);font-family:Inter,sans-serif;letter-spacing:-0.03em">Kalam</span>
+    </a>
+
+    <!-- Desktop links (slim bar; other landing sections live in footer) -->
+    <div class="hidden md:flex items-center gap-0.5 text-sm">
+      <a href="documentation.html" class="nav-link px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors">Documentation</a>
+      <a href="index.html#features" class="nav-link px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors">Features</a>
+      <a href="index.html#faq"     class="nav-link px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors">FAQ</a>
+    </div>
+
+    <div class="hidden md:flex items-center gap-2">
+      <!-- Theme toggle -->
+      <button id="theme-toggle" class="nav-link flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--bg-card)] transition-colors" aria-label="Toggle theme">
+        <svg class="t-sun w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg class="t-moon w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+      <!-- GitHub -->
+      <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="nav-link flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] font-medium transition-colors">
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
+        GitHub
+      </a>
+    </div>
+
+    <!-- Mobile hamburger -->
+    <details class="md:hidden relative">
+      <summary class="list-none flex items-center justify-center w-10 h-10 rounded-xl hover:bg-[var(--bg-card)] transition-colors cursor-pointer" style="color:var(--text)" aria-label="Open menu">
+        <svg class="menu-open w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <svg class="menu-close w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </summary>
+      <div class="absolute right-0 top-full mt-2 w-52 py-2 rounded-2xl text-sm" style="background:var(--bg-card);border:1px solid var(--border);box-shadow:var(--sh-lg)">
+        <a href="documentation.html" class="nav-link block px-4 py-2.5">Documentation</a>
+        <a href="index.html#features" class="nav-link block px-4 py-2.5">Features</a>
+        <a href="index.html#faq"     class="nav-link block px-4 py-2.5">FAQ</a>
+        <button class="theme-toggle-mobile nav-link block w-full text-left px-4 py-2.5">Toggle theme</button>
+        <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="nav-link block px-4 py-2.5">GitHub</a>
+      </div>
+    </details>
+
+  </div>
+</nav>
+
+<main style="flex:1" class="pt-24 sm:pt-32 pb-16 px-5 sm:px-8">
+
         <div class="max-w-6xl mx-auto flex gap-10 lg:gap-14">
             <!-- Sidebar nav (desktop) -->
             <aside class="doc-sidebar-wrap w-56 shrink-0 hidden lg:block">
@@ -340,8 +947,8 @@
             <!-- Main content -->
             <main class="min-w-0 flex-1">
                 <header class="mb-10">
-                    <h1 class="font-heading text-4xl sm:text-5xl font-bold text-navy-deep mb-2">Documentation</h1>
-                    <p class="text-text-secondary text-lg max-w-2xl">Kalam is open-source voice typing for your computer; this page covers installation, API keys, and every feature. Setup, API keys, and building from source, plus a full user manual. Everything in one place.</p>
+                    <h1 class="s-heading text-4xl sm:text-5xl font-bold text-[var(--text)] mb-2">Documentation</h1>
+                    <p class="text-[var(--text-2)] text-lg max-w-2xl">Kalam is open-source voice typing for your computer; this page covers installation, API keys, and every feature. Setup, API keys, and building from source, plus a full user manual. Everything in one place.</p>
                 </header>
 
                 <!-- Setup & reference block -->
@@ -356,7 +963,7 @@
                         <p>Download the installer or archive for your platform and run it. <strong>No account required.</strong></p>
 
                         <h2 id="quick-start">Quick Start</h2>
-                        <ol class="list-decimal pl-6 space-y-2 text-text-secondary mb-4">
+                        <ol class="list-decimal pl-6 space-y-2 text-[var(--text-2)] mb-4">
                             <li>Install and open Kalam.</li>
                             <li>For cloud speech-to-text: add your API key in <strong>Settings → STT Provider</strong> (see <a href="#api-keys">API Keys</a>). For fully offline use, choose a local model—no key needed.</li>
                             <li>Press <code>Ctrl+Win</code> (Windows) or <code>Ctrl+Cmd</code> (macOS) from any app to start dictating.</li>
@@ -627,7 +1234,7 @@ cd kalam
                         <ul>
                             <li><strong>Position:</strong> Bottom Center (default), corners, sides, or center</li>
                             <li><strong>Fine-tune:</strong> offset X/Y and expand direction (Up, Down, Center) in Settings</li>
-                            <li><strong>Waveform style:</strong> Line, Symmetric, Heartbeat, Snake, DoubleHelix, Liquid, Waves, Glitch, Bars, CenterSplit — visual only</li>
+                            <li><strong>Waveform style:</strong> Siri Wave, Pulsing Dots, Rounded Bars, Breathing Aura, Oscilloscope, Liquid Blob — visual only</li>
                         </ul>
 
                         <h3 id="privacy-data">Privacy and data</h3>
@@ -662,9 +1269,11 @@ cd kalam
                 </section>
             </main>
         </div>
-    </div>
+    
+</main>
 
-    <!-- Mobile: floating contents button -->
+<!-- Mobile: floating contents button -->
+
     <button type="button" class="doc-mobile-nav-trigger" id="doc-mobile-trigger" aria-label="Open documentation contents">
         <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
@@ -696,31 +1305,272 @@ cd kalam
         </nav>
     </div>
 
-    <footer class="bg-white border-t border-gray-200 py-8 px-6">
-        <div class="max-w-6xl mx-auto">
-            <div class="flex flex-col md:flex-row justify-between items-center gap-4">
-                <div class="flex items-center gap-3">
-                    <img src="favicon.svg" alt="Kalam" class="w-6 h-6 opacity-80">
-                    <span class="font-heading font-bold text-xl text-navy-deep">Kalam</span>
-                </div>
-                <div class="flex flex-wrap justify-center gap-4 sm:gap-6 text-sm font-medium">
-                    <a href="index.html" class="text-text-secondary hover:text-primary transition-colors">Home</a>
-                    <a href="documentation.html" class="text-text-secondary hover:text-primary transition-colors">Documentation</a>
-                    <a href="privacy.html" class="text-text-secondary hover:text-primary transition-colors">Privacy Policy</a>
-                    <a href="terms.html" class="text-text-secondary hover:text-primary transition-colors">Terms</a>
-                    <a href="business.html" class="text-text-secondary hover:text-primary transition-colors">Sponsors &amp; commercial</a>
-                    <a href="https://github.com/afaraha8403/kalam" class="text-text-secondary hover:text-primary transition-colors">GitHub</a>
-                    <a href="https://github.com/afaraha8403/kalam/issues" class="text-text-secondary hover:text-primary transition-colors">Issues</a>
-                </div>
-            </div>
-            <div class="mt-6 pt-6 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-3 text-text-muted text-xs sm:text-sm text-center sm:text-left">
-                <p>&copy; 2026 Kalam. Noncommercial use: MIT. <a href="business.html" class="text-primary hover:underline">Commercial</a> by agreement.</p>
-                <p>Created by <a href="https://alifarahat.com" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Ali Farahat</a> &amp; <a href="https://balacode.io" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Balacode</a> — open-source voice tech for everyone.</p>
-            </div>
-        </div>
-    </footer>
+    
 
-    <script>
+<!-- ═══════════════════════════════════════════ FOOTER ══ -->
+<footer class="divider py-10 sm:py-12 px-5 sm:px-8" style="background:var(--bg-elevated)">
+  <div class="max-w-6xl mx-auto">
+    <div class="flex flex-col md:flex-row justify-between items-center gap-5">
+      <div class="flex items-center gap-3">
+        <img src="favicon.svg" alt="Kalam" width="36" height="36" style="width:36px;height:36px;opacity:.9">
+        <span class="font-semibold" style="color:var(--text);font-size:1.0625rem;font-family:Inter,sans-serif;letter-spacing:-0.03em">Kalam</span>
+      </div>
+      <div class="flex flex-wrap justify-center gap-5 text-sm font-medium">
+        <a href="documentation.html" class="nav-link">Documentation</a>
+        <a href="index.html#compare"      class="nav-link">Compare</a>
+        <a href="index.html#workspace"    class="nav-link">Workspace</a>
+        <a href="index.html#how-it-works" class="nav-link">How it works</a>
+        <a href="privacy.html"       class="nav-link">Privacy</a>
+        <a href="terms.html"         class="nav-link">Terms</a>
+        <a href="business.html"      class="nav-link">Sponsors &amp; commercial</a>
+        <a href="https://github.com/afaraha8403/kalam"        class="nav-link">GitHub</a>
+        <a href="https://github.com/afaraha8403/kalam/issues" class="nav-link">Report an issue</a>
+      </div>
+    </div>
+    <div class="mt-6 pt-6 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs sm:text-sm" style="border-top:1px solid var(--border);color:var(--text-3)">
+      <p>&copy; 2026 Kalam. Noncommercial use: MIT. <a href="business.html" style="color:var(--primary)">Commercial</a> by agreement.</p>
+      <p>Created by <a href="https://alifarahat.com" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Ali Farahat</a> &amp; <a href="https://balacode.io" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Balacode</a>.</p>
+    </div>
+  </div>
+</footer>
+
+<!-- Theme toggle & Scripts -->
+<!-- Theme toggle -->
+<script>
+(function () {
+  var root = document.documentElement;
+  var btn = document.getElementById('theme-toggle');
+  var mobile = document.querySelector('.theme-toggle-mobile');
+
+  function syncLabel() {
+    var dark = root.getAttribute('data-theme') !== 'light';
+    if (btn) btn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+  }
+
+  function setTheme(t) {
+    root.setAttribute('data-theme', t);
+    try { localStorage.setItem('kalam-site-theme', t); } catch (e) { /* ignore */ }
+    syncLabel();
+  }
+
+  function toggle() {
+    // Add a quick rotation class for delight
+    if (btn) {
+      btn.style.transform = 'scale(0.8) rotate(180deg)';
+      setTimeout(() => {
+        btn.style.transform = '';
+      }, 300);
+    }
+    setTheme(root.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+  }
+
+  syncLabel();
+  if (btn) btn.addEventListener('click', toggle);
+  if (mobile) mobile.addEventListener('click', toggle);
+})();
+
+// Scroll Reveal Animation Observer
+(function() {
+  var observerOptions = {
+    root: null,
+    rootMargin: '0px',
+    threshold: 0.15
+  };
+
+  var observer = new IntersectionObserver(function(entries, observer) {
+    entries.forEach(function(entry) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target); // Only animate once
+      }
+    });
+  }, observerOptions);
+
+  document.querySelectorAll('.reveal-on-scroll').forEach(function(el) {
+    observer.observe(el);
+  });
+})();
+
+// Close details menus when clicking outside
+document.addEventListener('click', function(event) {
+  var detailsElements = document.querySelectorAll('details');
+  detailsElements.forEach(function(details) {
+    if (details.hasAttribute('open') && !details.contains(event.target)) {
+      details.removeAttribute('open');
+    }
+  });
+});
+
+// Close mobile menu when a link is clicked
+document.querySelectorAll('.md\\:hidden details .nav-link').forEach(function(link) {
+  link.addEventListener('click', function() {
+    var details = this.closest('details');
+    if (details) details.removeAttribute('open');
+  });
+});
+</script>
+
+<!-- Smart download detection (preserved exactly) -->
+<script>
+    (function() {
+      var REPO = 'afaraha8403/kalam';
+      var RELEASES_URL = 'https://api.github.com/repos/' + REPO + '/releases?per_page=20';
+
+      function detectOSSync() {
+        var ua = navigator.userAgent || '';
+        var plat = navigator.platform || '';
+        if (/Win(dows|32|64|CE)/i.test(ua) || plat === 'Win32') return { os: 'windows', arch: 'x64' };
+        if (/Mac|Darwin/i.test(ua) || plat === 'MacIntel' || plat === 'MacPPC') {
+          if (/iPhone|iPad/i.test(ua)) return { os: null, arch: null };
+          return { os: 'mac', arch: null };
+        }
+        if (/Linux|X11|Ubuntu/i.test(ua) || plat === 'Linux x86_64' || plat === 'Linux aarch64') {
+          var linuxArch = /aarch64|arm64/i.test(ua) || plat === 'Linux aarch64' ? 'arm64' : 'amd64';
+          return { os: 'linux', arch: linuxArch };
+        }
+        return { os: null, arch: null };
+      }
+
+      function resolveMacArch() {
+        if (navigator.userAgentData && typeof navigator.userAgentData.getHighEntropyValues === 'function') {
+          return navigator.userAgentData.getHighEntropyValues(['architecture'])
+            .then(function(v) {
+              var arch = (v && v.architecture) ? String(v.architecture).toLowerCase() : '';
+              return (arch === 'arm') ? 'aarch64' : (arch === 'x86' || arch === 'x64') ? 'x86_64' : null;
+            })
+            .catch(function() { return null; });
+        }
+        return Promise.resolve(null);
+      }
+
+      function detectOS() {
+        return resolveMacArch().then(function(macArch) {
+          var info = detectOSSync();
+          if (info.os === 'mac' && info.arch === null) {
+            info.arch = macArch !== null ? macArch : 'aarch64';
+          }
+          return info;
+        });
+      }
+
+      function macAssetMatchesArch(nameLower, arch) {
+        if (arch === 'aarch64') return nameLower.indexOf('aarch64') !== -1 || nameLower.indexOf('arm64') !== -1;
+        if (arch === 'x86_64') return nameLower.indexOf('x86_64') !== -1 || nameLower.indexOf('_x64') !== -1 || (nameLower.indexOf('x64') !== -1 && nameLower.indexOf('aarch64') === -1 && nameLower.indexOf('arm64') === -1);
+        return false;
+      }
+
+      function assetMatchesNewPattern(nameLower, platform, arch) {
+        if (platform === 'darwin') {
+          return (arch === 'aarch64' && (nameLower.indexOf('-darwin-aarch64') !== -1 || nameLower.indexOf('_darwin_aarch64') !== -1)) ||
+                 (arch === 'x86_64' && (nameLower.indexOf('-darwin-x64') !== -1 || nameLower.indexOf('_darwin_x64') !== -1));
+        }
+        if (platform === 'windows') return nameLower.indexOf('-windows-x64') !== -1 || nameLower.indexOf('_windows_x64') !== -1;
+        if (platform === 'linux') {
+          return (arch === 'amd64' && (nameLower.indexOf('-linux-x64') !== -1 || nameLower.indexOf('-linux-amd64') !== -1 || nameLower.indexOf('_linux_x64') !== -1 || nameLower.indexOf('_linux_amd64') !== -1)) ||
+                 (arch === 'arm64' && (nameLower.indexOf('-linux-arm64') !== -1 || nameLower.indexOf('-linux-aarch64') !== -1 || nameLower.indexOf('_linux_arm64') !== -1));
+        }
+        return false;
+      }
+
+      function pickAssetForOS(assets, osInfo) {
+        if (!assets || !assets.length) return null;
+        var os = osInfo.os, arch = osInfo.arch;
+        var platform = os === 'mac' ? 'darwin' : os === 'windows' ? 'windows' : os === 'linux' ? 'linux' : null;
+        var winExt = ['.msi', '.exe'];
+        var macExt = ['.dmg', '.app.tar.gz'];
+        var linuxExt = ['.AppImage', '.deb'];
+        var byOs = { windows: winExt, mac: macExt, linux: linuxExt };
+        var exts = os ? byOs[os] : [].concat(winExt, macExt, linuxExt);
+        var name = function(a) { return (a.name || '').toLowerCase(); };
+        for (var e = 0; e < exts.length; e++) {
+          var ext = exts[e].toLowerCase();
+          var candidates = assets.filter(function(a) { return name(a).endsWith(ext); });
+          if (candidates.length === 0) continue;
+          if (platform && arch && candidates.length > 1) {
+            var newPatternMatch = candidates.filter(function(a) { return assetMatchesNewPattern(name(a), platform, arch); });
+            if (newPatternMatch.length) return newPatternMatch[0];
+          }
+          if (os === 'mac' && arch && candidates.length > 1) {
+            var pref = candidates.filter(function(a) { return macAssetMatchesArch(name(a), arch); });
+            if (pref.length) return pref[0];
+            return candidates[0];
+          }
+          if (os === 'linux' && arch && candidates.length > 1) {
+            var linuxPref = candidates.filter(function(a) {
+              var n = name(a);
+              if (arch === 'amd64') return n.indexOf('amd64') !== -1 || n.indexOf('x64') !== -1;
+              if (arch === 'arm64') return n.indexOf('arm64') !== -1 || n.indexOf('aarch64') !== -1;
+              return false;
+            });
+            if (linuxPref.length) return linuxPref[0];
+          }
+          return candidates[0];
+        }
+        return assets[0];
+      }
+
+      function run() {
+        var primary = document.getElementById('download-primary');
+        var primaryText = document.getElementById('download-primary-text');
+        var secondary = document.getElementById('download-secondary');
+        if (!primary || !primaryText) return;
+
+        var fallbackUrl = 'https://github.com/' + REPO + '/releases/latest';
+        var fallbackLabel = 'Download Latest Release';
+
+        detectOS().then(function(osInfo) {
+          return fetch(RELEASES_URL, { headers: { 'Accept': 'application/vnd.github.v3+json' } })
+            .then(function(r) { return r.json(); })
+            .then(function(releases) {
+            if (!Array.isArray(releases) || releases.length === 0) {
+              primary.href = fallbackUrl;
+              primaryText.textContent = fallbackLabel;
+              secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">all releases</a> for other platforms.';
+              return;
+            }
+            var stable = releases.find(function(r) { return !r.prerelease; });
+            var beta = releases.find(function(r) { return r.prerelease; });
+            var useRelease = stable || releases[0];
+            var isStable = !!stable && useRelease === stable;
+            var tag = useRelease.tag_name;
+            var releaseUrl = useRelease.html_url;
+            var assets = useRelease.assets || [];
+            var asset = pickAssetForOS(assets, osInfo);
+            var downloadUrl = asset ? asset.browser_download_url : releaseUrl;
+            var osLabel = osInfo.os === 'windows' ? 'Windows' : osInfo.os === 'mac' ? 'macOS' : osInfo.os === 'linux' ? 'Linux' : '';
+
+            primary.href = downloadUrl;
+            if (osLabel && asset) {
+              var archLabel = '';
+              if (osInfo.os === 'mac' && osInfo.arch) archLabel = osInfo.arch === 'aarch64' ? ' (Apple Silicon)' : ' (Intel)';
+              primaryText.textContent = 'Download for ' + osLabel + archLabel + (isStable ? ' (v' + tag.replace(/^v/, '') + ')' : ' (beta)');
+            } else {
+              primaryText.textContent = isStable ? 'Download ' + tag : 'Download (beta)';
+            }
+
+            var parts = [];
+            if (stable && beta) {
+              parts.push('<a href="' + beta.html_url + '" style="color:var(--primary)">Beta</a> available. ');
+            }
+            parts.push('<a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">Other platforms &amp; releases</a>');
+            secondary.innerHTML = parts.join('');
+            });
+          });
+        }).catch(function() {
+          primary.href = fallbackUrl;
+          primaryText.textContent = fallbackLabel;
+          secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">all releases</a> for other platforms.';
+        });
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', run);
+      } else {
+        run();
+      }
+    })();
+</script>
+<script>
         (function() {
             var sectionIds = ['download','quick-start','api-keys','build','privacy','contributing','user-manual','getting-started','dictation','stt-languages','formatting','snippets','history','dictionary','command-mode','main-window','hotkeys','overlay','privacy-data','notifications-logging','troubleshooting'];
             var navLinks = document.querySelectorAll('.doc-nav-link[data-section]');

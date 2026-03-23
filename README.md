@@ -4,7 +4,7 @@
 
 **Kalam** (كلام — *speech* in Arabic) is an open-source, cross-platform voice dictation app that turns speech into text in any application on Windows, macOS, and Linux. A free, privacy-friendly alternative to Whisperflow.
 
-[**Website**](https://afaraha8403.github.io/kalam/) · [**Documentation & manual**](https://afaraha8403.github.io/kalam/documentation.html) · [**Download (GitHub Releases)**](https://github.com/afaraha8403/kalam/releases) — *beta pre-releases available*
+[**Website**](https://kalam.stream/) · [**Documentation & manual**](https://kalam.stream/documentation.html) · [**Download (GitHub Releases)**](https://github.com/afaraha8403/kalam/releases) — *beta pre-releases available*
 
 ---
 
@@ -50,7 +50,7 @@ Use a **separate hotkey** from dictation. When you press it and speak, Kalam cre
    - **Local:** choose SenseVoice or Whisper Base; the app will download the engine and model when needed.
 3. **Dictate:** press **Ctrl+Win** (Windows), **Ctrl+Super** (Linux), or **Ctrl+Cmd** (macOS), hold while you speak, then release. Text is inserted into the app that had focus. On macOS, when you first use the hotkey, allow **Input Monitoring** if prompted—required for the hotkey to work in other apps.
 
-For setup details, API keys, and the full user manual, see the [**documentation**](https://afaraha8403.github.io/kalam/documentation.html).
+For setup details, API keys, and the full user manual, see the [**documentation**](https://kalam.stream/documentation.html).
 
 ## Building from source
 
@@ -84,6 +84,30 @@ cd kalam
 ```
 
 All commands (including release and signing): `./tasks.ps1 help`
+
+## Testing
+
+The project uses **several layers**; they complement each other and are not interchangeable.
+
+| Kind | Command | What it covers |
+|------|---------|----------------|
+| **Frontend unit** | `npm run test:unit` | Vitest + jsdom — small TypeScript / logic tests under `src/**/*.spec.ts`. |
+| **Rust** | `cargo test` (from `src-tauri/`) | Backend unit tests, STT chunking helpers, and **STT integration tests** that read WAV fixtures. `./tasks.ps1 test` runs Vitest + `cargo test` (same as much of CI). |
+| **STT integration only** | `npm run test:stt` | Same harness as Rust tests, but only the `stt_integration_tests` binary (faster when you only care about speech fixtures). |
+| **Browser E2E** | `npm run test:e2e` | Cypress against the Vite dev server; **`POST /api/invoke` is mocked** (no real Tauri, no microphone, no WAV playback). Use this for onboarding/settings UI flows. |
+
+### Sample WAV files (STT / integration tests)
+
+Put **mono** `.wav` fixtures used by the Rust STT pipeline tests here:
+
+**`src-tauri/tests/fixtures/`**
+
+- The suite includes `test_english.wav` as a reference (short spoken phrase). You can add more files (e.g. other languages or lengths) and extend [`src-tauri/tests/stt_integration_tests.rs`](src-tauri/tests/stt_integration_tests.rs) to load them.
+- Tests resample to **16 kHz** mono float internally where needed; 16-bit PCM mono WAVs are a good default.
+- **Groq / OpenAI** checks in that file run only when `GROQ_API_KEY` or `OPENAI_API_KEY` is set; without keys those cases are skipped and the rest still pass.
+- Large binaries: consider [Git LFS](https://git-lfs.com/) if fixtures grow beyond small clips.
+
+Cypress E2E does **not** consume these WAV files today; it stubs the dev bridge. Real audio → transcript coverage is intentionally in **`cargo test`** / `npm run test:stt`.
 
 ## Architecture
 

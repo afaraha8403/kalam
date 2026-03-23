@@ -1,31 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { fade } from 'svelte/transition'
-  import { getEntriesByType, createEntry, updateEntry, deleteEntry, newEntry } from '../../lib/api/db'
-  import type { Entry, Subtask } from '../../types'
+  import { getEntriesByType, updateEntry, deleteEntry } from '../../lib/api/db'
+  import type { Entry } from '../../types'
   import Icon from '@iconify/svelte'
-  import { selectedTaskId as selectedTaskIdStore } from '../../lib/taskDetailStore'
-  import { marked } from 'marked'
-  import DOMPurify from 'dompurify'
-  import SidePanel from '../ui/SidePanel.svelte'
-  import SearchFilterBar from '../ui/SearchFilterBar.svelte'
+  import { selectedTaskId } from '../../lib/taskDetailStore'
 
-  export let navigate: ((page: string) => void) | undefined = undefined
+  export let navigate: (page: string) => void = () => {}
 
   let entries: Entry[] = []
   let loading = true
   let error: string | null = null
-  
   let searchQuery = ''
-  let filterMode: 'all' | 'active' | 'completed' = 'all'
-
-  // Panel State
-  let isPanelOpen = false
-  let panelMode: 'add' | 'edit' = 'add'
-  let panelTaskId: string | null = null
-  let draftEntry: Partial<Entry> = {}
-  
-  let detailsPreviewActive = false
+  /** For drag placeholder; reorder persistence can be wired later if API supports it. */
+  let dragTaskId: string | null = null
 
   async function load() {
     loading = true
@@ -40,66 +27,28 @@
     }
   }
 
-  const PRIORITY_OPTIONS: { value: number | null; label: string }[] = [
-    { value: null, label: 'None' },
-    { value: 1, label: 'Low' },
-    { value: 2, label: 'Medium' },
-    { value: 3, label: 'High' }
-  ]
-
-  function openAddPanel() {
-    panelMode = 'add'
-    panelTaskId = null
-    draftEntry = {
-      title: '',
-      content: '',
-      due_date: null,
-      reminder_at: null,
-      subtasks: [],
-      priority: null
-    }
-    isPanelOpen = true
+  function getPriorityColor(p: number | null | undefined): string {
+    if (p == null || p < 1) return '#8E8E93'
+    return ['#34C759', '#FF9500', '#FF3B30'][p - 1] ?? '#8E8E93'
   }
 
-  function openEditPanel(task: Entry) {
-    panelMode = 'edit'
-    panelTaskId = task.id
-    draftEntry = { ...task }
-    isPanelOpen = true
+  function formatReminderShort(iso: string | null | undefined): string {
+    if (!iso) return ''
+    const d = new Date(iso)
+    const today = new Date()
+    const isToday = d.toDateString() === today.toDateString()
+    if (isToday) return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   }
 
-  function closePanel() {
-    isPanelOpen = false
-    panelTaskId = null
+  function openNewTask() {
+    selectedTaskId.set(null)
+    navigate('task-detail')
   }
 
-  async function savePanel() {
-    if (!draftEntry.title?.trim()) {
-      error = "Title is required"
-      return
-    }
-
-    try {
-      if (panelMode === 'add') {
-        const entry = newEntry('task', draftEntry.content || '', { 
-          title: draftEntry.title,
-          due_date: draftEntry.due_date,
-          reminder_at: draftEntry.reminder_at,
-          subtasks: draftEntry.subtasks,
-          priority: draftEntry.priority ?? null
-        })
-        await createEntry(entry)
-        entries = [entry, ...entries]
-      } else if (panelMode === 'edit' && panelTaskId) {
-        const updated = { ...draftEntry, id: panelTaskId, updated_at: new Date().toISOString() } as Entry
-        await updateEntry(updated)
-        entries = entries.map(e => e.id === updated.id ? updated : e)
-      }
-      closePanel()
-      error = null
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e)
-    }
+  function openTask(task: Entry) {
+    selectedTaskId.set(task.id)
+    navigate('task-detail')
   }
 
   async function toggleComplete(entry: Entry) {
@@ -116,7 +65,6 @@
   async function remove(id: string) {
     try {
       entries = entries.filter(e => e.id !== id)
-      if (panelTaskId === id) closePanel()
       await deleteEntry(id)
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
@@ -124,1054 +72,120 @@
     }
   }
 
-  function formatDate(iso: string | null) {
-    if (!iso) return ''
-    try {
-      return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    } catch {
-      return iso
-    }
+  function handleTaskDragStart(_e: DragEvent, id: string) {
+    dragTaskId = id
   }
-
-  function formatDateTimeLocal(iso: string | null) {
-    if (!iso) return ''
-    try {
-      const d = new Date(iso)
-      const y = d.getFullYear()
-      const m = String(d.getMonth() + 1).padStart(2, '0')
-      const day = String(d.getDate()).padStart(2, '0')
-      const h = String(d.getHours()).padStart(2, '0')
-      const min = String(d.getMinutes()).padStart(2, '0')
-      return `${y}-${m}-${day}T${h}:${min}`
-    } catch {
-      return ''
-    }
+  function handleTaskDragOver(e: DragEvent) {
+    e.preventDefault()
   }
-
-  function toISOStartOfDay(dateStr: string) {
-    if (!dateStr) return null
-    const d = new Date(dateStr + 'T00:00:00')
-    return isNaN(d.getTime()) ? null : d.toISOString()
+  function handleTaskDrop(_e: DragEvent, _id: string) {
+    dragTaskId = null
+    // TODO: persist reorder when API supports task order
   }
-
-  function toISODateTime(dateTimeStr: string) {
-    if (!dateTimeStr) return null
-    const d = new Date(dateTimeStr)
-    return isNaN(d.getTime()) ? null : d.toISOString()
-  }
-
-  function getInputValue(e: Event): string {
-    const el = e.currentTarget as HTMLInputElement | HTMLTextAreaElement | null
-    return el?.value ?? ''
-  }
-
-  function setPriorityFromSelect(e: Event) {
-    const el = e.currentTarget as HTMLSelectElement | null
-    const v = el?.value ?? ''
-    draftEntry.priority = v === '' ? null : Number(v)
-  }
-
-  function addSubtask() {
-    draftEntry.subtasks = [...(draftEntry.subtasks || []), { title: '', is_completed: false }]
-  }
-
-  function toggleSubtask(index: number) {
-    if (!draftEntry.subtasks) return
-    draftEntry.subtasks = draftEntry.subtasks.map((s, i) => 
-      i === index ? { ...s, is_completed: !s.is_completed } : s
-    )
-  }
-
-  function removeSubtask(index: number) {
-    if (!draftEntry.subtasks) return
-    draftEntry.subtasks = draftEntry.subtasks.filter((_, i) => i !== index)
-  }
-
-  function moveSubtaskUp(index: number) {
-    if (!draftEntry.subtasks || index <= 0) return
-    const arr = [...draftEntry.subtasks]
-    ;[arr[index - 1], arr[index]] = [arr[index], arr[index - 1]]
-    draftEntry.subtasks = arr
-  }
-
-  function moveSubtaskDown(index: number) {
-    if (!draftEntry.subtasks || index >= draftEntry.subtasks.length - 1) return
-    const arr = [...draftEntry.subtasks]
-    ;[arr[index], arr[index + 1]] = [arr[index + 1], arr[index]]
-    draftEntry.subtasks = arr
-  }
-
-  let detailsTextareaEl: HTMLTextAreaElement | null = null
-  function insertMarkdown(prefix: string, suffix: string = '') {
-    const el = detailsTextareaEl
-    if (!el) return
-    const start = el.selectionStart
-    const end = el.selectionEnd
-    const text = draftEntry.content ?? ''
-    const before = text.slice(0, start)
-    const selected = text.slice(start, end)
-    const after = text.slice(end)
-    const replacement = selected ? `${prefix}${selected}${suffix}` : `${prefix}text${suffix}`
-    draftEntry.content = before + replacement + after
-    el.focus()
-    setTimeout(() => {
-      const newStart = start + prefix.length
-      const newEnd = selected ? end + prefix.length + suffix.length : newStart + 4
-      el.setSelectionRange(newStart, newEnd)
-    }, 0)
-  }
-
-  function renderDetailsMarkdown(content: string): string {
-    if (!content?.trim()) return ''
-    const raw = marked.parse(content, { async: false }) as string
-    return DOMPurify.sanitize(raw)
+  function handleTaskDragEnd() {
+    dragTaskId = null
   }
 
   $: filteredEntries = entries.filter(e => {
-    const matchesSearch = (e.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          (e.content || '').toLowerCase().includes(searchQuery.toLowerCase())
-    if (!matchesSearch) return false
-    
-    if (filterMode === 'active') return !e.is_completed
-    if (filterMode === 'completed') return e.is_completed
-    return true
+    return (e.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (e.content || '').toLowerCase().includes(searchQuery.toLowerCase())
   })
 
-  $: activeTasks = filteredEntries.filter((e) => !e.is_completed)
-  $: completedTasks = filteredEntries.filter((e) => e.is_completed)
+  /** Active first, then completed — prototype order. */
+  $: tasksDisplayOrder = [...filteredEntries].sort((a, b) => (a.is_completed === b.is_completed ? 0 : a.is_completed ? 1 : -1))
 
-  onMount(() => {
-    load()
-    const unsub = selectedTaskIdStore.subscribe((id) => {
-      if (id) {
-        const task = entries.find(e => e.id === id)
-        if (task) openEditPanel(task)
-        selectedTaskIdStore.set(null)
-      }
-    })
-    return () => unsub()
-  })
+  onMount(load)
 </script>
 
-<div class="view tasks-view">
-  <header class="page-header">
-    <div class="header-content">
-      <div class="title-wrapper">
-        <Icon icon="ph:check-square-offset-duotone" class="header-icon" />
-        <h2>Tasks</h2>
-      </div>
-      <p class="subtitle">Stay on top of what needs to be done.</p>
+<div class="page fade-in">
+  <header class="page-header notes-header">
+    <div>
+      <h1 class="page-title">Tasks</h1>
+      <p class="page-subtitle">Track what needs to get done.</p>
     </div>
-    <div class="header-actions">
-      {#if navigate}
-        <button type="button" class="btn-ghost" on:click={() => navigate('home')} title="Home">Home</button>
-      {/if}
-      <button class="btn-primary" on:click={openAddPanel}>
-        <Icon icon="ph:plus-bold" /> Add Task
-      </button>
-    </div>
+    <button type="button" class="btn-primary" on:click={openNewTask}>
+      <Icon icon="ph:plus" />
+      New Task
+    </button>
   </header>
 
-  <SearchFilterBar bind:searchQuery placeholder="Search tasks...">
-    <svelte:fragment slot="filters">
-      <button class="filter-chip" class:active={filterMode === 'all'} on:click={() => filterMode = 'all'}>All</button>
-      <button class="filter-chip" class:active={filterMode === 'active'} on:click={() => filterMode = 'active'}>Active</button>
-      <button class="filter-chip" class:active={filterMode === 'completed'} on:click={() => filterMode = 'completed'}>Completed</button>
-    </svelte:fragment>
-  </SearchFilterBar>
+  <div class="notes-search-bar">
+    <span class="notes-search-bar-icon" aria-hidden="true">
+      <Icon icon="ph:magnifying-glass" />
+    </span>
+    <input type="text" placeholder="Search tasks..." bind:value={searchQuery} />
+  </div>
 
   {#if error}
-    <div class="state-container error-state">
-      <Icon icon="ph:warning-circle-duotone" class="error-icon" />
+    <div class="state-container empty-state">
+      <Icon icon="ph:warning-circle" />
       <p>{error}</p>
     </div>
-  {/if}
-
-  {#if loading && entries.length === 0}
-    <div class="state-container">
-      <Icon icon="ph:spinner-gap-duotone" class="spin-icon" />
+  {:else if loading && entries.length === 0}
+    <div class="state-container empty-state">
+      <Icon icon="ph:spinner-gap" class="spin-icon" />
       <p>Loading tasks...</p>
     </div>
-  {:else if entries.length === 0}
-    <div class="state-container empty-state">
-      <div class="empty-icon-wrapper">
-        <Icon icon="ph:check-circle-duotone" class="empty-icon" />
-      </div>
-      <h3>All caught up!</h3>
-      <p>You have no tasks. Enjoy your day or add a new one above.</p>
-    </div>
-  {:else if filteredEntries.length === 0}
-    <div class="state-container empty-state">
-      <div class="empty-icon-wrapper">
-        <Icon icon="ph:magnifying-glass-duotone" class="empty-icon" />
-      </div>
-      <h3>No results found</h3>
-      <p>Try adjusting your search or filters.</p>
-    </div>
   {:else}
-    <div class="task-sections">
-      {#if activeTasks.length > 0}
-        <div class="task-list">
-          {#each activeTasks as entry (entry.id)}
-            <div class="task-item" role="button" tabindex="0" on:click={() => openEditPanel(entry)} on:keydown={(e) => e.key === 'Enter' && openEditPanel(entry)}>
-              <button class="checkbox" on:click|stopPropagation={() => toggleComplete(entry)}>
-                <div class="check-circle">
-                  <Icon icon="ph:check-bold" class="check-icon" />
-                </div>
-              </button>
-              <div class="task-content">
-                <span class="task-title">{entry.title || entry.content}</span>
-                <div class="task-meta">
-                  {#if entry.priority != null && entry.priority > 0}
-                    <span class="task-priority-badge" class:high={entry.priority >= 3} class:medium={entry.priority === 2}>
-                      {entry.priority >= 3 ? 'High' : entry.priority === 2 ? 'Medium' : 'Low'}
-                    </span>
-                  {/if}
-                  {#if entry.due_date}
-                    <span class="task-due">
-                      <Icon icon="ph:calendar-blank-duotone" />
-                      {formatDate(entry.due_date)}
-                    </span>
-                  {/if}
-                  {#if entry.reminder_at}
-                    <span class="task-reminder">
-                      <Icon icon="ph:bell-duotone" />
-                      {formatDate(entry.reminder_at)}
-                    </span>
-                  {/if}
-                  {#if entry.subtasks && entry.subtasks.length > 0}
-                    <span class="task-subtask-count">
-                      {entry.subtasks.filter((s) => s.is_completed).length}/{entry.subtasks.length}
-                    </span>
-                  {/if}
-                </div>
-              </div>
-              <div class="task-actions" on:click|stopPropagation on:keydown|stopPropagation>
-                <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete task">
-                  <Icon icon="ph:trash-duotone" />
-                </button>
-              </div>
+    <div class="task-list-large">
+      {#each tasksDisplayOrder as task (task.id)}
+        <div
+          class="task-row"
+          class:completed={task.is_completed}
+          class:dragging={dragTaskId === task.id}
+          draggable="true"
+          on:dragstart={(e) => handleTaskDragStart(e, task.id)}
+          on:dragover={handleTaskDragOver}
+          on:drop={(e) => handleTaskDrop(e, task.id)}
+          on:dragend={handleTaskDragEnd}
+          on:click={() => openTask(task)}
+          role="button"
+          tabindex="0"
+          on:keydown={(e) => e.key === 'Enter' && openTask(task)}
+        >
+          <button type="button" class="drag-handle" title="Drag to reorder" on:click|stopPropagation>
+            <Icon icon="ph:dots-six-vertical" />
+          </button>
+          <button type="button" class="checkbox" on:click|stopPropagation={() => toggleComplete(task)}>
+            {#if task.is_completed}
+              <Icon icon="ph:check" />
+            {/if}
+          </button>
+          <div class="task-info">
+            <span class="task-title">{task.title || task.content || 'Untitled'}</span>
+            <div class="task-meta">
+              {#if task.due_date}
+                <span class="task-due" class:urgent={new Date(task.due_date).toDateString() === new Date().toDateString()}>
+                  <Icon icon="ph:calendar-blank" />
+                  {formatReminderShort(task.due_date)}
+                </span>
+              {/if}
+              {#if task.subtasks && task.subtasks.length > 0}
+                <span class="task-subtasks-count">
+                  <Icon icon="ph:list-checks" />
+                  {task.subtasks.filter(s => s.is_completed).length}/{task.subtasks.length}
+                </span>
+              {/if}
             </div>
-          {/each}
+          </div>
+          {#if task.tags && task.tags.length > 0}
+            <div class="task-tags">
+              {#each task.tags as tag}
+                <span class="task-tag-pill">{tag}</span>
+              {/each}
+            </div>
+          {/if}
+          {#if task.priority != null && task.priority > 0}
+            <div class="priority-indicator" style="background: {getPriorityColor(task.priority)}"></div>
+          {/if}
         </div>
-      {/if}
-
-      {#if completedTasks.length > 0}
-        <div class="completed-section">
-          <div class="section-header">
-            <h3>Completed</h3>
-            <span class="count">{completedTasks.length}</span>
-          </div>
-          <div class="task-list completed">
-            {#each completedTasks as entry (entry.id)}
-              <div class="task-item is-completed" role="button" tabindex="0" on:click={() => openEditPanel(entry)} on:keydown={(e) => e.key === 'Enter' && openEditPanel(entry)}>
-                <button class="checkbox" on:click|stopPropagation={() => toggleComplete(entry)}>
-                  <div class="check-circle checked">
-                    <Icon icon="ph:check-bold" class="check-icon" />
-                  </div>
-                </button>
-                <div class="task-content">
-                  <span class="task-title">{entry.title || entry.content}</span>
-                </div>
-                <div class="task-actions" on:click|stopPropagation on:keydown|stopPropagation>
-                  <button class="action-btn delete" on:click={() => remove(entry.id)} title="Delete task">
-                    <Icon icon="ph:trash-duotone" />
-                  </button>
-                </div>
-              </div>
-            {/each}
-          </div>
+      {/each}
+      {#if tasksDisplayOrder.length === 0}
+        <div class="empty-state">
+          <Icon icon="ph:check-circle" />
+          <p>{searchQuery ? 'No tasks match your search' : 'All caught up!'}</p>
         </div>
       {/if}
     </div>
   {/if}
-
-  <SidePanel 
-    isOpen={isPanelOpen} 
-    title={panelMode === 'add' ? 'Add Task' : 'Edit Task'} 
-    on:close={closePanel}
-  >
-    <div slot="body" class="panel-form">
-      <div class="field">
-        <label for="task-detail-title">Title</label>
-        <input
-          id="task-detail-title"
-          type="text"
-          bind:value={draftEntry.title}
-          placeholder="Task title"
-        />
-        {#if (draftEntry.title ?? '').trim() === ''}
-          <span class="field-hint">Title is required</span>
-        {/if}
-      </div>
-      <div class="field">
-        <label for="task-details">Details</label>
-        <div class="details-toolbar">
-          <div class="details-tabs">
-            <button type="button" class:active={!detailsPreviewActive} on:click={() => (detailsPreviewActive = false)}>Edit</button>
-            <button type="button" class:active={detailsPreviewActive} on:click={() => (detailsPreviewActive = true)}>Preview</button>
-          </div>
-          {#if !detailsPreviewActive}
-            <div class="markdown-toolbar">
-              <button type="button" class="toolbar-btn" on:click={() => insertMarkdown('**', '**')} title="Bold">
-                <Icon icon="ph:text-b" />
-              </button>
-              <button type="button" class="toolbar-btn" on:click={() => insertMarkdown('*', '*')} title="Italic">
-                <Icon icon="ph:text-italic" />
-              </button>
-              <button type="button" class="toolbar-btn" on:click={() => insertMarkdown('- ')} title="Bullet list">
-                <Icon icon="ph:list-bullets" />
-              </button>
-              <button type="button" class="toolbar-btn" on:click={() => insertMarkdown('[', '](url)')} title="Link">
-                <Icon icon="ph:link" />
-              </button>
-            </div>
-          {/if}
-        </div>
-        {#if !detailsPreviewActive}
-          <textarea
-            bind:this={detailsTextareaEl}
-            id="task-details"
-            class="details-textarea"
-            bind:value={draftEntry.content}
-            placeholder="Add details (markdown supported)"
-            rows="6"
-          ></textarea>
-        {:else}
-          <div class="details-preview" data-details-preview>
-            {@html renderDetailsMarkdown(draftEntry.content || '')}
-          </div>
-        {/if}
-      </div>
-      <div class="field">
-        <label for="task-priority">Priority</label>
-        <select
-          id="task-priority"
-          class="field-select"
-          value={draftEntry.priority != null ? String(draftEntry.priority) : ''}
-          on:change={setPriorityFromSelect}
-        >
-          {#each PRIORITY_OPTIONS as opt}
-            <option value={opt.value ?? ''}>{opt.label}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="field dates-row">
-        <div class="field-half">
-          <label for="task-due">Due date</label>
-          <input
-            id="task-due"
-            type="date"
-            class="field-input"
-            value={draftEntry.due_date ? draftEntry.due_date.slice(0, 10) : ''}
-            on:change={(e) => draftEntry.due_date = toISOStartOfDay(getInputValue(e))}
-          />
-        </div>
-        <div class="field-half">
-          <label for="task-reminder">Reminder</label>
-          <input
-            id="task-reminder"
-            type="datetime-local"
-            class="field-input"
-            value={formatDateTimeLocal(draftEntry.reminder_at || null)}
-            on:change={(e) => draftEntry.reminder_at = toISODateTime(getInputValue(e))}
-          />
-        </div>
-      </div>
-      <div class="field">
-        <label for="task-subtasks-list">Subtasks</label>
-        <div id="task-subtasks-list" class="subtasks-list" role="group">
-          {#each draftEntry.subtasks ?? [] as subtask, i}
-            <div class="subtask-row">
-              <div class="subtask-drag-actions">
-                <button type="button" class="action-btn subtask-move" on:click={() => moveSubtaskUp(i)} disabled={i === 0} title="Move up" aria-label="Move up">
-                  <Icon icon="ph:caret-up-duotone" />
-                </button>
-                <button type="button" class="action-btn subtask-move" on:click={() => moveSubtaskDown(i)} disabled={i === (draftEntry.subtasks?.length ?? 1) - 1} title="Move down" aria-label="Move down">
-                  <Icon icon="ph:caret-down-duotone" />
-                </button>
-              </div>
-              <button type="button" class="subtask-checkbox" on:click={() => toggleSubtask(i)} aria-label="Toggle subtask">
-                <div class="check-circle" class:checked={subtask.is_completed}>
-                  {#if subtask.is_completed}
-                    <Icon icon="ph:check-bold" class="check-icon" />
-                  {/if}
-                </div>
-              </button>
-              <input
-                type="text"
-                class="subtask-input"
-                bind:value={subtask.title}
-                placeholder="Subtask"
-              />
-              <button type="button" class="action-btn delete subtask-delete" on:click={() => removeSubtask(i)} title="Remove subtask">
-                <Icon icon="ph:trash-duotone" />
-              </button>
-            </div>
-          {/each}
-          <button type="button" class="add-subtask-btn" on:click={addSubtask}>
-            <Icon icon="ph:plus-duotone" />
-            Add subtask
-          </button>
-        </div>
-      </div>
-    </div>
-    
-    <div slot="footer" class="panel-footer-actions">
-      <button class="btn-ghost" on:click={closePanel}>Cancel</button>
-      <button class="btn-primary" on:click={savePanel} disabled={!draftEntry.title?.trim()}>
-        <Icon icon="ph:check-bold" /> Save
-      </button>
-    </div>
-  </SidePanel>
 </div>
-
-<style>
-  .view {
-    max-width: 800px;
-    margin: 0 auto;
-    animation: fadeSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-    display: flex;
-    flex-direction: column;
-    gap: 32px;
-  }
-
-  @keyframes fadeSlideUp {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  /* Header */
-  .page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    flex-wrap: wrap;
-    gap: 16px;
-  }
-
-  .header-content {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .title-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .header-icon {
-    font-size: 24px;
-    color: var(--primary);
-  }
-
-  h2 {
-    font-size: 24px;
-    font-weight: 700;
-    color: var(--navy-deep);
-    margin: 0;
-  }
-
-  .subtitle {
-    color: var(--text-muted);
-    font-size: 15px;
-    margin: 0;
-    padding-left: 34px;
-  }
-
-  .header-actions {
-    display: flex;
-    gap: 12px;
-  }
-
-  .btn-primary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 24px;
-    background: var(--primary);
-    color: white;
-    border: none;
-    border-radius: 10px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    box-shadow: 0 4px 12px var(--primary-alpha);
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px var(--primary-alpha);
-    background: var(--primary-dark);
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
-  }
-
-  .btn-ghost {
-    padding: 12px 20px;
-    background: transparent;
-    color: var(--text-secondary);
-    border: none;
-    border-radius: 10px;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .btn-ghost:hover {
-    background: var(--bg-input);
-    color: var(--navy-deep);
-  }
-
-  .filter-chip {
-    padding: 6px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--border-subtle);
-    background: var(--bg-card);
-    font-size: 13px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .filter-chip:hover,
-  .filter-chip.active {
-    background: var(--primary);
-    color: white;
-    border-color: var(--primary);
-  }
-
-  /* Task List */
-  .task-sections {
-    display: flex;
-    flex-direction: column;
-    gap: 32px;
-  }
-
-  .task-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .task-item {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 16px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 16px;
-    transition: all 0.2s ease;
-    cursor: pointer;
-  }
-
-  .task-item:hover {
-    border-color: var(--border-visible);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
-  }
-
-  .checkbox {
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .check-circle {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    border: 2px solid var(--border-visible);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-    color: transparent;
-  }
-
-  .checkbox:hover .check-circle {
-    border-color: var(--primary);
-    background: var(--primary-alpha);
-  }
-
-  .check-circle.checked {
-    background: var(--primary);
-    border-color: var(--primary);
-    color: white;
-  }
-
-  .check-icon {
-    font-size: 14px;
-  }
-
-  .task-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .task-title {
-    font-size: 16px;
-    color: var(--navy-deep);
-    font-weight: 500;
-    transition: all 0.2s;
-  }
-
-  .task-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .task-due,
-  .task-reminder,
-  .task-subtask-count {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    color: var(--text-muted);
-    font-weight: 600;
-  }
-
-  .task-priority-badge {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 6px;
-    border-radius: 6px;
-    background: var(--bg-input);
-    color: var(--text-secondary);
-  }
-
-  .task-priority-badge.medium {
-    background: var(--primary-alpha);
-    color: var(--primary-dark);
-  }
-
-  .task-priority-badge.high {
-    background: rgba(239, 68, 68, 0.12);
-    color: var(--error);
-  }
-
-  .task-subtask-count {
-    font-weight: 500;
-  }
-
-  .panel-footer-actions {
-    display: flex;
-    flex-direction: row;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .task-actions {
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-
-  .task-item:hover .task-actions {
-    opacity: 1;
-  }
-
-  .action-btn {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    border: none;
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    color: var(--text-muted);
-    transition: all 0.2s;
-  }
-
-  .action-btn:hover {
-    background: var(--bg-input);
-    color: var(--navy-deep);
-  }
-
-  .action-btn.delete:hover {
-    color: var(--error);
-    background: rgba(239, 68, 68, 0.1);
-  }
-
-  /* Completed Section */
-  .completed-section {
-    opacity: 0.8;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
-    padding-left: 16px;
-  }
-
-  .section-header h3 {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin: 0;
-  }
-
-  .count {
-    background: var(--bg-input);
-    color: var(--text-secondary);
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 700;
-  }
-
-  .task-item.is-completed {
-    background: transparent;
-    border-color: transparent;
-    box-shadow: none;
-  }
-
-  .task-item.is-completed .task-title {
-    text-decoration: line-through;
-    color: var(--text-muted);
-  }
-
-  /* States */
-  .state-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 64px 20px;
-    background: var(--bg-card);
-    border-radius: 20px;
-    border: 1px dashed var(--border-visible);
-    color: var(--text-muted);
-    gap: 16px;
-  }
-
-  .spin-icon {
-    font-size: 32px;
-    animation: spin 1s linear infinite;
-    color: var(--primary);
-  }
-
-  @keyframes spin {
-    100% { transform: rotate(360deg); }
-  }
-
-  .empty-state {
-    text-align: center;
-  }
-
-  .empty-icon-wrapper {
-    width: 64px;
-    height: 64px;
-    background: var(--primary-alpha);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 8px;
-  }
-
-  .empty-icon {
-    font-size: 32px;
-    color: var(--primary);
-  }
-
-  .empty-state h3 {
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--navy-deep);
-    margin: 0;
-  }
-
-  .empty-state p {
-    font-size: 15px;
-    margin: 0;
-  }
-
-  .error-state {
-    border-color: rgba(239, 68, 68, 0.3);
-    background: rgba(239, 68, 68, 0.02);
-    padding: 24px;
-    flex-direction: row;
-    color: var(--error);
-  }
-
-  /* Panel Form */
-  .panel-form {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-  }
-
-  .panel-form .field label {
-    display: block;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    margin-bottom: 6px;
-  }
-
-  .panel-form input::placeholder,
-  .panel-form textarea::placeholder {
-    color: var(--placeholder);
-  }
-
-  .field-input,
-  .panel-form input[type="text"],
-  .panel-form input[type="date"],
-  .panel-form input[type="datetime-local"],
-  .panel-form select,
-  .panel-form textarea {
-    width: 100%;
-    padding: 10px 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    font-size: 15px;
-    font-family: inherit;
-    background: var(--bg-input);
-    color: var(--text-primary);
-    transition: all 0.2s;
-  }
-
-  .panel-form .field-select {
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748B' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    padding-right: 36px;
-  }
-
-  .panel-form input[type="date"]::-webkit-calendar-picker-indicator,
-  .panel-form input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-    cursor: pointer;
-    opacity: 0.5;
-  }
-
-  .panel-form input:focus,
-  .panel-form select:focus,
-  .panel-form textarea:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px var(--primary-alpha);
-  }
-
-  .field-hint {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin-top: 4px;
-    display: block;
-  }
-
-  .dates-row,
-  .field.row {
-    display: flex;
-    gap: 12px;
-  }
-
-  .field-half {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .details-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  .details-tabs {
-    display: flex;
-    gap: 4px;
-  }
-
-  .details-tabs button {
-    padding: 6px 12px;
-    font-size: 13px;
-    border: 1px solid var(--border-subtle);
-    background: var(--bg-input);
-    border-radius: 8px;
-    cursor: pointer;
-    color: var(--text-secondary);
-  }
-
-  .details-tabs button.active {
-    background: var(--primary);
-    color: white;
-    border-color: var(--primary);
-  }
-
-  .markdown-toolbar {
-    display: flex;
-    gap: 2px;
-  }
-
-  .toolbar-btn {
-    width: 32px;
-    height: 32px;
-    border: none;
-    border-radius: 8px;
-    background: var(--bg-input);
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .toolbar-btn:hover {
-    background: var(--border-subtle);
-    color: var(--navy-deep);
-  }
-
-  .details-textarea {
-    min-height: 140px;
-    resize: vertical;
-  }
-
-  .details-preview {
-    min-height: 120px;
-    padding: 12px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    background: var(--bg-input);
-    font-size: 14px;
-    line-height: 1.5;
-  }
-
-  .details-preview :global(p) { margin: 0 0 0.5em; }
-  .details-preview :global(ul) { margin: 0 0 0.5em; padding-left: 1.2em; }
-  .details-preview :global(ol) { margin: 0 0 0.5em; padding-left: 1.2em; }
-  .details-preview :global(h1), .details-preview :global(h2), .details-preview :global(h3) { margin: 0.6em 0 0.3em; font-size: 1em; }
-
-  .subtasks-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .subtask-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 10px 6px 8px;
-    border-radius: 10px;
-    border-left: 3px solid var(--border-visible);
-    background: var(--bg-input);
-  }
-
-  .subtask-drag-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-  }
-
-  .subtask-move {
-    width: 24px;
-    height: 20px;
-    padding: 0;
-    color: var(--text-muted);
-  }
-
-  .subtask-move:hover:not(:disabled) {
-    color: var(--primary);
-  }
-
-  .subtask-move:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-
-  .subtask-checkbox {
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-
-  .subtask-row .check-circle {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    border: 2px solid var(--border-visible);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: transparent;
-  }
-
-  .subtask-row .check-circle.checked {
-    background: var(--primary);
-    border-color: var(--primary);
-    color: white;
-  }
-
-  .subtask-input {
-    flex: 1;
-    padding: 8px 10px;
-    font-size: 14px;
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    background: var(--bg-input);
-  }
-
-  .subtask-delete {
-    width: 28px;
-    height: 28px;
-    flex-shrink: 0;
-  }
-
-  .add-subtask-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 12px;
-    font-size: 14px;
-    color: var(--primary);
-    background: transparent;
-    border: 1px dashed var(--border-visible);
-    border-radius: 8px;
-    cursor: pointer;
-    margin-top: 4px;
-  }
-
-  .add-subtask-btn:hover {
-    background: var(--primary-alpha);
-  }
-
-  @media (max-width: 768px) {
-    .task-actions {
-      opacity: 1;
-    }
-    .subtitle {
-      padding-left: 0;
-    }
-  }
-</style>

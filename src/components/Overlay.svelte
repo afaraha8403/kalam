@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
+  import { invoke } from '$lib/backend'
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
   import { listen } from '@tauri-apps/api/event'
   import type { AppConfig, WaveformStyle, ExpandDirection } from '../types'
@@ -22,9 +22,7 @@
     | { kind: 'Cancelling' }
 
   let state: OverlayEvent = { kind: 'Hidden' }
-  let prevLevel = 0
-  let smoothLevel = 0
-  let waveformStyle: WaveformStyle = 'Heartbeat'
+  let waveformStyle: WaveformStyle = 'Aurora'
   let expandDirection: ExpandDirection = 'Up'
   let hotkeyStr = ''
 
@@ -60,7 +58,10 @@
   $: processingExpected = state.kind === 'Processing' ? (state.expected_secs ?? 120) : 120
   $: processingAttempt = state.kind === 'Processing' ? (state.attempt ?? 1) : 1
   $: processingMessage = state.kind === 'Processing' ? (state.message ?? null) : null
-  $: processingTakingLong = state.kind === 'Processing' && processingElapsed > processingExpected
+  // Matches Rust progress tier: show elapsed counter and “long” styling from half of expected (min 8s).
+  $: processingPastHalfExpected =
+    state.kind === 'Processing' &&
+    processingElapsed >= Math.max(8, Math.floor(processingExpected / 2))
 
   $: rawLevel = state.kind === 'Recording' ? Number(state.level) || 0 : 0
   $: isCommand = state.kind === 'Recording' ? Boolean(state.is_command) : false
@@ -109,12 +110,201 @@
     }
   }
 
-  // Rolling history of mic levels for the live wave
+  // Rolling history of mic levels — mutated in rAF (no reactive SVG rebuild per frame).
   const WAVE_POINTS = 100
   let levelHistory: number[] = []
   let currentLevel = 0
   let snakeOffset = 0
   let animationFrameId: number | null = null
+  let waveCanvas: HTMLCanvasElement | null = null
+  let cssVizEl: HTMLDivElement | null = null
+
+  function paddedLevels(): number[] {
+    const pad = Math.max(0, WAVE_POINTS - levelHistory.length)
+    const out: number[] = []
+    for (let i = 0; i < pad; i++) out.push(0)
+    out.push(...levelHistory)
+    return out.slice(-WAVE_POINTS)
+  }
+
+  function drawWaveCanvas() {
+    const canvas = waveCanvas
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const w = Math.max(1, rect.width)
+    const h = Math.max(1, rect.height)
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
+    const bw = Math.floor(w * dpr)
+    const bh = Math.floor(h * dpr)
+    if (canvas.width !== bw || canvas.height !== bh) {
+      canvas.width = bw
+      canvas.height = bh
+    }
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, w, h)
+
+    const padded = paddedLevels()
+    const cmd = isCommand
+    const stroke = cmd ? '#fb7185' : '#4fc1ff'
+    const strokeSoft = cmd ? 'rgba(251, 113, 133,' : 'rgba(79, 193, 255,'
+
+    if (waveformStyle === 'Oscilloscope') {
+      ctx.beginPath()
+      for (let i = 0; i < WAVE_POINTS; i++) {
+        const l = padded[i] ?? 0
+        const x = (i / (WAVE_POINTS - 1)) * w
+        const y = h * 0.5 - l * (h * 0.5 - 2) * 0.92
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
+      ctx.shadowBlur = 10
+      ctx.shadowColor = stroke
+      ctx.strokeStyle = stroke
+      ctx.lineWidth = 1.75
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      ctx.stroke()
+      ctx.shadowBlur = 0
+      return
+    }
+
+    if (waveformStyle === 'Aurora') {
+      ctx.globalCompositeOperation = 'screen'
+      ctx.filter = 'blur(8px)'
+
+      const colors = cmd 
+        ? [
+            'rgba(251, 113, 133, 0.9)', // Rose
+            'rgba(244, 63, 94, 0.8)',   // Darker Rose
+            'rgba(245, 158, 11, 0.8)',  // Amber
+            'rgba(255, 255, 255, 0.4)'  // White highlight
+          ]
+        : [
+            'rgba(79, 193, 255, 0.9)',  // Blue
+            'rgba(16, 185, 129, 0.8)',  // Emerald
+            'rgba(139, 92, 246, 0.8)',  // Purple
+            'rgba(255, 255, 255, 0.4)'  // White highlight
+          ]
+
+      for (let layer = 0; layer < 4; layer++) {
+        const phase = snakeOffset * (0.5 + layer * 0.2) + layer * 2.0
+        const ampMul = 0.5 + layer * 0.15
+        
+        ctx.beginPath()
+        for (let i = 0; i < WAVE_POINTS; i++) {
+          const l = padded[i] ?? 0
+          const x = (i / (WAVE_POINTS - 1)) * w
+          
+          // Complex organic wave
+          const wave1 = Math.sin(i * 0.05 + phase) * 0.5
+          const wave2 = Math.sin(i * 0.1 - phase * 0.8) * 0.3
+          const wave = wave1 + wave2
+          
+          // The volume makes the aurora spike and warp
+          const yOffset = (wave * h * 0.2) + (Math.sin(i * 0.08 + phase * 1.5) * l * h * ampMul)
+          const y = h * 0.5 + yOffset
+          
+          if (i === 0) ctx.moveTo(x, y)
+          else ctx.lineTo(x, y)
+        }
+        
+        ctx.strokeStyle = colors[layer]
+        // The highlight layer (layer 3) is thinner
+        ctx.lineWidth = layer === 3 ? h * 0.2 : h * 0.6 
+        ctx.lineCap = 'round'
+        ctx.lineJoin = 'round'
+        ctx.stroke()
+      }
+      
+      ctx.filter = 'none'
+      ctx.globalCompositeOperation = 'source-over'
+      return
+    }
+
+    // SiriWave — layered translucent sine ribbons driven by level history
+    for (let layer = 0; layer < 3; layer++) {
+      const phase = snakeOffset * (1.1 + layer * 0.35) + layer * 1.7
+      const ampMul = 0.28 + layer * 0.12
+      const alpha = 0.35 + layer * 0.22
+      ctx.beginPath()
+      for (let i = 0; i < WAVE_POINTS; i++) {
+        const l = padded[i] ?? 0
+        const x = (i / (WAVE_POINTS - 1)) * w
+        const wave = Math.sin(i * 0.18 + phase) * (h * 0.08)
+        const y = h * 0.5 + Math.sin(i * 0.12 + phase * 0.8) * l * h * ampMul + wave * l
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
+      ctx.strokeStyle = `${strokeSoft} ${alpha})`
+      ctx.lineWidth = 1.4 + layer * 0.35
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      ctx.stroke()
+    }
+  }
+
+  function updateCssViz() {
+    const el = cssVizEl
+    if (!el) return
+    const padded = paddedLevels()
+
+    if (waveformStyle === 'EchoRing') {
+      const v0 = padded[WAVE_POINTS - 1] ?? 0;
+      const v1 = padded[WAVE_POINTS - 8] ?? 0;
+      const v2 = padded[WAVE_POINTS - 16] ?? 0;
+      
+      el.style.setProperty('--echo-core', String(0.8 + v0 * 0.6));
+      
+      el.style.setProperty('--echo-scale1', String(0.5 + v0 * 0.8));
+      el.style.setProperty('--echo-op1', String(v0 * 0.8));
+
+      el.style.setProperty('--echo-scale2', String(0.6 + v1 * 0.8));
+      el.style.setProperty('--echo-op2', String(v1 * 0.6));
+
+      el.style.setProperty('--echo-scale3', String(0.7 + v2 * 0.8));
+      el.style.setProperty('--echo-op3', String(v2 * 0.4));
+      return
+    }
+
+    if (waveformStyle === 'RoundedBars') {
+      // 11 bars, symmetrical. Center is index 5.
+      for (let i = 0; i <= 5; i++) {
+        // i=5 is center (most reactive, latest data)
+        const historyIdx = WAVE_POINTS - 1 - (5 - i) * 4;
+        let sum = 0;
+        for (let k = 0; k < 3; k++) sum += padded[historyIdx - k] ?? 0;
+        const v = sum / 3;
+        const scale = 0.15 + v * 0.85;
+        
+        if (i === 5) {
+          el.style.setProperty(`--b5`, String(scale));
+        } else {
+          el.style.setProperty(`--b${i}`, String(scale));
+          el.style.setProperty(`--b${10 - i}`, String(scale));
+        }
+      }
+      return
+    }
+
+    if (waveformStyle === 'BreathingAura') {
+      const v = currentLevel
+      el.style.setProperty('--aura-scale', String(0.5 + v * 0.9))
+      el.style.setProperty('--aura-glow', String(4 + v * 26))
+      return
+    }
+
+    if (waveformStyle === 'NeonPulse') {
+      const v = currentLevel;
+      const jitter = Math.sin(snakeOffset * 2) * 0.05 * v;
+      const w = Math.max(0, v + jitter);
+      el.style.setProperty('--neon-w', String(w));
+      el.style.setProperty('--neon-h', String(v));
+      el.style.setProperty('--neon-g', String(v));
+      return
+    }
+  }
 
   function animateWave() {
     if (state.kind !== 'Recording') {
@@ -126,18 +316,24 @@
     }
 
     const r = Math.min(1, Math.max(0, rawLevel))
-    const gain = Math.sqrt(r) * 1.4 // boost low levels
+    const gain = Math.pow(r, 0.8) * 1.8 // boost low levels, exaggerate peaks
     const targetLevel = Math.min(1, gain)
 
-    // Smooth interpolation (runs at ~60fps)
     if (targetLevel > currentLevel) {
-      currentLevel += (targetLevel - currentLevel) * 0.25 // Fast attack
+      currentLevel += (targetLevel - currentLevel) * 0.45 // fast attack
     } else {
-      currentLevel += (targetLevel - currentLevel) * 0.08 // Smooth decay
+      currentLevel += (targetLevel - currentLevel) * 0.15 // fast release
     }
 
-    levelHistory = [...levelHistory, currentLevel].slice(-WAVE_POINTS)
+    if (levelHistory.length >= WAVE_POINTS) levelHistory.shift()
+    levelHistory.push(currentLevel)
     snakeOffset += 0.15
+
+    if (waveformStyle === 'SiriWave' || waveformStyle === 'Oscilloscope' || waveformStyle === 'Aurora') {
+      drawWaveCanvas()
+    } else {
+      updateCssViz()
+    }
 
     animationFrameId = requestAnimationFrame(animateWave)
   }
@@ -151,119 +347,6 @@
     snakeOffset = 0
     currentLevel = 0
   }
-
-  // Build SVG points/data based on the selected style
-  $: waveData = (() => {
-    const centerY = 12
-    const pad = Math.max(0, WAVE_POINTS - levelHistory.length)
-    const padded = [...Array(pad).fill(0), ...levelHistory].slice(-WAVE_POINTS)
-    
-    let points = ''
-    let points2 = ''
-    let points3 = ''
-    let bars: {x: number, y: number, w: number, h: number}[] = []
-
-    if (waveformStyle === 'Symmetric') {
-      const amplitude = 10
-      const topHalf = padded.map((l, i) => `${i},${centerY - l * amplitude}`).join(' ')
-      const bottomHalf = padded.slice().reverse().map((l, i) => `${WAVE_POINTS - 1 - i},${centerY + l * amplitude}`).join(' ')
-      points = `${topHalf} ${bottomHalf}`
-    } else if (waveformStyle === 'Heartbeat') {
-      const amplitude = 20
-      points = padded.map((l, i) => {
-        const direction = i % 2 === 0 ? 1 : -1
-        const y = centerY + (l * amplitude * direction)
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-    } else if (waveformStyle === 'Snake') {
-      const amplitude = 18
-      const frequency = 0.2
-      points = padded.map((l, i) => {
-        const phase = (i * frequency) - snakeOffset
-        const y = centerY + Math.sin(phase) * (l * amplitude)
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-    } else if (waveformStyle === 'DoubleHelix') {
-      const amplitude = 15
-      const frequency = 0.15
-      points = padded.map((l, i) => {
-        const phase = (i * frequency) - snakeOffset
-        const y = centerY + Math.sin(phase) * (l * amplitude)
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-      points2 = padded.map((l, i) => {
-        const phase = (i * frequency) - snakeOffset + Math.PI
-        const y = centerY + Math.sin(phase) * (l * amplitude)
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-    } else if (waveformStyle === 'Liquid') {
-      const amplitude = 15
-      const frequency = 0.05
-      const topEdge = padded.map((l, i) => {
-        const wave = Math.sin(i * frequency - snakeOffset * 0.5) * 3
-        const y = centerY + 8 - l * amplitude + wave
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-      points = `0,24 ${topEdge} ${WAVE_POINTS - 1},24`
-    } else if (waveformStyle === 'Waves') {
-      const amplitude = 16
-      const freq1 = 0.04
-      const freq2 = 0.06
-      const freq3 = 0.09
-      
-      const topEdge1 = padded.map((l, i) => {
-        const wave = Math.sin(i * freq1 - snakeOffset * 0.8) * 3
-        const y = centerY + 4 - l * amplitude + wave
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-      
-      const topEdge2 = padded.map((l, i) => {
-        const wave = Math.sin(i * freq2 - snakeOffset * 1.2 + Math.PI/3) * 4
-        const y = centerY + 7 - l * (amplitude * 0.8) + wave
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-
-      const topEdge3 = padded.map((l, i) => {
-        const wave = Math.sin(i * freq3 - snakeOffset * 1.6 + Math.PI) * 2
-        const y = centerY + 10 - l * (amplitude * 0.5) + wave
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-
-      points = `0,24 ${topEdge1} ${WAVE_POINTS - 1},24`
-      points2 = `0,24 ${topEdge2} ${WAVE_POINTS - 1},24`
-      points3 = `0,24 ${topEdge3} ${WAVE_POINTS - 1},24`
-    } else if (waveformStyle === 'Glitch') {
-      const amplitude = 20
-      points = padded.map((l, i) => {
-        const jump = Math.sin(i * 12.9898 + Math.floor(snakeOffset * 2)) * 43758.5453 % 1 > 0 ? 1 : -1
-        const y = centerY + jump * l * amplitude
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-    } else if (waveformStyle === 'CenterSplit') {
-      const amplitude = 18
-      const half = Math.floor(WAVE_POINTS / 2)
-      const reversed = [...padded].reverse()
-      const leftHalf = reversed.slice(0, half).map((l, i) => `${50 - i},${Math.max(1, Math.min(23, centerY - l * amplitude))}`)
-      const rightHalf = reversed.slice(0, half).map((l, i) => `${50 + i},${Math.max(1, Math.min(23, centerY - l * amplitude))}`)
-      points = [...leftHalf.reverse(), ...rightHalf].join(' ')
-    } else if (waveformStyle === 'Bars') {
-      const numBars = 20
-      for(let i=0; i<numBars; i++) {
-        const chunk = padded.slice(i * 5, (i+1) * 5)
-        const avg = chunk.reduce((a,b)=>a+b,0)/5
-        const h = Math.max(2, avg * 20)
-        bars.push({ x: i * 5 + 1, y: 24 - h, w: 3, h: h })
-      }
-    } else {
-      const amplitude = 18
-      points = padded.map((l, i) => {
-        const y = centerY - l * amplitude
-        return `${i},${Math.max(1, Math.min(23, y))}`
-      }).join(' ')
-    }
-
-    return { points, points2, points3, bars }
-  })()
 
   // WebView2 aggressively throttles JS event loops in unfocused windows, delaying IPC
   // message delivery by up to ~1 s.  A tiny Worker posting messages at 100 ms keeps the
@@ -282,6 +365,9 @@
     let unlisten: (() => void) | null = null
     let unlistenSettings: (() => void) | null = null
     let statusTimeout: ReturnType<typeof setTimeout> | null = null
+    let pendingSuccessTimer: ReturnType<typeof setTimeout> | null = null
+    let retryHoldUntil: number | null = null
+    let lastSeenProcessingAttempt = 1
 
     // Load initial settings
     invoke('get_settings').then((config) => {
@@ -320,23 +406,85 @@
       const jsTs = Date.now() * 1000
       invoke('trace_latency', { event: 'T7', jsTimestamp: jsTs }).catch(() => {})
       const p = e?.payload
-      if (isValidPayload(p)) {
-        if (p.kind === 'Listening') {
-          invoke('trace_latency', { event: 'T7_listening', jsTimestamp: jsTs }).catch(() => {})
-        }
-        state = p
+      if (!isValidPayload(p)) return
+
+      if (p.kind === 'Listening') {
+        invoke('trace_latency', { event: 'T7_listening', jsTimestamp: jsTs }).catch(() => {})
+      }
+
+      const traceAfterState = () => {
         tick().then(() => {
           invoke('trace_latency', { event: 'T8', jsTimestamp: Date.now() * 1000 }).catch(() => {})
           requestAnimationFrame(() => {
             invoke('trace_latency', { event: 'T9', jsTimestamp: Date.now() * 1000 }).catch(() => {})
           })
         })
-        if (statusTimeout) clearTimeout(statusTimeout)
-        if (p.kind === 'Status' || p.kind === 'Error' || p.kind === 'Success' || p.kind === 'Cancelling') {
-          statusTimeout = setTimeout(() => {
-            state = { kind: 'Collapsed' }
-          }, 3000)
+      }
+
+      if (p.kind === 'Processing') {
+        if (pendingSuccessTimer) {
+          clearTimeout(pendingSuccessTimer)
+          pendingSuccessTimer = null
         }
+        const att = p.attempt ?? 1
+        if (att > 1 && att > lastSeenProcessingAttempt) {
+          retryHoldUntil = Date.now() + 1500
+        }
+        lastSeenProcessingAttempt = att
+        state = p
+        traceAfterState()
+        if (statusTimeout) clearTimeout(statusTimeout)
+        return
+      }
+
+      if (p.kind === 'Success') {
+        const now = Date.now()
+        const holdEnd = retryHoldUntil
+        const wasRetrying =
+          state.kind === 'Processing' && (state.attempt ?? 1) > 1
+        if (holdEnd !== null && now < holdEnd && wasRetrying) {
+          if (pendingSuccessTimer) clearTimeout(pendingSuccessTimer)
+          pendingSuccessTimer = setTimeout(() => {
+            pendingSuccessTimer = null
+            retryHoldUntil = null
+            lastSeenProcessingAttempt = 1
+            state = { kind: 'Success' }
+            traceAfterState()
+            if (statusTimeout) clearTimeout(statusTimeout)
+            statusTimeout = setTimeout(() => {
+              state = { kind: 'Collapsed' }
+            }, 3000)
+          }, holdEnd - now)
+          return
+        }
+        retryHoldUntil = null
+        lastSeenProcessingAttempt = 1
+        if (pendingSuccessTimer) {
+          clearTimeout(pendingSuccessTimer)
+          pendingSuccessTimer = null
+        }
+        state = p
+        traceAfterState()
+        if (statusTimeout) clearTimeout(statusTimeout)
+        statusTimeout = setTimeout(() => {
+          state = { kind: 'Collapsed' }
+        }, 3000)
+        return
+      }
+
+      if (pendingSuccessTimer) {
+        clearTimeout(pendingSuccessTimer)
+        pendingSuccessTimer = null
+      }
+      retryHoldUntil = null
+      lastSeenProcessingAttempt = 1
+      state = p
+      traceAfterState()
+      if (statusTimeout) clearTimeout(statusTimeout)
+      if (p.kind === 'Status' || p.kind === 'Error' || p.kind === 'Cancelling') {
+        statusTimeout = setTimeout(() => {
+          state = { kind: 'Collapsed' }
+        }, 3000)
       }
     }).then((fn) => {
       unlisten = fn
@@ -353,6 +501,7 @@
       unlisten?.()
       unlistenSettings?.()
       if (statusTimeout) clearTimeout(statusTimeout)
+      if (pendingSuccessTimer) clearTimeout(pendingSuccessTimer)
       keepAliveWorker?.terminate()
     }
   })
@@ -367,7 +516,7 @@
     class:hover-expanded={showHoverExpansion}
     class:recording={state.kind === 'Recording'}
     class:processing={state.kind === 'Processing'}
-    class:processing-long={state.kind === 'Processing' && processingTakingLong}
+    class:processing-long={state.kind === 'Processing' && processingPastHalfExpected}
     class:success={state.kind === 'Success'}
     class:error={state.kind === 'Error'}
     data-tauri-drag-region
@@ -399,70 +548,46 @@
       </div>
     {:else if state.kind === 'Recording'}
       <div class="content waveform">
-        <svg class="wave-svg" viewBox="0 0 {WAVE_POINTS} 24" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="wave-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#4fc1ff" stop-opacity="0.4" />
-              <stop offset="50%" stop-color="#4fc1ff" stop-opacity="1" />
-              <stop offset="100%" stop-color="#4fc1ff" stop-opacity="0.4" />
-            </linearGradient>
-            <linearGradient id="wave-grad-command" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#fb7185" stop-opacity="0.4" />
-              <stop offset="50%" stop-color="#fb7185" stop-opacity="1" />
-              <stop offset="100%" stop-color="#fb7185" stop-opacity="0.4" />
-            </linearGradient>
-            <filter id="wave-glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur in="SourceGraphic" stdDeviation="0.8" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-          <g>
-            {#if waveformStyle === 'DoubleHelix'}
-              <polyline class="wave-line" points={waveData.points} fill="none" stroke={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" />
-              <polyline class="wave-line" points={waveData.points2} fill="none" stroke={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" filter="url(#wave-glow)" opacity="0.5" />
-            {:else if waveformStyle === 'Liquid'}
-              <polygon class="wave-line" points={waveData.points} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke="none" filter="url(#wave-glow)" opacity="0.8" />
-            {:else if waveformStyle === 'Waves'}
-              <polygon class="wave-line" points={waveData.points3} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke="none" filter="url(#wave-glow)" opacity="0.4" />
-              <polygon class="wave-line" points={waveData.points2} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke="none" filter="url(#wave-glow)" opacity="0.7" />
-              <polygon class="wave-line" points={waveData.points} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} stroke="none" filter="url(#wave-glow)" opacity="1.0" />
-            {:else if waveformStyle === 'Bars'}
-              {#each waveData.bars as bar}
-                <rect x={bar.x} y={bar.y} width={bar.w} height={bar.h} fill={isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)"} rx="1.5" filter="url(#wave-glow)" />
-              {/each}
-            {:else}
-              <polyline
-                class="wave-line"
-                class:filled={waveformStyle === 'Symmetric'}
-                points={waveData.points}
-                fill={waveformStyle === 'Symmetric' ? (isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)") : "none"}
-                stroke={waveformStyle === 'Symmetric' ? "none" : (isCommand ? "url(#wave-grad-command)" : "url(#wave-grad)")}
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                filter="url(#wave-glow)"
-              />
+        {#if waveformStyle === 'SiriWave' || waveformStyle === 'Oscilloscope' || waveformStyle === 'Aurora'}
+          <canvas bind:this={waveCanvas} class="wave-canvas" aria-hidden="true"></canvas>
+        {:else}
+          <div bind:this={cssVizEl} class="viz-css" class:viz-cmd={isCommand} data-viz={waveformStyle}>
+            {#if waveformStyle === 'EchoRing'}
+              <div class="viz-echo">
+                <div class="ring r3"></div>
+                <div class="ring r2"></div>
+                <div class="ring r1"></div>
+                <div class="core"></div>
+              </div>
+            {:else if waveformStyle === 'RoundedBars'}
+              <div class="viz-bars">
+                <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+              </div>
+            {:else if waveformStyle === 'BreathingAura'}
+              <div class="viz-aura">
+                <div class="aura-orb"></div>
+              </div>
+            {:else if waveformStyle === 'NeonPulse'}
+              <div class="viz-neon">
+                <div class="beam"></div>
+              </div>
             {/if}
-          </g>
-        </svg>
+          </div>
+        {/if}
       </div>
     {:else if state.kind === 'Processing'}
       <div class="content processing-anim">
-        {#if processingTakingLong}
-          <div class="progress-hint">
-            <span class="hint-text">{processingMessage || 'Taking longer than usual...'}</span>
-            <span class="time">{processingElapsed}s</span>
-          </div>
-        {/if}
-        {#if processingAttempt > 1}
-          <span class="retry-badge">Retry {processingAttempt}/3</span>
-        {/if}
         <div class="dot-pulse">
           <span /><span /><span />
         </div>
+        {#if processingMessage}
+          <div class="processing-text" class:is-long={processingPastHalfExpected && processingAttempt === 1} class:is-retry={processingAttempt > 1}>
+            <span class="hint-text">{processingMessage}</span>
+            {#if processingPastHalfExpected || processingAttempt > 1}
+              <span class="time">{processingElapsed}s</span>
+            {/if}
+          </div>
+        {/if}
         {#if showCancelButton}
           <button type="button" class="cancel-btn" on:click={cancelTranscription} title="Cancel transcription">&#10005;</button>
         {/if}
@@ -611,6 +736,11 @@
     flex-shrink: 1;
   }
 
+  .content.waveform {
+    width: 100%;
+    height: 100%;
+  }
+
   /* ── Listening ── */
   .listening .listen-dot {
     width: 8px;
@@ -671,24 +801,161 @@
     padding: 0 4px;
   }
 
-  /* ── Live wave: single continuous line driven by mic level ── */
+  /* ── Live visualization: canvas (Siri / scope) or CSS vars (dots, bars, aura, blob) ── */
   .waveform {
     display: flex;
     align-items: center;
     justify-content: center;
     width: 100%;
-    height: 28px;
-    padding: 0 16px;
+    height: 100%;
+    padding: 0;
+    box-sizing: border-box;
+    /* Soften all 4 edges so the animations seamlessly blend into the pill's background */
+    -webkit-mask-image: radial-gradient(50% 50% at 50% 50%, black 60%, transparent 100%);
+    mask-image: radial-gradient(50% 50% at 50% 50%, black 60%, transparent 100%);
   }
 
-  .wave-svg {
+  .wave-canvas {
     width: 100%;
     height: 100%;
-    overflow: visible;
+    display: block;
   }
 
-  .wave-line {
-    vector-effect: non-scaling-stroke;
+  .viz-css {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .viz-echo {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .viz-echo .core {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4fc1ff;
+    transform: scale(var(--echo-core, 1));
+    will-change: transform;
+  }
+
+  .viz-echo .ring {
+    position: absolute;
+    border-radius: 50%;
+    border: 1.5px solid #4fc1ff;
+    box-sizing: border-box;
+    will-change: transform, opacity;
+  }
+
+  .viz-echo .r1 { 
+    width: 16px; height: 16px; 
+    transform: scale(var(--echo-scale1, 0.5)); 
+    opacity: var(--echo-op1, 0); 
+  }
+  .viz-echo .r2 { 
+    width: 24px; height: 24px; 
+    transform: scale(var(--echo-scale2, 0.5)); 
+    opacity: var(--echo-op2, 0); 
+  }
+  .viz-echo .r3 { 
+    width: 34px; height: 34px; 
+    transform: scale(var(--echo-scale3, 0.5)); 
+    opacity: var(--echo-op3, 0); 
+  }
+
+  .viz-cmd .viz-echo .core { background: #fb7185; }
+  .viz-cmd .viz-echo .ring { border-color: #fb7185; }
+
+  .viz-bars {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 28px;
+    width: 100%;
+  }
+
+  .viz-bars span {
+    width: 4px;
+    height: 24px;
+    border-radius: 4px;
+    background: #4fc1ff;
+    box-shadow: 0 0 6px rgba(79, 193, 255, 0.4);
+    transform-origin: center;
+    transform: scaleY(var(--b0, 0.15));
+    will-change: transform;
+  }
+
+  .viz-bars span:nth-child(1) { transform: scaleY(var(--b0, 0.15)); }
+  .viz-bars span:nth-child(2) { transform: scaleY(var(--b1, 0.15)); }
+  .viz-bars span:nth-child(3) { transform: scaleY(var(--b2, 0.15)); }
+  .viz-bars span:nth-child(4) { transform: scaleY(var(--b3, 0.15)); }
+  .viz-bars span:nth-child(5) { transform: scaleY(var(--b4, 0.15)); }
+  .viz-bars span:nth-child(6) { transform: scaleY(var(--b5, 0.15)); }
+  .viz-bars span:nth-child(7) { transform: scaleY(var(--b6, 0.15)); }
+  .viz-bars span:nth-child(8) { transform: scaleY(var(--b7, 0.15)); }
+  .viz-bars span:nth-child(9) { transform: scaleY(var(--b8, 0.15)); }
+  .viz-bars span:nth-child(10) { transform: scaleY(var(--b9, 0.15)); }
+  .viz-bars span:nth-child(11) { transform: scaleY(var(--b10, 0.15)); }
+
+  .viz-cmd .viz-bars span {
+    background: #fb7185;
+    box-shadow: 0 0 6px rgba(251, 113, 133, 0.4);
+  }
+
+  .viz-aura {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+  }
+
+  .aura-orb {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 40%, rgba(120, 210, 255, 0.95), rgba(79, 193, 255, 0.4) 60%, transparent 80%);
+    transform: scale(var(--aura-scale, 0.5));
+    box-shadow: 0 0 calc(var(--aura-glow, 4) * 1px) rgba(79, 193, 255, 0.6);
+    will-change: transform, box-shadow;
+  }
+
+  .viz-cmd .aura-orb {
+    background: radial-gradient(circle at 40% 40%, rgba(255, 170, 190, 0.95), rgba(251, 113, 133, 0.4) 60%, transparent 80%);
+    box-shadow: 0 0 calc(var(--aura-glow, 4) * 1px) rgba(251, 113, 133, 0.6);
+  }
+
+  .viz-neon {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .viz-neon .beam {
+    width: calc(40px + var(--neon-w, 0) * 100px);
+    height: calc(2px + var(--neon-h, 0) * 8px);
+    background: #4fc1ff;
+    border-radius: 10px;
+    box-shadow: 0 0 calc(5px + var(--neon-g, 0) * 15px) #4fc1ff,
+                0 0 calc(10px + var(--neon-g, 0) * 30px) rgba(79, 193, 255, 0.5);
+    will-change: width, height, box-shadow;
+  }
+
+  .viz-cmd .viz-neon .beam {
+    background: #fb7185;
+    box-shadow: 0 0 calc(5px + var(--neon-g, 0) * 15px) #fb7185,
+                0 0 calc(10px + var(--neon-g, 0) * 30px) rgba(251, 113, 133, 0.5);
   }
 
   /* ── Processing dots ── */
@@ -714,57 +981,71 @@
   }
 
   /* ── Processing: progress hint and cancel ── */
-  .processing-anim {
-    position: relative;
+  .content.processing-anim {
+    width: 100%;
+    padding: 0 12px;
+    box-sizing: border-box;
   }
 
-  .progress-hint {
-    position: absolute;
-    top: -22px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.85);
-    padding: 4px 10px;
-    border-radius: 12px;
-    font-size: 11px;
-    color: #fbbf24;
-    white-space: nowrap;
+  .processing-anim {
     display: flex;
     align-items: center;
-    gap: 6px;
+    height: 100%;
+    gap: 8px;
   }
 
-  .progress-hint .hint-text {
+  .processing-text {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.7);
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  .processing-text .hint-text {
+    white-space: nowrap;
+  }
+
+  .processing-text.is-long {
     color: #fbbf24;
   }
 
-  .progress-hint .time {
-    color: rgba(255, 255, 255, 0.6);
-    font-variant-numeric: tabular-nums;
+  .processing-text.is-retry {
+    color: #f87171;
   }
 
-  .retry-badge {
-    position: absolute;
-    top: -18px;
-    right: 8px;
-    background: #4fc1ff;
-    color: #0a0a0c;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 6px;
-    border-radius: 4px;
+  .processing-text .time {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+    font-variant-numeric: tabular-nums;
+    background: rgba(255, 255, 255, 0.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .processing-text.is-long .time {
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+  }
+
+  .processing-text.is-retry .time {
+    background: rgba(248, 113, 113, 0.15);
+    color: #f87171;
   }
 
   .cancel-btn {
-    position: absolute;
-    right: 8px;
-    width: 20px;
-    height: 20px;
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     border: none;
     background: rgba(255, 255, 255, 0.1);
-    color: rgba(255, 255, 255, 0.6);
-    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 11px;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.2s ease;
@@ -772,6 +1053,7 @@
     align-items: center;
     justify-content: center;
     line-height: 1;
+    margin-left: auto;
   }
 
   .blip:hover .cancel-btn,

@@ -8,7 +8,7 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::provider::STTProvider;
-use super::TranscriptionResult;
+use super::{TranscriptionError, TranscriptionResult};
 use crate::AppState;
 
 pub const SIDECAR_NAME: &str = "sherpa-onnx";
@@ -110,9 +110,10 @@ fn transcribe_via_websocket(audio: &[f32], sample_rate: u32) -> anyhow::Result<S
         .build()?;
     rt.block_on(async {
         let url = format!("ws://127.0.0.1:{}/", WS_PORT);
-        let (ws_stream, _) = connect_async(&url)
-            .await
-            .map_err(|e| anyhow::anyhow!("WebSocket connect failed: {}", e))?;
+        let (ws_stream, _) = connect_async(&url).await.map_err(|e| {
+            log::warn!("WebSocket connect failed: {}", e);
+            anyhow::anyhow!(TranscriptionError::Local { server_down: true })
+        })?;
         let (mut write, mut read) = ws_stream.split();
 
         // Send payload in chunks to match sherpa-onnx Python client; single large frame can trigger server crash (e.g. STATUS_STACK_BUFFER_OVERRUN on Windows).
@@ -122,14 +123,28 @@ fn transcribe_via_websocket(audio: &[f32], sample_rate: u32) -> anyhow::Result<S
             write
                 .send(Message::Binary(payload[offset..end].to_vec()))
                 .await
-                .map_err(|e| anyhow::anyhow!("WebSocket send failed: {}", e))?;
+                .map_err(|e| {
+                    log::warn!("WebSocket send failed: {}", e);
+                    anyhow::anyhow!(TranscriptionError::Local { server_down: true })
+                })?;
             offset = end;
         }
 
-        let result_msg = read
-            .next()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No response from server"))??;
+        let result_msg = match read.next().await {
+            None => {
+                log::warn!("No response from local STT server (connection closed)");
+                return Err(anyhow::anyhow!(TranscriptionError::Local {
+                    server_down: true
+                }));
+            }
+            Some(Err(e)) => {
+                log::warn!("WebSocket read failed: {}", e);
+                return Err(anyhow::anyhow!(TranscriptionError::Local {
+                    server_down: true
+                }));
+            }
+            Some(Ok(m)) => m,
+        };
         let text = match result_msg {
             Message::Text(s) => {
                 // The server returns a JSON string like: {"lang": "", "emotion": "", "event": "", "text": " TESTING TESTING ONE TO THREE TESTING", ...}
@@ -151,7 +166,10 @@ fn transcribe_via_websocket(audio: &[f32], sample_rate: u32) -> anyhow::Result<S
         write
             .send(Message::Text("Done".to_string()))
             .await
-            .map_err(|e| anyhow::anyhow!("WebSocket send Done failed: {}", e))?;
+            .map_err(|e| {
+                log::warn!("WebSocket send Done failed: {}", e);
+                anyhow::anyhow!(TranscriptionError::Local { server_down: true })
+            })?;
 
         Ok::<String, anyhow::Error>(text)
     })
@@ -184,10 +202,34 @@ fn transcribe_via_whisper_http(audio: &[f32], sample_rate: u32) -> anyhow::Resul
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()?;
-        let resp = client.post(&url).multipart(form).send().await?;
+        let resp = client.post(&url).multipart(form).send().await.map_err(|e| {
+            let transient = e.is_timeout() || e.is_connect();
+            if transient {
+                log::warn!("Whisper HTTP transport failed: {}", e);
+                anyhow::anyhow!(TranscriptionError::Local { server_down: true })
+            } else {
+                e.into()
+            }
+        })?;
         let status = resp.status();
-        let body = resp.text().await?;
+        let body = resp.text().await.map_err(|e| {
+            let transient = e.is_timeout() || e.is_connect();
+            if transient {
+                log::warn!("Whisper HTTP body read failed: {}", e);
+                anyhow::anyhow!(TranscriptionError::Local { server_down: true })
+            } else {
+                e.into()
+            }
+        })?;
         if !status.is_success() {
+            let code = status.as_u16();
+            // Bad gateway / service unavailable: often transient while the sidecar restarts.
+            if matches!(code, 502 | 503 | 504) {
+                log::warn!("Whisper server HTTP {}: {}", code, body);
+                return Err(anyhow::anyhow!(TranscriptionError::Local {
+                    server_down: true
+                }));
+            }
             return Err(anyhow::anyhow!("Whisper server error {}: {}", status, body));
         }
         let json: serde_json::Value = serde_json::from_str(&body)

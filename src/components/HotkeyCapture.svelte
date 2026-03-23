@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
+  import { invoke } from '$lib/backend'
 
   export let value = ''
   export let onChange: (hotkey: string) => void

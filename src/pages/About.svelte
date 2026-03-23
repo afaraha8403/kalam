@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
+  import { invoke } from '$lib/backend'
   import { listen } from '@tauri-apps/api/event'
   import Icon from '@iconify/svelte'
 
@@ -156,11 +156,11 @@ maintainers to request a commercial license.`
             <Icon icon="ph:github-logo-duotone" />
             <span>GitHub Repository</span>
           </a>
-          <a href="https://afaraha8403.github.io/kalam/terms.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
+          <a href="https://kalam.stream/terms.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
             <Icon icon="ph:file-text-duotone" />
             <span>Terms &amp; Conditions</span>
           </a>
-          <a href="https://afaraha8403.github.io/kalam/privacy.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
+          <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
             <Icon icon="ph:shield-check-duotone" />
             <span>Privacy Policy</span>
           </a>
@@ -178,7 +178,7 @@ maintainers to request a commercial license.`
         <a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener noreferrer" class="btn-primary">
           <Icon icon="ph:heart-straight-fill" /> Sponsor
         </a>
-        <a href="https://afaraha8403.github.io/kalam/business.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
+        <a href="https://kalam.stream/business.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
           Commercial License
         </a>
       </div>

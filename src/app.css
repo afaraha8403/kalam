@@ -112,3 +112,81 @@ h1, h2, h3, h4, h5, h6 {
 *::-webkit-scrollbar-corner {
   display: none;
 }
+
+/*
+ * ApexCharts appends tooltips to document.body, outside `.kalam-sleek`, so sleek CSS variables
+ * (--text, etc.) are undefined there. `data-theme` is set on `html` from App.svelte.
+ */
+[data-theme='dark'] .apexcharts-tooltip.kalam-dash-tooltip,
+[data-theme='dark'] .kalam-dash-tooltip.apexcharts-tooltip {
+  background: #2c2c2e !important;
+  color: #f5f5f7 !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55) !important;
+}
+
+[data-theme='dark'] .kalam-dash-tooltip .apexcharts-tooltip-title,
+[data-theme='dark'] .kalam-dash-tooltip .apexcharts-tooltip-series-group,
+[data-theme='dark'] .kalam-dash-tooltip .apexcharts-tooltip-text,
+[data-theme='dark'] .kalam-dash-tooltip .apexcharts-tooltip-text-y-label,
+[data-theme='dark'] .kalam-dash-tooltip .apexcharts-tooltip-text-y-value,
+[data-theme='dark'] .kalam-dash-tooltip .apexcharts-tooltip-text-z-label,
+[data-theme='dark'] .kalam-dash-tooltip .apexcharts-tooltip-text-z-value {
+  color: #f5f5f7 !important;
+}
+
+[data-theme='light'] .apexcharts-tooltip.kalam-dash-tooltip,
+[data-theme='light'] .kalam-dash-tooltip.apexcharts-tooltip {
+  background: #ffffff !important;
+  color: #1d1d1f !important;
+  border: 1px solid rgba(0, 0, 0, 0.1) !important;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.12) !important;
+}
+
+[data-theme='light'] .kalam-dash-tooltip .apexcharts-tooltip-title,
+[data-theme='light'] .kalam-dash-tooltip .apexcharts-tooltip-series-group,
+[data-theme='light'] .kalam-dash-tooltip .apexcharts-tooltip-text,
+[data-theme='light'] .kalam-dash-tooltip .apexcharts-tooltip-text-y-label,
+[data-theme='light'] .kalam-dash-tooltip .apexcharts-tooltip-text-y-value,
+[data-theme='light'] .kalam-dash-tooltip .apexcharts-tooltip-text-z-label,
+[data-theme='light'] .kalam-dash-tooltip .apexcharts-tooltip-text-z-value {
+  color: #1d1d1f !important;
+}
+
+/* Speaking-time heatmap: custom tooltip body (Apex custom HTML skips default text nodes). */
+[data-theme='dark'] .kalam-dash-tooltip .kalam-heatmap-tip-day {
+  color: #f5f5f7 !important;
+  font-size: 13px;
+  font-weight: 600;
+}
+[data-theme='light'] .kalam-dash-tooltip .kalam-heatmap-tip-day {
+  color: #1d1d1f !important;
+  font-size: 13px;
+  font-weight: 600;
+}
+[data-theme='dark'] .kalam-dash-tooltip .kalam-heatmap-tip-meta,
+[data-theme='light'] .kalam-dash-tooltip .kalam-heatmap-tip-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  opacity: 0.72;
+}
+[data-theme='dark'] .kalam-dash-tooltip .kalam-heatmap-tip-meta {
+  color: #f5f5f7 !important;
+}
+[data-theme='light'] .kalam-dash-tooltip .kalam-heatmap-tip-meta {
+  color: #1d1d1f !important;
+}
+
+[data-theme='dark'] .kalam-dash-tooltip .kalam-heatmap-tip-count,
+[data-theme='light'] .kalam-dash-tooltip .kalam-heatmap-tip-count {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+[data-theme='dark'] .kalam-dash-tooltip .kalam-heatmap-tip-count {
+  color: #f5f5f7 !important;
+}
+[data-theme='light'] .kalam-dash-tooltip .kalam-heatmap-tip-count {
+  color: #1d1d1f !important;
+}

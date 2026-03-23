@@ -13,6 +13,11 @@ lerna-debug.log*
 pnpm-lock.yaml
 
 node_modules
+
+# Cypress
+/cypress/screenshots
+/cypress/videos
+/cypress/downloads
 dist
 dist-ssr
 *.local

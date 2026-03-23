@@ -67,6 +67,19 @@ pub struct AppConfig {
     /// When true, the left sidebar is collapsed to icon-only width; persisted across restarts.
     #[serde(default)]
     pub sidebar_collapsed: bool,
+    /// UI theme: fixed light/dark or follow OS appearance (`Auto`).
+    #[serde(default)]
+    pub theme_preference: ThemePreference,
+}
+
+/// Light / Dark fix the shell; Auto follows `prefers-color-scheme` on the frontend.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "PascalCase")]
+pub enum ThemePreference {
+    Light,
+    Dark,
+    #[default]
+    Auto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -122,17 +135,20 @@ pub enum UpdateChannel {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub enum WaveformStyle {
-    Line,
-    Symmetric,
+    SiriWave,
+    #[serde(alias = "PulsingDots")]
+    EchoRing,
+    #[serde(alias = "Bars")]
+    RoundedBars,
+    BreathingAura,
+    #[serde(alias = "Glitch")]
+    Oscilloscope,
+    #[serde(alias = "Liquid", alias = "LiquidBlob")]
+    NeonPulse,
+    /// Legacy waveform names deserialize here (see serde aliases).
     #[default]
-    Heartbeat,
-    Snake,
-    DoubleHelix,
-    Liquid,
-    Waves,
-    Glitch,
-    Bars,
-    CenterSplit,
+    #[serde(alias = "Line", alias = "Symmetric", alias = "Heartbeat", alias = "Snake", alias = "DoubleHelix", alias = "Waves", alias = "CenterSplit")]
+    Aurora,
 }
 
 fn default_hotkey() -> Option<String> {
@@ -192,6 +208,7 @@ impl Default for AppConfig {
             command_config: CommandConfig::default(),
             update_channel: UpdateChannel::Stable,
             sidebar_collapsed: false,
+            theme_preference: ThemePreference::default(),
         }
     }
 }
@@ -218,7 +235,7 @@ pub struct TranscriptionTimeoutConfig {
 }
 
 fn default_timeout_min_cloud() -> u64 {
-    20
+    12
 }
 fn default_timeout_min_local() -> u64 {
     30

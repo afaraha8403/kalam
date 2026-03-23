@@ -6,7 +6,17 @@ export interface LoggingConfig {
   max_records: number
 }
 
-export type WaveformStyle = 'Line' | 'Symmetric' | 'Heartbeat' | 'Snake' | 'DoubleHelix' | 'Liquid' | 'Waves' | 'Glitch' | 'Bars' | 'CenterSplit'
+/** Shell theme: fixed palettes or match OS (`prefers-color-scheme`). */
+export type ThemePreference = 'Light' | 'Dark' | 'Auto'
+
+export type WaveformStyle =
+  | 'SiriWave'
+  | 'EchoRing'
+  | 'RoundedBars'
+  | 'BreathingAura'
+  | 'Oscilloscope'
+  | 'NeonPulse'
+  | 'Aurora'
 export type OverlayPosition = 'BottomCenter' | 'BottomLeft' | 'BottomRight' | 'TopCenter' | 'TopLeft' | 'TopRight' | 'CenterLeft' | 'CenterRight' | 'Center'
 export type ExpandDirection = 'Up' | 'Down' | 'Center'
 
@@ -58,6 +68,8 @@ export interface AppConfig {
   update_channel?: 'stable' | 'beta',
   /** When true, left sidebar is collapsed to icon-only; persisted across restarts. */
   sidebar_collapsed?: boolean
+  /** Light / Dark always; Auto follows system appearance. */
+  theme_preference?: ThemePreference
 }
 
 export interface STTConfig {
@@ -116,9 +128,20 @@ export interface HistoryEntry {
   id: string
   text: string
   created_at: string
+  /** `dictation` or `command` (from backend session_mode). */
   mode: string
   language: string
   duration_ms: number | null
+  /** Foreground app process name when captured (e.g. notepad.exe). */
+  target_app?: string | null
+  /** Effective STT path when captured (omitted on legacy rows). */
+  stt_mode?: 'Cloud' | 'Local' | 'Hybrid' | 'Auto' | string | null
+  /** Stored at save time; omit on legacy rows. */
+  word_count?: number | null
+  /** Wall-clock STT latency for this session (ms). */
+  stt_latency_ms?: number | null
+  /** STT provider id when captured (e.g. groq); omitted on older rows. */
+  stt_provider?: string | null
 }
 
 export interface AggregateStats {
@@ -127,6 +150,40 @@ export interface AggregateStats {
   time_saved_hours: number
   last_latency_ms: number | null
   today_avg_latency_ms: number | null
+}
+
+export interface WordsByDay {
+  date: string
+  words: number
+}
+
+export interface AppCountRow {
+  app: string
+  count: number
+}
+
+export interface FlowPoint {
+  created_at: string
+  target_app?: string | null
+}
+
+export interface ActivityDay {
+  date: string
+  count: number
+}
+
+/** Payload from `get_dashboard_stats` (Overview charts). */
+export interface DashboardStats {
+  words_dictated_7d: WordsByDay[]
+  top_apps_7d: AppCountRow[]
+  total_time_dictating_7d_ms: number
+  dictation_flow_7d: FlowPoint[]
+  session_lengths_7d_ms: number[]
+  /** Mean words per timed dictation (same rows as `session_lengths_7d_ms`), last 7 days. */
+  avg_words_per_dictation_7d: number | null
+  activity_heatmap_14d: ActivityDay[]
+  streak_days: number
+  total_words: number
 }
 
 export interface DictionaryEntry {
@@ -163,6 +220,14 @@ export interface Entry {
   rrule: string | null
   archived_at: string | null
   deleted_at: string | null
+  target_app?: string | null
+  duration_ms?: number | null
+  word_count?: number | null
+  stt_latency_ms?: number | null
+  stt_mode?: string | null
+  dictation_language?: string | null
+  session_mode?: string | null
+  stt_provider?: string | null
 }
 
 export interface AppLogRow {

@@ -12,9 +12,11 @@ pub struct GroqProvider {
 }
 
 impl GroqProvider {
-    pub fn new(api_key: String) -> anyhow::Result<Self> {
+    /// `http_timeout` should match configured transcription ceiling (see `create_provider_sync`).
+    pub fn new(api_key: String, http_timeout: std::time::Duration) -> anyhow::Result<Self> {
+        log::debug!("Groq blocking HTTP client timeout: {:?}", http_timeout);
         let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(http_timeout)
             .build()?;
 
         Ok(Self {
@@ -73,9 +75,7 @@ impl STTProvider for GroqProvider {
             .send()
             .map_err(|e| {
                 // Classify reqwest errors as network (timeout, connection) -> retriable.
-                let retriable = e.is_timeout().unwrap_or(false)
-                    || e.is_connect().unwrap_or(false)
-                    || e.is_connection_refused().unwrap_or(false);
+                let retriable = e.is_timeout() || e.is_connect();
                 anyhow::anyhow!(TranscriptionError::Network { retriable })
             })?;
 

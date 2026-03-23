@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://afaraha8403.github.io/kalam/sitemap.xml
+Sitemap: https://kalam.stream/sitemap.xml

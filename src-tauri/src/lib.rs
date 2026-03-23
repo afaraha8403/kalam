@@ -1,8 +1,10 @@
 pub mod app_log;
-mod audio;
+pub mod audio;
 mod commands;
 mod config;
 mod db;
+#[cfg(feature = "dev-bridge")]
+mod dev_bridge;
 mod formatting;
 mod history;
 mod hotkey;
@@ -13,7 +15,7 @@ mod models;
 mod notifications;
 #[cfg(windows)]
 mod overlay_message_log_win;
-mod stt;
+pub mod stt;
 mod system_reqs;
 mod tray;
 
@@ -614,6 +616,15 @@ fn create_registrations(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Dev-only: HTTP bridge so browser (Vite dev) can read DB when Tauri app is running
+    #[cfg(feature = "dev-bridge")]
+    {
+        std::thread::spawn(|| {
+            let rt = tokio::runtime::Runtime::new().expect("dev-bridge tokio runtime");
+            rt.block_on(dev_bridge::run());
+        });
+    }
+
     let builder = {
         let b = tauri::Builder::default()
             .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -799,6 +810,7 @@ pub fn run() {
             test_microphone_level,
             test_microphone_stop,
             get_history,
+            search_history,
             get_db_status,
             clear_history,
             commands::get_snippets,
@@ -826,6 +838,7 @@ pub fn run() {
             commands::get_entries_with_reminder,
             commands::get_entries_for_reminders,
             commands::get_aggregate_stats,
+            commands::get_dashboard_stats,
             commands::get_daily_stats,
             commands::get_tasks_due_on,
             commands::get_reminders_due_on,
@@ -1545,6 +1558,13 @@ async fn get_history(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn search_history(query: String) -> Result<Vec<history::HistoryEntry>, String> {
+    history::search(query.trim())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Returns database connectivity status for the status bar.
 #[tauri::command]
 fn get_db_status() -> DbStatus {
@@ -1856,7 +1876,7 @@ fn nudge_overlay_renderer(app: &tauri::AppHandle) {
 #[tauri::command]
 async fn cancel_transcription(state: tauri::State<'_, AppState>) -> Result<(), String> {
     log::info!("User requested transcription cancellation");
-    let mut guard = state.transcription_cancel.write().await;
+    let guard = state.transcription_cancel.write().await;
     guard.cancel();
     drop(guard);
     emit_overlay_event(&state.app_handle, OverlayEvent::Cancelling);
@@ -2194,6 +2214,14 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
             });
         }
     }
+    #[cfg(not(windows))]
+    {
+        if let Some((process_name, _title)) = crate::config::privacy::get_foreground_app() {
+            if !process_name.is_empty() {
+                *state.foreground_process_name.lock().await = Some(process_name);
+            }
+        }
+    }
 
     // Start actual audio recording
     if let Err(e) = state.audio_capture.lock().await.start_recording().await {
@@ -2474,6 +2502,14 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
         rrule,
         archived_at: None,
         deleted_at: None,
+        target_app: None,
+        duration_ms: None,
+        word_count: None,
+        stt_latency_ms: None,
+        stt_mode: None,
+        dictation_language: None,
+        session_mode: None,
+        stt_provider: None,
     };
 
     let conn = crate::db::open_db().map_err(|e| e.to_string())?;
@@ -2507,9 +2543,46 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
     Ok(())
 }
 
+/// Ensures long recordings get enough wall time vs adaptive stats from short clips.
+fn apply_audio_transcription_floor(
+    mut timeout_secs: u64,
+    recording_duration_ms: Option<u32>,
+    is_cloud: bool,
+    max_secs: u64,
+) -> u64 {
+    if let Some(ms) = recording_duration_ms.filter(|&m| m > 0) {
+        let audio_secs = (u64::from(ms) + 999) / 1000;
+        let audio_floor = (if is_cloud {
+            // Cloud APIs process audio near-real-time; cap the per-clip floor so long
+            // recordings don't balloon the timeout (Groq handles 40s audio in ~2s normally).
+            let clip_floor = audio_secs.min(20);
+            12u64.saturating_add(clip_floor / 2)
+        } else {
+            25u64.saturating_add(audio_secs.saturating_mul(4))
+        })
+        .min(max_secs);
+        if audio_floor > timeout_secs {
+            log::info!(
+                "Transcription timeout: {}ms audio raises floor from {}s to {}s (cloud={})",
+                ms,
+                timeout_secs,
+                audio_floor,
+                is_cloud
+            );
+        }
+        timeout_secs = timeout_secs.max(audio_floor);
+    }
+    timeout_secs.min(max_secs)
+}
+
 /// Compute transcription timeout from historical latency (today's average) with tiered logic.
 /// Cloud vs local use different minimums and cold-start defaults.
-fn calculate_transcription_timeout(config: &AppConfig) -> std::time::Duration {
+/// When `recording_duration_ms` is set, raises the ceiling so long clips are not cut off by
+/// stats from short utterances (adaptive min can be far below real-time API needs).
+fn calculate_transcription_timeout(
+    config: &AppConfig,
+    recording_duration_ms: Option<u32>,
+) -> std::time::Duration {
     use crate::config::privacy::effective_stt_config;
     use crate::config::STTMode;
     use std::time::Duration;
@@ -2528,11 +2601,23 @@ fn calculate_transcription_timeout(config: &AppConfig) -> std::time::Duration {
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let Ok(conn) = db::open_db() else {
         log::debug!("Timeout: no DB, using default {}s", default_secs);
-        return Duration::from_secs(default_secs);
+        let secs = apply_audio_transcription_floor(
+            default_secs.min(max_secs),
+            recording_duration_ms,
+            is_cloud,
+            max_secs,
+        );
+        return Duration::from_secs(secs);
     };
     let Ok(Some(row)) = db::get_daily_stats(&conn, Some(&today)) else {
         log::debug!("Timeout: no stats for today, using default {}s", default_secs);
-        return Duration::from_secs(default_secs);
+        let secs = apply_audio_transcription_floor(
+            default_secs.min(max_secs),
+            recording_duration_ms,
+            is_cloud,
+            max_secs,
+        );
+        return Duration::from_secs(secs);
     };
 
     // Need at least 3 samples today to adapt; otherwise use default.
@@ -2542,14 +2627,32 @@ fn calculate_transcription_timeout(config: &AppConfig) -> std::time::Duration {
             row.transcriptions_count,
             default_secs
         );
-        return Duration::from_secs(default_secs);
+        let secs = apply_audio_transcription_floor(
+            default_secs.min(max_secs),
+            recording_duration_ms,
+            is_cloud,
+            max_secs,
+        );
+        return Duration::from_secs(secs);
     }
     let Some(avg_ms) = row.latency_avg_ms else {
-        return Duration::from_secs(default_secs);
+        let secs = apply_audio_transcription_floor(
+            default_secs.min(max_secs),
+            recording_duration_ms,
+            is_cloud,
+            max_secs,
+        );
+        return Duration::from_secs(secs);
     };
     let avg_secs = (avg_ms as f64) / 1000.0;
     let computed = (avg_secs * tc.timeout_multiplier) + (tc.timeout_buffer_seconds as f64);
     let timeout_secs = (computed as u64).clamp(min_secs, max_secs);
+    let timeout_secs = apply_audio_transcription_floor(
+        timeout_secs,
+        recording_duration_ms,
+        is_cloud,
+        max_secs,
+    );
     log::info!(
         "Transcription timeout: avg {}ms -> {}s (clamped to [{}, {}])",
         avg_ms, timeout_secs, min_secs, max_secs
@@ -2690,13 +2793,13 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         #[allow(unused_variables)]
         let foreground_process = state.foreground_process_name.lock().await.take();
         let recording_type = *state.recording_type.lock().await;
+        let transcription_cancel = state.transcription_cancel.clone();
 
         tokio::spawn(async move {
             let stt_config = crate::config::privacy::effective_stt_config(&config);
             let vad_config = stt_config.vad_config();
             // Create provider inside the OS thread so reqwest::blocking::Client is never
             // created/dropped on a tokio worker (avoids "Cannot drop a runtime" panic).
-            let (tx, rx) = oneshot::channel();
             let app_handle_for_job = match stt_config.mode {
                 crate::config::STTMode::Local => Some(app_handle.clone()),
                 crate::config::STTMode::Cloud
@@ -2704,6 +2807,14 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                 | crate::config::STTMode::Auto => None,
             };
             let audio_data = Arc::new(audio_data);
+            let recording_duration_ms: Option<u32> = if sample_rate > 0 {
+                let ms = audio_data.len() as u64 * 1000 / sample_rate as u64;
+                u32::try_from(ms.min(u64::from(u32::MAX)))
+                    .ok()
+                    .filter(|&n| n > 0)
+            } else {
+                None
+            };
             let job = TranscribeJob::FromConfig {
                 stt_config: stt_config.clone(),
                 app_handle: app_handle_for_job.clone(),
@@ -2713,17 +2824,22 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                 language: config.languages.first().cloned(),
                 vocabulary: vocabulary.clone(),
             };
-            let timeout_duration = calculate_transcription_timeout(&config);
-            let expected_secs = timeout_duration.as_secs() as u32;
+            let max_wall_timeout = std::time::Duration::from_secs(
+                stt_config.transcription_timeout.timeout_max_seconds.max(1),
+            );
+            let base_timeout =
+                calculate_transcription_timeout(&config, recording_duration_ms);
+            let mut this_attempt_timeout = base_timeout;
+            let expected_secs = base_timeout.as_secs().max(1) as u32;
             log::info!(
                 "Starting transcription (provider will be created on OS thread, chunked + prompt chaining), timeout {:?}",
-                timeout_duration
+                base_timeout
             );
 
             // Cancel token for this run; cancel_transcription command will cancel it.
             let cancel_token = CancellationToken::new();
             {
-                let mut guard = state.transcription_cancel.write().await;
+                let mut guard = transcription_cancel.write().await;
                 *guard = cancel_token.clone();
             }
             let progress_app = app_handle.clone();
@@ -2741,10 +2857,13 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                     }
                     elapsed = elapsed.saturating_add(1);
                     let attempt = progress_attempt.load(Ordering::SeqCst) as u32;
-                    let message = if elapsed > expected_secs && attempt == 1 {
-                        Some("Taking longer than usual...".to_string())
-                    } else if attempt > 1 {
-                        Some(format!("Retrying (attempt {}/3)...", attempt))
+                    let long_threshold = (expected_secs / 2).max(8);
+                    let message = if attempt > 1 {
+                        Some(format!("Retry {}/3", attempt))
+                    } else if elapsed >= long_threshold {
+                        Some("Slow response...".to_string())
+                    } else if elapsed >= 3 {
+                        Some("Transcribing".to_string())
                     } else {
                         None
                     };
@@ -2773,14 +2892,25 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                     result = None;
                     break;
                 }
-                let (tx, rx) = oneshot::channel();
+                if attempt > 1 {
+                    emit_overlay_event(
+                        &app_handle,
+                        OverlayEvent::Processing {
+                            elapsed_secs: start.elapsed().as_secs() as u32,
+                            expected_secs,
+                            attempt,
+                            message: Some(format!("Retry {}/3", attempt)),
+                        },
+                    );
+                }
+                let (tx, rx) = oneshot::channel::<anyhow::Result<crate::stt::TranscriptionResult>>();
                 let job_attempt = job.clone();
                 std::thread::spawn(move || {
                     let r = run_transcribe_job(job_attempt);
                     let _ = tx.send(r);
                 });
 
-                let wait_fut = tokio::time::timeout(timeout_duration, rx);
+                let wait_fut = tokio::time::timeout(this_attempt_timeout, rx);
                 tokio::select! {
                     biased;
                     _ = cancel_token.cancelled() => {
@@ -2799,11 +2929,14 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                         }
                         Ok(Ok(Err(e))) => {
                             last_error = Some(e);
-                            let retriable = last_error
+                            let te = last_error
                                 .as_ref()
-                                .and_then(|e| e.downcast_ref::<crate::stt::TranscriptionError>())
-                                .map_or(false, |te| te.is_retriable());
+                                .and_then(|e| e.downcast_ref::<crate::stt::TranscriptionError>());
+                            let retriable = te.map_or(false, |t| t.is_retriable());
                             if retriable && attempt < MAX_ATTEMPTS {
+                                if let Some(t) = te {
+                                    log::info!("Transcription error (retriable): {}", t);
+                                }
                                 let backoff_secs = 1u64 << (attempt - 1);
                                 log::info!(
                                     "Transcription attempt {} failed (retriable), backing off {}s",
@@ -2821,9 +2954,34 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             break;
                         }
                         Err(_) => {
-                            progress_handle.abort();
-                            last_error = Some(anyhow::anyhow!("Transcription timed out"));
-                            break;
+                            log::warn!(
+                                "Transcription attempt {} hit wall-clock deadline after {:?}",
+                                attempt,
+                                this_attempt_timeout
+                            );
+                            if attempt < MAX_ATTEMPTS {
+                                let backoff_secs = 1u64 << (attempt - 1);
+                                let scaled_secs = this_attempt_timeout
+                                    .as_secs()
+                                    .saturating_mul(3)
+                                    .saturating_add(1)
+                                    / 2;
+                                this_attempt_timeout = std::time::Duration::from_secs(
+                                    scaled_secs.max(this_attempt_timeout.as_secs()),
+                                )
+                                .min(max_wall_timeout);
+                                log::info!(
+                                    "Retrying transcription after timeout: backoff {}s, next deadline {:?}",
+                                    backoff_secs,
+                                    this_attempt_timeout
+                                );
+                                tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs))
+                                    .await;
+                            } else {
+                                progress_handle.abort();
+                                last_error = Some(anyhow::anyhow!("Transcription timed out"));
+                                break;
+                            }
                         }
                     }
                 }
@@ -2837,17 +2995,75 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                     let latency_ms = start.elapsed().as_millis() as u32;
                     if transcription_result.text.trim().is_empty() {
                         log::info!("Transcription empty (no speech), skipping save and injection");
-                    } else if recording_type == RecordingType::Command {
-                        if let Err(e) =
-                            run_command_pipeline(&transcription_result.text, &config, &app_handle).await
-                        {
-                            log::error!("Command pipeline failed: {}", e);
-                            emit_overlay_event(
-                                &app_handle,
-                                OverlayEvent::Error { message: e.clone() },
-                            );
-                        }
                     } else {
+                        let stt_mode_label = match stt_config.mode {
+                            crate::config::STTMode::Cloud => "Cloud",
+                            crate::config::STTMode::Local => "Local",
+                            crate::config::STTMode::Hybrid => "Hybrid",
+                            crate::config::STTMode::Auto => "Auto",
+                        }
+                        .to_string();
+                        let dictation_language = config
+                            .languages
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "auto".to_string());
+
+                        #[derive(Clone, serde::Serialize)]
+                        struct TranscriptionSavedPayload {
+                            latency_ms: u32,
+                            words_count: u32,
+                        }
+
+                        if recording_type == RecordingType::Command {
+                            let cmd_text = transcription_result.text.trim().to_string();
+                            let words_count = cmd_text.split_whitespace().count() as u32;
+                            let meta = crate::history::HistorySaveMeta {
+                                word_count: words_count,
+                                stt_latency_ms: latency_ms,
+                                stt_mode: stt_mode_label.clone(),
+                                stt_provider: stt_config.provider.trim().to_string(),
+                                dictation_language: dictation_language.clone(),
+                                session_mode: "command".to_string(),
+                            };
+                            if let Err(e) = history::save_transcription(
+                                &cmd_text,
+                                foreground_process.clone(),
+                                recording_duration_ms,
+                                meta,
+                            )
+                            .await
+                            {
+                                log::error!("Failed to save command transcription to DB: {}", e);
+                            }
+                            let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                            if let Ok(conn) = db::open_db() {
+                                if let Err(e) = db::record_transcription_stats(
+                                    &conn,
+                                    &date,
+                                    words_count,
+                                    latency_ms,
+                                ) {
+                                    log::error!("Failed to record daily stats: {}", e);
+                                }
+                            }
+                            let _ = app_handle.emit(
+                                "transcription-saved",
+                                TranscriptionSavedPayload {
+                                    latency_ms,
+                                    words_count,
+                                },
+                            );
+                            if let Err(e) =
+                                run_command_pipeline(&cmd_text, &config, &app_handle).await
+                            {
+                                log::error!("Command pipeline failed: {}", e);
+                                emit_overlay_event(
+                                    &app_handle,
+                                    OverlayEvent::Error { message: e.clone() },
+                                );
+                            }
+                        } else {
                         let len = last_injected_len.load(Ordering::SeqCst);
                         let prev_text = last_injected_text.lock().await.clone();
                         let prev_ref = prev_text.as_str();
@@ -2859,10 +3075,25 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             Some(prev_ref),
                         );
                         log::info!("Transcription completed, length: {}", formatted.len());
-                        if let Err(e) = history::save_transcription(&formatted).await {
+                        let words_count = formatted.split_whitespace().count() as u32;
+                        let meta = crate::history::HistorySaveMeta {
+                            word_count: words_count,
+                            stt_latency_ms: latency_ms,
+                            stt_mode: stt_mode_label,
+                            stt_provider: stt_config.provider.trim().to_string(),
+                            dictation_language,
+                            session_mode: "dictation".to_string(),
+                        };
+                        if let Err(e) = history::save_transcription(
+                            &formatted,
+                            foreground_process.clone(),
+                            recording_duration_ms,
+                            meta,
+                        )
+                        .await
+                        {
                             log::error!("Failed to save transcription to DB: {}", e);
                         }
-                        let words_count = formatted.split_whitespace().count() as u32;
                         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
                         if let Ok(conn) = db::open_db() {
                             if let Err(e) = db::record_transcription_stats(
@@ -2873,11 +3104,6 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             ) {
                                 log::error!("Failed to record daily stats: {}", e);
                             }
-                        }
-                        #[derive(Clone, serde::Serialize)]
-                        struct TranscriptionSavedPayload {
-                            latency_ms: u32,
-                            words_count: u32,
                         }
                         let _ = app_handle.emit(
                             "transcription-saved",
@@ -2948,13 +3174,17 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                 }
                             }
                         }
+                        }
                     }
                 }
                 None => {
                     if let Some(ref e) = last_error {
                         log::error!("Transcription failed: {}", e);
                         let message = if e.to_string().contains("timed out") {
-                            format!("Timed out after {}s", timeout_duration.as_secs())
+                            format!(
+                                "Timed out after {}s (last attempt deadline)",
+                                this_attempt_timeout.as_secs()
+                            )
                         } else {
                             e.to_string()
                         };

@@ -90,12 +90,38 @@ pub struct HistoryEntry {
     pub id: String,
     pub text: String,
     pub created_at: DateTime<Utc>,
+    /// `dictation` or `command` (from `session_mode`; legacy rows default to `dictation`).
     pub mode: String,
     pub language: String,
     pub duration_ms: Option<u32>,
+    pub target_app: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_latency_ms: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_provider: Option<String>,
 }
 
-pub async fn save_transcription(text: &str) -> anyhow::Result<()> {
+/// Captured once per transcription save (effective STT path, language list, timing).
+#[derive(Debug, Clone)]
+pub struct HistorySaveMeta {
+    pub word_count: u32,
+    pub stt_latency_ms: u32,
+    pub stt_mode: String,
+    pub stt_provider: String,
+    pub dictation_language: String,
+    pub session_mode: String,
+}
+
+pub async fn save_transcription(
+    text: &str,
+    target_app: Option<String>,
+    duration_ms: Option<u32>,
+    meta: HistorySaveMeta,
+) -> anyhow::Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = Utc::now();
     let entry = Entry {
@@ -118,6 +144,21 @@ pub async fn save_transcription(text: &str) -> anyhow::Result<()> {
         rrule: None,
         archived_at: None,
         deleted_at: None,
+        target_app,
+        duration_ms,
+        word_count: Some(meta.word_count),
+        stt_latency_ms: Some(meta.stt_latency_ms),
+        stt_mode: Some(meta.stt_mode),
+        dictation_language: Some(meta.dictation_language),
+        session_mode: Some(meta.session_mode),
+        stt_provider: {
+            let s = meta.stt_provider.trim();
+            if s.is_empty() {
+                None
+            } else {
+                Some(s.to_string())
+            }
+        },
     };
     let conn = db::open_db()?;
     db::insert_entry(&conn, &entry)?;
@@ -156,23 +197,45 @@ pub async fn get_history(
     let limit = limit.unwrap_or(50) as i64;
     let offset = offset.unwrap_or(0) as i64;
     let mut stmt = conn.prepare(
-        "SELECT id, content, created_at FROM entries WHERE entry_type = 'history'
-         ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+        "SELECT id, content, created_at, target_app, duration_ms, word_count, stt_latency_ms, stt_mode, dictation_language, session_mode, stt_provider \
+         FROM entries WHERE entry_type = 'history' ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
     )?;
     let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
         let id: String = row.get(0)?;
         let text: String = row.get(1)?;
         let created_at: String = row.get(2)?;
+        let target_app: Option<String> = row.get(3)?;
+        let duration_raw: Option<i64> = row.get(4)?;
+        let duration_ms = duration_raw.and_then(|n| u32::try_from(n).ok());
+        let wc_raw: Option<i64> = row.get(5)?;
+        let word_count = wc_raw.and_then(|n| u32::try_from(n).ok());
+        let lat_raw: Option<i64> = row.get(6)?;
+        let stt_latency_ms = lat_raw.and_then(|n| u32::try_from(n).ok());
+        let stt_mode: Option<String> = row.get(7)?;
+        let dictation_language: Option<String> = row.get(8)?;
+        let session_mode: Option<String> = row.get(9)?;
+        let stt_provider: Option<String> = row.get(10)?;
         let created_at = DateTime::parse_from_rfc3339(&created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
+        let mode = session_mode
+            .clone()
+            .unwrap_or_else(|| "dictation".to_string());
+        let language = dictation_language
+            .clone()
+            .unwrap_or_else(|| "auto".to_string());
         Ok(HistoryEntry {
             id,
             text,
             created_at,
-            mode: "cloud".to_string(),
-            language: "auto".to_string(),
-            duration_ms: None,
+            mode,
+            language,
+            duration_ms,
+            target_app,
+            stt_mode,
+            word_count,
+            stt_latency_ms,
+            stt_provider,
         })
     })?;
     let mut entries = Vec::new();
@@ -206,15 +269,27 @@ pub async fn export(format: &str) -> anyhow::Result<String> {
     match format {
         "json" => Ok(serde_json::to_string_pretty(&entries)?),
         "csv" => {
-            let mut csv = String::from("id,text,created_at,mode,language\n");
+            let mut csv = String::from(
+                "id,text,created_at,mode,language,duration_ms,target_app,stt_mode,word_count,stt_latency_ms,stt_provider\n",
+            );
             for entry in entries {
                 csv.push_str(&format!(
-                    "{},{},{},{},{}\n",
+                    "{},{},{},{},{},{},{},{},{},{},{}\n",
                     entry.id,
                     entry.text.replace(',', "\\,"),
                     entry.created_at.to_rfc3339(),
                     entry.mode,
-                    entry.language
+                    entry.language,
+                    entry.duration_ms.map(|n| n.to_string()).unwrap_or_default(),
+                    entry
+                        .target_app
+                        .as_deref()
+                        .unwrap_or("")
+                        .replace(',', "\\,"),
+                    entry.stt_mode.as_deref().unwrap_or(""),
+                    entry.word_count.map(|n| n.to_string()).unwrap_or_default(),
+                    entry.stt_latency_ms.map(|n| n.to_string()).unwrap_or_default(),
+                    entry.stt_provider.as_deref().unwrap_or(""),
                 ));
             }
             Ok(csv)
@@ -332,6 +407,14 @@ pub fn migrate_legacy_to_unified() -> anyhow::Result<()> {
             rrule: None,
             archived_at: None,
             deleted_at: None,
+            target_app: None,
+            duration_ms: None,
+            word_count: None,
+            stt_latency_ms: None,
+            stt_mode: None,
+            dictation_language: None,
+            session_mode: None,
+            stt_provider: None,
         };
         db::insert_entry(&unified, &entry)?;
         db::insert_embedding_stub(&unified, &id)?;

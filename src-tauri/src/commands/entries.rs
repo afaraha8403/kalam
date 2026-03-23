@@ -83,14 +83,24 @@ pub fn get_aggregate_stats() -> Result<db::AggregateStats, String> {
 }
 
 #[tauri::command]
+pub fn get_dashboard_stats() -> Result<db::DashboardStats, String> {
+    let conn = db::open_db().map_err(|e| e.to_string())?;
+    db::get_dashboard_stats(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn get_daily_stats(date: Option<String>) -> Result<Option<db::DailyStatsRow>, String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
     db::get_daily_stats(&conn, date.as_deref()).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetTasksDueOnArgs {
-    pub date: String,
+    /// Inclusive start of the user's local calendar day (ISO 8601 UTC instant from the client).
+    pub day_start: String,
+    /// Exclusive end of that local day (next local midnight as ISO 8601 UTC).
+    pub day_end: String,
     pub limit: Option<i64>,
 }
 
@@ -98,12 +108,14 @@ pub struct GetTasksDueOnArgs {
 pub fn get_tasks_due_on(args: GetTasksDueOnArgs) -> Result<Vec<Entry>, String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
     let limit = args.limit.unwrap_or(50);
-    db::get_tasks_due_on(&conn, &args.date, limit).map_err(|e| e.to_string())
+    db::get_tasks_due_on(&conn, &args.day_start, &args.day_end, limit).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GetRemindersDueOnArgs {
-    pub date: String,
+    pub day_start: String,
+    pub day_end: String,
     pub limit: Option<i64>,
 }
 
@@ -111,7 +123,7 @@ pub struct GetRemindersDueOnArgs {
 pub fn get_reminders_due_on(args: GetRemindersDueOnArgs) -> Result<Vec<Entry>, String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
     let limit = args.limit.unwrap_or(50);
-    db::get_reminders_due_on(&conn, &args.date, limit).map_err(|e| e.to_string())
+    db::get_reminders_due_on(&conn, &args.day_start, &args.day_end, limit).map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -224,6 +236,14 @@ fn snippet_entry(trigger: String, expansion: String) -> Entry {
         rrule: None,
         archived_at: None,
         deleted_at: None,
+        target_app: None,
+        duration_ms: None,
+        word_count: None,
+        stt_latency_ms: None,
+        stt_mode: None,
+        dictation_language: None,
+        session_mode: None,
+        stt_provider: None,
     }
 }
 

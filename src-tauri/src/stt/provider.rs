@@ -19,6 +19,13 @@ fn selected_api_key(config: &STTConfig) -> Option<String> {
         .or_else(|| config.api_key.clone())
 }
 
+/// Per-request ceiling for cloud STT HTTP calls; floored so we do not regress below the old 30s failure window.
+fn cloud_transcription_http_timeout(config: &STTConfig) -> std::time::Duration {
+    const FLOOR_SECS: u64 = 45;
+    let secs = config.transcription_timeout.timeout_max_seconds.max(FLOOR_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
 /// Create a provider on the current thread. Used so that reqwest::blocking::Client
 /// is never created or dropped on a tokio worker (avoids "Cannot drop a runtime" panic).
 /// For Local mode, pass Some(app_handle); for Cloud/Groq pass None.
@@ -31,14 +38,16 @@ pub fn create_provider_sync(
             "groq" => {
                 let api_key = selected_api_key(config)
                     .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
-                Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?)
+                let t = cloud_transcription_http_timeout(config);
+                Ok(Box::new(super::groq::GroqProvider::new(api_key.clone(), t)?)
                     as Box<dyn STTProvider>)
             }
             "openai" => {
                 let api_key = selected_api_key(config)
                     .ok_or_else(|| anyhow::anyhow!("OpenAI API key not set"))?;
+                let t = cloud_transcription_http_timeout(config);
                 Ok(
-                    Box::new(super::openai::OpenAIProvider::new(api_key.clone())?)
+                    Box::new(super::openai::OpenAIProvider::new(api_key.clone(), t)?)
                         as Box<dyn STTProvider>,
                 )
             }
@@ -91,14 +100,16 @@ impl STTProviderFactory {
                     "groq" => {
                         let api_key = selected_api_key(&config)
                             .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
-                        Ok(Box::new(super::groq::GroqProvider::new(api_key.clone())?)
+                        let t = cloud_transcription_http_timeout(&config);
+                        Ok(Box::new(super::groq::GroqProvider::new(api_key.clone(), t)?)
                             as Box<dyn STTProvider>)
                     }
                     "openai" => {
                         let api_key = selected_api_key(&config)
                             .ok_or_else(|| anyhow::anyhow!("OpenAI API key not set"))?;
+                        let t = cloud_transcription_http_timeout(&config);
                         Ok(
-                            Box::new(super::openai::OpenAIProvider::new(api_key.clone())?)
+                            Box::new(super::openai::OpenAIProvider::new(api_key.clone(), t)?)
                                 as Box<dyn STTProvider>,
                         )
                     }
@@ -155,4 +166,27 @@ pub trait STTProvider: Send + Sync {
     ) -> anyhow::Result<TranscriptionResult>;
     fn requires_internet(&self) -> bool;
     fn name(&self) -> &str;
+}
+
+#[cfg(test)]
+mod local_provider_tests {
+    use super::create_provider_sync;
+    use crate::config::{STTConfig, STTMode};
+
+    #[test]
+    fn local_mode_errors_without_app_handle() {
+        let mut cfg = STTConfig::default();
+        cfg.mode = STTMode::Local;
+        cfg.local_model = Some("sensevoice".to_string());
+        let err = match create_provider_sync(&cfg, None) {
+            Err(e) => e,
+            Ok(_) => panic!("expected error without AppHandle"),
+        };
+        let msg = err.to_string();
+        assert!(
+            msg.contains("App handle"),
+            "expected App handle error, got: {}",
+            msg
+        );
+    }
 }

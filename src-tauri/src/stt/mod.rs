@@ -59,6 +59,42 @@ impl TranscriptionError {
 /// Overlap between consecutive chunks in samples (0.5s at 16kHz).
 const CHUNK_OVERLAP_SAMPLES: usize = 8000;
 
+/// Minimum max-chunk width (1s of audio) so forced splits stay meaningful.
+fn max_chunk_samples(vad_config: &VADConfig, sample_rate: u32) -> usize {
+    let sr = sample_rate.max(1) as f64;
+    let raw = (vad_config.max_chunk_duration_sec * sr).round() as usize;
+    raw.max(sample_rate as usize)
+}
+
+/// Enforce `max_chunk_duration_sec` on each VAD span.
+/// Adjacent sub-segments overlap by `overlap` samples so the main loop’s
+/// `chunk_start = start.saturating_sub(CHUNK_OVERLAP_SAMPLES)` still provides context at boundaries
+/// without us double-applying overlap inside each sub-piece.
+fn split_segments_by_max_duration(
+    segments: Vec<(usize, usize)>,
+    max_samples: usize,
+    overlap: usize,
+) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for (s, e) in segments {
+        if e <= s {
+            continue;
+        }
+        let mut cur = s;
+        while cur < e {
+            let end_piece = (cur + max_samples).min(e);
+            out.push((cur, end_piece));
+            if end_piece >= e {
+                break;
+            }
+            let next = end_piece.saturating_sub(overlap);
+            // Guarantee forward progress if overlap is misconfigured vs max_samples.
+            cur = next.max(cur + 1);
+        }
+    }
+    out
+}
+
 /// True if `text` is effectively the vocabulary prompt echoed back (Whisper hallucination on silence).
 fn is_prompt_echo(text: &str, vocabulary: &str) -> bool {
     let normalize = |s: &str| {
@@ -90,35 +126,14 @@ impl STTManager {
     }
 }
 
-/// Transcribe audio using VAD-based chunking and prompt chaining for context.
-/// Chunks are built from VAD segments with 0.5s overlap; each chunk is sent with
-/// the previous chunk's text as prompt for consistent capitalization/context.
-/// If `language_hint` is Some (e.g. "en"), the provider may use it for the API.
-/// If `vocabulary` is Some (e.g. dictionary terms), it is used as prompt for the first chunk only (cloud STT).
-pub fn transcribe_chunked(
+fn transcribe_windows(
     provider: &dyn STTProvider,
     audio: &[f32],
     sample_rate: u32,
-    vad_config: &VADConfig,
+    windows: &[(usize, usize)],
     language_hint: Option<&str>,
     vocabulary: Option<&str>,
 ) -> anyhow::Result<TranscriptionResult> {
-    let mut vad = VADProcessor::new(vad_config.clone())?;
-    let segments = vad.process(audio);
-
-    if segments.is_empty() {
-        // No VAD segments: still call provider so short/quiet speech gets transcribed.
-        // Then detect prompt echo (Whisper returning dictionary on silence) and treat as empty.
-        let mut result =
-            provider.transcribe_blocking(audio, sample_rate, vocabulary, language_hint)?;
-        if let Some(vocab) = vocabulary {
-            if is_prompt_echo(&result.text, vocab) {
-                result.text.clear();
-            }
-        }
-        return Ok(result);
-    }
-
     let mut combined_text = String::new();
     let mut prev_text: Option<String> = None;
     let mut confidence_sum = 0.0f32;
@@ -126,7 +141,7 @@ pub fn transcribe_chunked(
     let mut language = String::new();
     let mut combined_prompt_buf = String::new();
 
-    for (start, end) in segments {
+    for &(start, end) in windows {
         let chunk_start = start.saturating_sub(CHUNK_OVERLAP_SAMPLES);
         let chunk = &audio[chunk_start..end];
         if chunk.len() < 1600 {
@@ -185,10 +200,138 @@ pub fn transcribe_chunked(
     })
 }
 
+/// Transcribe audio using VAD-based chunking and prompt chaining for context.
+/// Chunks are built from VAD segments with 0.5s overlap; each chunk is sent with
+/// the previous chunk's text as prompt for consistent capitalization/context.
+/// If `language_hint` is Some (e.g. "en"), the provider may use it for the API.
+/// If `vocabulary` is Some (e.g. dictionary terms), it is used as prompt for the first chunk only (cloud STT).
+pub fn transcribe_chunked(
+    provider: &dyn STTProvider,
+    audio: &[f32],
+    sample_rate: u32,
+    vad_config: &VADConfig,
+    language_hint: Option<&str>,
+    vocabulary: Option<&str>,
+) -> anyhow::Result<TranscriptionResult> {
+    let max_samples = max_chunk_samples(vad_config, sample_rate);
+    let mut vad = VADProcessor::new(vad_config.clone())?;
+    let raw_segments = vad.process(audio);
+    let raw_len = raw_segments.len();
+
+    // No VAD hits: one full-buffer call for short clips; time windows for long audio (same as splitting one span).
+    if raw_segments.is_empty() {
+        if audio.len() <= max_samples {
+            let mut result =
+                provider.transcribe_blocking(audio, sample_rate, vocabulary, language_hint)?;
+            if let Some(vocab) = vocabulary {
+                if is_prompt_echo(&result.text, vocab) {
+                    result.text.clear();
+                }
+            }
+            log::info!(
+                "STT chunking: vad_segments=0 chunked_windows=1 empty_vad_timewindows=false (single_shot)"
+            );
+            return Ok(result);
+        }
+        let windows = split_segments_by_max_duration(
+            vec![(0, audio.len())],
+            max_samples,
+            CHUNK_OVERLAP_SAMPLES,
+        );
+        log::info!(
+            "STT chunking: vad_segments=0 chunked_windows={} empty_vad_timewindows=true",
+            windows.len()
+        );
+        let mut result = transcribe_windows(
+            provider,
+            audio,
+            sample_rate,
+            &windows,
+            language_hint,
+            vocabulary,
+        )?;
+        if let Some(vocab) = vocabulary {
+            if is_prompt_echo(&result.text, vocab) {
+                result.text.clear();
+            }
+        }
+        return Ok(result);
+    }
+
+    let windows = split_segments_by_max_duration(
+        raw_segments,
+        max_samples,
+        CHUNK_OVERLAP_SAMPLES,
+    );
+    log::info!(
+        "STT chunking: vad_segments={} chunked_windows={} empty_vad_timewindows=false",
+        raw_len,
+        windows.len()
+    );
+
+    transcribe_windows(
+        provider,
+        audio,
+        sample_rate,
+        &windows,
+        language_hint,
+        vocabulary,
+    )
+}
+
 pub async fn validate_api_key(provider: &str, api_key: &str) -> anyhow::Result<bool> {
     match provider {
         "groq" => groq::validate_key(api_key).await,
         "openai" => openai::validate_key(api_key).await,
         _ => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::vad::VADConfig;
+
+    #[test]
+    fn split_long_segment_covers_range() {
+        let windows = split_segments_by_max_duration(vec![(0, 100_000)], 32_000, 8_000);
+        assert!(
+            windows.len() >= 3,
+            "expected multiple windows, got {}",
+            windows.len()
+        );
+        assert_eq!(windows.first().unwrap().0, 0);
+        assert_eq!(windows.last().unwrap().1, 100_000);
+        for w in &windows {
+            assert!(w.1 > w.0);
+            assert!(w.1 - w.0 <= 32_000);
+        }
+    }
+
+    #[test]
+    fn split_short_segment_unchanged() {
+        let windows = split_segments_by_max_duration(vec![(100, 500)], 10_000, 8_000);
+        assert_eq!(windows, vec![(100, 500)]);
+    }
+
+    #[test]
+    fn empty_vad_long_audio_same_as_full_span_split() {
+        let max_samples = 16_000;
+        let audio_len = 100_000;
+        let w = split_segments_by_max_duration(
+            vec![(0, audio_len)],
+            max_samples,
+            CHUNK_OVERLAP_SAMPLES,
+        );
+        assert!(w.len() > 1);
+        assert_eq!(w[0].0, 0);
+        assert_eq!(w.last().unwrap().1, audio_len);
+    }
+
+    #[test]
+    fn max_chunk_samples_respects_floor_one_second() {
+        let mut cfg = VADConfig::default();
+        cfg.max_chunk_duration_sec = 0.1;
+        assert_eq!(max_chunk_samples(&cfg, 16_000), 16_000);
     }
 }

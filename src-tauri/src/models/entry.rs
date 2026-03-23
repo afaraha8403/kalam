@@ -62,4 +62,25 @@ pub struct Entry {
     pub rrule: Option<String>,
     pub archived_at: Option<DateTime<Utc>>,
     pub deleted_at: Option<DateTime<Utc>>,
+    /// Process name (e.g. notepad.exe) of the foreground app when dictation completed; dashboard only.
+    pub target_app: Option<String>,
+    /// Recorded audio length in milliseconds (dictation sessions).
+    #[serde(default, alias = "durationMs")]
+    pub duration_ms: Option<u32>,
+    /// Word count at save time (history rows); avoids recount drift if formatting rules change.
+    #[serde(default, alias = "wordCount")]
+    pub word_count: Option<u32>,
+    /// Wall-clock STT latency for this session (ms).
+    #[serde(default, alias = "sttLatencyMs")]
+    pub stt_latency_ms: Option<u32>,
+    /// Effective STT mode label: Cloud, Local, Hybrid, Auto.
+    #[serde(default, alias = "sttMode")]
+    pub stt_mode: Option<String>,
+    /// Primary recognition language code(s) from settings at capture time.
+    pub dictation_language: Option<String>,
+    /// `dictation` vs `command` session (command transcripts are not injected as dictation).
+    pub session_mode: Option<String>,
+    /// STT provider id at capture time (e.g. groq, sensevoice); pairs with `stt_mode`.
+    #[serde(default, alias = "sttProvider")]
+    pub stt_provider: Option<String>,
 }

@@ -133,7 +133,14 @@
     history_retention_days: 90,
     telemetry_enabled: false,
     sidebar_collapsed: false,
-    waveform_style: 'Heartbeat' as 'Line' | 'Symmetric' | 'Heartbeat' | 'Bars' | 'Waves',
+    waveform_style: 'Aurora' as
+      | 'SiriWave'
+      | 'EchoRing'
+      | 'RoundedBars'
+      | 'BreathingAura'
+      | 'Oscilloscope'
+      | 'NeonPulse'
+      | 'Aurora',
     overlay_position: 'BottomCenter' as 'BottomCenter' | 'BottomLeft' | 'BottomRight' | 'TopCenter' | 'Center',
     overlay_offset_x: 0,
     overlay_offset_y: 0,
@@ -986,7 +993,9 @@
             </header>
 
             <div class="search-bar">
-              <Icon icon="ph:magnifying-glass" />
+              <span class="search-bar-icon" aria-hidden="true">
+                <Icon icon="ph:magnifying-glass" />
+              </span>
               <input type="text" placeholder="Search your dictations..." />
             </div>
 
@@ -2046,11 +2055,13 @@
                           </div>
                           <div class="setting-control">
                             <select class="form-select" bind:value={settingsConfig.waveform_style}>
-                              <option value="Heartbeat">Heartbeat</option>
-                              <option value="Line">Line</option>
-                              <option value="Bars">Bars</option>
-                              <option value="Waves">Waves</option>
-                              <option value="Symmetric">Symmetric</option>
+                              <option value="SiriWave">Siri Wave</option>
+                              <option value="EchoRing">Echo Ring</option>
+                              <option value="RoundedBars">Rounded Bars</option>
+                              <option value="BreathingAura">Breathing Aura</option>
+                              <option value="Oscilloscope">Oscilloscope</option>
+                              <option value="NeonPulse">Neon Pulse</option>
+                              <option value="Aurora">Aurora Borealis</option>
                             </select>
                           </div>
                         </div>
@@ -2976,13 +2987,23 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.</pre>
     margin-bottom: var(--space-3xl);
   }
 
-  .search-bar :global(svg) {
+  .search-bar .search-bar-icon {
     position: absolute;
     left: 16px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 18px;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
     color: var(--text-muted);
+  }
+
+  .search-bar .search-bar-icon :global(svg) {
+    font-size: 18px;
+    width: 1em;
+    height: 1em;
+    display: block;
   }
 
   .search-bar input {

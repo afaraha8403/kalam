@@ -1,9 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
+  import { invoke } from '$lib/backend'
   import { listen } from '@tauri-apps/api/event'
   import Icon from '@iconify/svelte'
   import type { HistoryEntry } from '../../types'
+  import { selectedHistoryId } from '../../lib/historyDetailStore'
+  import { recognitionDisplay, sttChipKind } from '../../lib/historySttChip'
+
+  export let navigate: (page: string) => void = () => {}
 
   let entries: HistoryEntry[] = []
   let loading = true
@@ -35,451 +39,203 @@
     return () => { unlisten?.() }
   })
 
-  let searchTimeout: ReturnType<typeof setTimeout>;
+  let searchTimeout: ReturnType<typeof setTimeout>
   function handleSearch() {
-    clearTimeout(searchTimeout);
+    clearTimeout(searchTimeout)
     searchTimeout = setTimeout(() => {
-      load();
-    }, 300);
+      load()
+    }, 300)
   }
 
-  function formatDate(iso: string) {
-    try {
-      const d = new Date(iso)
-      const today = new Date()
-      const isToday = d.toDateString() === today.toDateString()
-      
-      if (isToday) {
-        return `Today at ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+  function formatTime(iso: string) {
+    return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  }
+
+  /**
+   * Split transcript text for search highlights. Matches backend search_history (case-insensitive substring).
+   * Not semantic search — vector search is unused for History today.
+   */
+  function searchHighlightSegments(
+    text: string,
+    query: string
+  ): { text: string; hl: boolean }[] {
+    const q = query.trim()
+    if (!q) return [{ text, hl: false }]
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(escaped, 'gi')
+    const segments: { text: string; hl: boolean }[] = []
+    let lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = re.exec(text)) !== null) {
+      const match = m[0]
+      const start = m.index
+      if (start > lastIndex) segments.push({ text: text.slice(lastIndex, start), hl: false })
+      segments.push({ text: match, hl: true })
+      lastIndex = start + match.length
+      // Avoid stuck lastIndex on empty match (should not happen for non-empty q).
+      if (match.length === 0) {
+        re.lastIndex++
+        if (re.lastIndex > text.length) break
       }
-      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    }
+    if (lastIndex < text.length) segments.push({ text: text.slice(lastIndex), hl: false })
+    return segments.length > 0 ? segments : [{ text, hl: false }]
+  }
+
+  /** Which row just copied — drives check icon + button animation. */
+  let copiedEntryId: string | null = null
+  let copyResetTimer: ReturnType<typeof setTimeout> | undefined
+
+  async function copyText(entryId: string, text: string) {
+    try {
+      await navigator.clipboard.writeText(text)
     } catch {
-      return iso
+      return
+    }
+    copiedEntryId = entryId
+    if (copyResetTimer !== undefined) clearTimeout(copyResetTimer)
+    copyResetTimer = setTimeout(() => {
+      copiedEntryId = null
+      copyResetTimer = undefined
+    }, 1600)
+  }
+
+  /** Backend may send mode "cloud"; normalize so chip gets .dictation/.command and colored styling. */
+  function isDictationMode(mode: string | undefined): boolean {
+    if (!mode) return true
+    return mode.toLowerCase() === 'dictation' || mode.toLowerCase() === 'cloud'
+  }
+  function isCommandMode(mode: string | undefined): boolean {
+    return mode?.toLowerCase() === 'command'
+  }
+  function modeLabel(mode: string | undefined): string {
+    return isCommandMode(mode) ? 'command' : 'dictation'
+  }
+  function openHistoryDetail(entry: HistoryEntry) {
+    selectedHistoryId.set(entry.id)
+    navigate('history-detail')
+  }
+
+  function onHistoryRowKeydown(e: KeyboardEvent, entry: HistoryEntry) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      openHistoryDetail(entry)
     }
   }
 
-  function copyText(text: string) {
-    navigator.clipboard.writeText(text)
-  }
+  /** Group entries by day (Today, Yesterday, or date) — prototype structure. */
+  $: groupedHistory = entries.reduce((acc, entry) => {
+    const date = new Date(entry.created_at)
+    const today = new Date()
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    let dateLabel = ''
+    let dateSub = ''
+    if (date.toDateString() === today.toDateString()) {
+      dateLabel = 'Today'
+      dateSub = date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+    } else if (date.toDateString() === yesterday.toDateString()) {
+      dateLabel = 'Yesterday'
+      dateSub = date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+    } else {
+      dateLabel = date.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })
+      dateSub = date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric' })
+    }
+    if (!acc[dateLabel]) acc[dateLabel] = { entries: [], sub: dateSub }
+    acc[dateLabel].entries.push(entry)
+    return acc
+  }, {} as Record<string, { entries: HistoryEntry[]; sub: string }>)
 </script>
 
-<div class="view history-view">
+<!-- Prototype structure: page, page-header, search-bar, timeline, day-group, entry-row -->
+<div class="page fade-in">
   <header class="page-header">
-    <div class="header-content">
-      <div class="title-wrapper">
-        <Icon icon="ph:clock-counter-clockwise-duotone" class="header-icon" />
-        <h2>History</h2>
-      </div>
-      <p class="subtitle">Your past dictations and transcriptions.</p>
-    </div>
+    <h1 class="page-title">History</h1>
   </header>
 
   <div class="search-bar">
-    <Icon icon="ph:magnifying-glass-duotone" class="search-icon" />
-    <input 
-      type="text" 
-      bind:value={searchQuery} 
+    <span class="search-bar-icon" aria-hidden="true">
+      <Icon icon="ph:magnifying-glass" />
+    </span>
+    <input
+      type="text"
+      bind:value={searchQuery}
       on:input={handleSearch}
-      placeholder="Search your history..."
+      placeholder="Search your dictations..."
     />
   </div>
 
   {#if loading && entries.length === 0}
     <div class="state-container">
-      <Icon icon="ph:spinner-gap-duotone" class="spin-icon" />
+      <Icon icon="ph:spinner-gap-duotone" />
       <p>Loading history...</p>
     </div>
   {:else if error}
-    <div class="state-container error-state">
-      <Icon icon="ph:warning-circle-duotone" class="error-icon" />
+    <div class="state-container">
+      <Icon icon="ph:warning-circle" />
       <p>{error}</p>
-      <button class="btn-ghost" on:click={load}>Try Again</button>
+      <button type="button" class="btn-ghost" on:click={load}>Try Again</button>
     </div>
   {:else if entries.length === 0}
-    <div class="state-container empty-state">
-      <div class="empty-icon-wrapper">
-        <Icon icon="ph:microphone-stage-duotone" class="empty-icon" />
-      </div>
-      <h3>No transcriptions found</h3>
+    <div class="empty-state">
+      <Icon icon="ph:microphone" />
       <p>{searchQuery ? 'Try a different search term.' : 'Use a dictation hotkey to start dictating.'}</p>
     </div>
   {:else}
     <div class="timeline">
-      {#each entries as entry (entry.id)}
-        <div class="timeline-item">
-          <div class="timeline-marker">
-            <div class="marker-dot"></div>
-          </div>
-          <div class="history-card" role="button" tabindex="0" on:click={() => copyText(entry.text)} on:keydown={(e) => e.key === 'Enter' && copyText(entry.text)}>
-            <div class="history-header">
-              <span class="history-time">
-                <Icon icon="ph:calendar-blank-duotone" />
-                {formatDate(entry.created_at)}
-              </span>
-              <div class="history-badges">
-                {#if entry.mode}
-                  <span class="badge mode-badge">{entry.mode}</span>
-                {/if}
-                {#if entry.language}
-                  <span class="badge lang-badge">{entry.language}</span>
-                {/if}
+      {#each Object.entries(groupedHistory) as [dayLabel, dayData]}
+        <div class="day-group">
+          <h3 class="day-label">{dayLabel} <span class="day-sub">{dayData.sub}</span></h3>
+          <div class="entries">
+            {#each dayData.entries as entry (entry.id)}
+              <div
+                class="entry-row"
+                role="button"
+                tabindex="0"
+                on:click={() => openHistoryDetail(entry)}
+                on:keydown={(e) => onHistoryRowKeydown(e, entry)}
+              >
+                <div class="entry-time">{formatTime(entry.created_at)}</div>
+                <div class="entry-content">
+                  <p class="entry-text">
+                    {#if searchQuery.trim() && (entry.text ?? '') !== ''}
+                      {#each searchHighlightSegments(entry.text, searchQuery) as seg, i (i)}
+                        {#if seg.hl}<mark class="history-search-hit">{seg.text}</mark>{:else}{seg.text}{/if}
+                      {/each}
+                    {:else}
+                      {entry.text || '(empty)'}
+                    {/if}
+                  </p>
+                  <div class="entry-actions">
+                    <span class="chip chip-mode" class:dictation={isDictationMode(entry.mode)} class:command={isCommandMode(entry.mode)}>{modeLabel(entry.mode)}</span>
+                    <span
+                      class="chip chip-stt"
+                      class:cloud={sttChipKind(entry.stt_mode, entry.stt_provider) === 'cloud'}
+                      class:local={sttChipKind(entry.stt_mode, entry.stt_provider) === 'local'}
+                      class:hybrid={sttChipKind(entry.stt_mode, entry.stt_provider) === 'hybrid'}
+                      class:auto={sttChipKind(entry.stt_mode, entry.stt_provider) === 'auto'}
+                      class:unknown={sttChipKind(entry.stt_mode, entry.stt_provider) === 'unknown'}
+                    >{recognitionDisplay(entry.stt_provider, entry.stt_mode)}</span>
+                    {#if entry.duration_ms != null}
+                      <span class="entry-duration">{Math.round(entry.duration_ms / 1000)}s</span>
+                    {/if}
+                    <button
+                      type="button"
+                      class="icon-btn small"
+                      class:copied={copiedEntryId === entry.id}
+                      on:click|stopPropagation={() => copyText(entry.id, entry.text)}
+                      title={copiedEntryId === entry.id ? 'Copied' : 'Copy'}
+                      aria-label={copiedEntryId === entry.id ? 'Copied' : 'Copy'}
+                    >
+                      <Icon icon={copiedEntryId === entry.id ? 'ph:check' : 'ph:copy'} />
+                    </button>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div class="history-body">
-              <p>{entry.text || '(empty)'}</p>
-            </div>
-            <div class="history-actions" on:click|stopPropagation on:keydown|stopPropagation>
-              <button class="action-btn" on:click={() => copyText(entry.text)} title="Copy to clipboard">
-                <Icon icon="ph:copy-duotone" />
-                <span>Copy</span>
-              </button>
-            </div>
+            {/each}
           </div>
         </div>
       {/each}
     </div>
   {/if}
 </div>
-
-<style>
-  .view {
-    max-width: 800px;
-    margin: 0 auto;
-    animation: fadeSlideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-    display: flex;
-    flex-direction: column;
-    gap: 32px;
-  }
-
-  @keyframes fadeSlideUp {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  /* Header */
-  .page-header {
-    position: relative;
-  }
-
-  .header-content {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .title-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .header-icon {
-    font-size: 24px;
-    color: var(--primary);
-  }
-
-  h2 {
-    font-size: 24px;
-    font-weight: 700;
-    color: var(--navy-deep);
-    margin: 0;
-  }
-
-  .subtitle {
-    color: var(--text-muted);
-    font-size: 15px;
-    margin: 0;
-    padding-left: 34px;
-  }
-
-  /* Search */
-  .search-bar {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-
-  .search-icon {
-    position: absolute;
-    left: 20px;
-    font-size: 20px;
-    color: var(--text-muted);
-    pointer-events: none;
-  }
-
-  .search-bar input {
-    width: 100%;
-    padding: 16px 20px 16px 52px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 16px;
-    color: var(--text-primary);
-    font-size: 16px;
-    font-family: inherit;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .search-bar input:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 4px var(--primary-alpha), 0 8px 24px rgba(0, 0, 0, 0.04);
-    transform: translateY(-2px);
-  }
-
-  /* Timeline */
-  .timeline {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    position: relative;
-    padding-left: 24px;
-  }
-
-  .timeline::before {
-    content: '';
-    position: absolute;
-    left: 7px;
-    top: 12px;
-    bottom: 24px;
-    width: 2px;
-    background: var(--border-subtle);
-    border-radius: 2px;
-  }
-
-  .timeline-item {
-    position: relative;
-    display: flex;
-    gap: 24px;
-  }
-
-  .timeline-marker {
-    position: absolute;
-    left: -24px;
-    top: 16px;
-    width: 16px;
-    height: 16px;
-    background: var(--bg-app);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2;
-  }
-
-  .marker-dot {
-    width: 8px;
-    height: 8px;
-    background: var(--primary);
-    border-radius: 50%;
-    box-shadow: 0 0 0 4px var(--primary-alpha);
-  }
-
-  .history-card {
-    flex: 1;
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
-    border-radius: 16px;
-    padding: 20px 24px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
-    transition: all 0.3s ease;
-    cursor: pointer;
-  }
-
-  .history-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.04);
-    border-color: var(--border-visible);
-  }
-
-  .history-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-
-  .history-time {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .history-badges {
-    display: flex;
-    gap: 8px;
-  }
-
-  .badge {
-    padding: 4px 10px;
-    border-radius: 6px;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .mode-badge {
-    background: var(--primary-alpha-light);
-    color: var(--primary-dark);
-    border: 1px solid var(--primary-alpha);
-  }
-
-  .lang-badge {
-    background: var(--bg-input);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-subtle);
-  }
-
-  .history-body p {
-    font-size: 16px;
-    line-height: 1.6;
-    color: var(--navy-deep);
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .history-actions {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px dashed var(--border-subtle);
-    display: flex;
-    justify-content: flex-end;
-    opacity: 0.6;
-    transition: opacity 0.2s;
-  }
-
-  .history-card:hover .history-actions {
-    opacity: 1;
-  }
-
-  .action-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    color: var(--text-secondary);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .action-btn:hover {
-    background: var(--bg-input);
-    color: var(--navy-deep);
-    border-color: var(--border-visible);
-  }
-
-  /* States */
-  .state-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 64px 20px;
-    background: var(--bg-card);
-    border-radius: 20px;
-    border: 1px dashed var(--border-visible);
-    color: var(--text-muted);
-    gap: 16px;
-  }
-
-  .spin-icon {
-    font-size: 32px;
-    animation: spin 1s linear infinite;
-    color: var(--primary);
-  }
-
-  @keyframes spin {
-    100% { transform: rotate(360deg); }
-  }
-
-  .empty-state {
-    text-align: center;
-  }
-
-  .empty-icon-wrapper {
-    width: 64px;
-    height: 64px;
-    background: var(--primary-alpha);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 8px;
-  }
-
-  .empty-icon {
-    font-size: 32px;
-    color: var(--primary);
-  }
-
-  .empty-state h3 {
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--navy-deep);
-    margin: 0;
-  }
-
-  .empty-state p {
-    font-size: 15px;
-    max-width: 300px;
-    margin: 0;
-  }
-
-  .error-state {
-    border-color: rgba(239, 68, 68, 0.3);
-    background: rgba(239, 68, 68, 0.02);
-  }
-
-  .error-icon {
-    font-size: 32px;
-    color: var(--error);
-  }
-
-  .btn-ghost {
-    padding: 8px 16px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-visible);
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
-    color: var(--navy-deep);
-  }
-
-  @media (max-width: 768px) {
-    .timeline {
-      padding-left: 16px;
-    }
-    .timeline::before {
-      left: 3px;
-    }
-    .timeline-marker {
-      left: -20px;
-      width: 12px;
-      height: 12px;
-    }
-    .marker-dot {
-      width: 6px;
-      height: 6px;
-    }
-    .subtitle {
-      padding-left: 0;
-    }
-    .history-actions {
-      opacity: 1;
-    }
-  }
-</style>

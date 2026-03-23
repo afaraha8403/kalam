@@ -1,8 +1,12 @@
 <!DOCTYPE html>
-<html lang="en" class="scroll-smooth">
+<html lang="en" class="scroll-smooth" data-theme="dark">
 <head>
+    <!-- Anti-flash: restore saved theme before first paint -->
+    <script>(function(){try{var t=localStorage.getItem('kalam-site-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})()</script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-F3WK2BDF59"></script>
     <script>
@@ -11,31 +15,32 @@
       gtag('js', new Date());
       gtag('config', 'G-F3WK2BDF59');
     </script>
+
     <title>Kalam — Speak, It Types Everywhere. Free & Open-Source Voice Dictation | Voice Typing for PC & Mac</title>
-    
+
     <!-- SEO Meta Tags -->
     <meta name="description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline. No subscription.">
     <meta name="keywords" content="voice typing, voice typing for computer, wispr flow alternative, wisprflow open source, whisperflow, whisperflow for computer, open source voice dictation, speech to text desktop, free voice dictation, dictation software Windows Mac Linux, voice dictation, open source, speech to text, tauri, rust, privacy, cross-platform, local STT">
     <meta name="author" content="Kalam Voice">
-    <link rel="canonical" href="https://afaraha8403.github.io/kalam/">
-    
-    <!-- OpenGraph / Social sharing (WhatsApp, Facebook, LinkedIn, etc.) -->
+    <link rel="canonical" href="https://kalam.stream/">
+
+    <!-- OpenGraph -->
     <meta property="og:title" content="Kalam — Free Open-Source Voice Typing for PC & Mac | Wispr Flow Alternative">
     <meta property="og:description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://afaraha8403.github.io/kalam/">
-    <meta property="og:image" content="https://afaraha8403.github.io/kalam/logo.svg">
+    <meta property="og:url" content="https://kalam.stream/">
+    <meta property="og:image" content="https://kalam.stream/logo.svg">
     <meta property="og:image:alt" content="Kalam — Free open-source voice typing for your computer">
     <meta property="og:site_name" content="Kalam Voice">
     <meta property="og:locale" content="en_US">
-    
-    <!-- Twitter Card (Twitter, some other apps) -->
+
+    <!-- Twitter Card -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Kalam — Free Open-Source Voice Typing for PC & Mac | Wispr Flow Alternative">
     <meta name="twitter:description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline.">
-    <meta name="twitter:image" content="https://afaraha8403.github.io/kalam/logo.svg">
+    <meta name="twitter:image" content="https://kalam.stream/logo.svg">
     <meta name="twitter:image:alt" content="Kalam — Free open-source voice typing for your computer">
-    
+
     <!-- Structured Data (JSON-LD) -->
     <script type="application/ld+json">
     {
@@ -46,7 +51,7 @@
       "applicationCategory": "ProductivityApplication",
       "operatingSystem": "Windows, macOS, Linux",
       "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-      "url": "https://afaraha8403.github.io/kalam/"
+      "url": "https://kalam.stream/"
     }
     </script>
     <script type="application/ld+json">
@@ -64,522 +69,1139 @@
       ]
     }
     </script>
-    
-    <!-- Favicon -->
+
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    
-    <!-- Iconify (Phosphor icons) -->
     <script src="https://code.iconify.design/iconify-icon/3.0.2/iconify-icon.min.js"></script>
-    
-    <!-- Fonts -->
+
+    <!-- Inter — same as .kalam-sleek --font-sleek in App.svelte (page titles, body, UI) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Syne:wght@400..800&display=swap" rel="stylesheet">
-    
-    <!-- Tailwind CSS -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind (layout/spacing utilities only; colors via CSS vars) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['"DM Sans"', 'sans-serif'],
-                        heading: ['Syne', 'sans-serif'],
-                    },
-                    colors: {
-                        primary: {
-                            DEFAULT: '#4AAEBE',
-                            light: '#6BBEC9',
-                            dark: '#3B9FB6',
-                        },
-                        navy: {
-                            deep: '#071029',
-                            DEFAULT: '#0B1A34',
-                            mid: '#133051',
-                        },
-                        app: {
-                            bg: '#EAEFF5',
-                            content: '#FFFFFF',
-                            card: '#FFFFFF',
-                            input: '#F4F7F9',
-                        },
-                        text: {
-                            primary: '#0F172A',
-                            secondary: '#334155',
-                            muted: '#64748B',
-                        }
-                    },
-                    boxShadow: {
-                        'app-sm': '0 2px 8px rgba(7, 16, 41, 0.04)',
-                        'app-md': '0 4px 20px rgba(7, 16, 41, 0.06)',
-                        'app-lg': '0 12px 32px rgba(7, 16, 41, 0.08)',
-                    },
-                    borderRadius: {
-                        'xl': '24px',
-                    }
-                }
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'system-ui', 'sans-serif'],
             }
+          }
         }
+      }
     </script>
-    
+
     <style>
-        body {
-            background-color: theme('colors.app.bg');
-            color: theme('colors.text.primary');
+      /* ─── Design tokens: mirrors .kalam-sleek.dark exactly ─── */
+      :root, [data-theme="dark"] {
+        color-scheme: dark;
+        --bg:          #000000;  /* app --bg */
+        --bg-elevated: #111111;  /* slightly warmer than pure black for sections */
+        --bg-card:     #1c1c1e;  /* app --bg-elevated */
+        --bg-input:    #2c2c2e;  /* app --bg-input */
+        --text:        #f5f5f7;  /* Apple text white */
+        --text-2:      #aeaeb2;  /* secondary */
+        --text-3:      #8e8e93;  /* muted (WCAG AA compliant) */
+        --border:      rgba(255,255,255,0.07);
+        --border-hi:   rgba(255,255,255,0.13);
+        --primary:     #4AAEBE;
+        --primary-dim: rgba(74,174,190,0.15);
+        --primary-mid: rgba(74,174,190,0.28);
+        --btn-primary-text: #000000;
+        --sh-sm: 0 1px 3px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
+        --sh-md: 0 6px 24px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05);
+        --sh-lg: 0 24px 64px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.06);
+        --sh-xl: 0 32px 80px rgba(0,0,0,0.92), 0 0 0 1px rgba(255,255,255,0.06);
+      }
+      [data-theme="light"] {
+        color-scheme: light;
+        --bg:          #fafafa;
+        --bg-elevated: #f4f4f5;
+        --bg-card:     #ffffff;
+        --bg-input:    #e4e4e7;
+        --text:        #09090b;
+        --text-2:      #52525b;
+        --text-3:      #71717a;  /* muted (WCAG AA compliant) */
+        --border:      rgba(0,0,0,0.08);
+        --border-hi:   rgba(0,0,0,0.14);
+        --primary:     #2c889e;  /* Darkened slightly for better contrast with white text */
+        --primary-dim: rgba(44,136,158,0.10);
+        --primary-mid: rgba(44,136,158,0.22);
+        --btn-primary-text: #ffffff;
+        --sh-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.04);
+        --sh-md: 0 8px 24px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.04);
+        --sh-lg: 0 24px 64px rgba(0,0,0,0.12), 0 8px 24px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.05);
+        --sh-xl: 0 32px 80px rgba(0,0,0,0.16), 0 16px 32px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.05);
+      }
+
+      /* ─── Base ─── */
+      *, *::before, *::after { box-sizing: border-box; margin: 0; }
+      html { scroll-behavior: smooth; }
+      * { scrollbar-width: none; }
+      *::-webkit-scrollbar { width: 0; height: 0; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        transition: background .2s, color .15s;
+      }
+      ::selection { background: var(--primary-mid); color: var(--text); }
+      
+      /* Accessibility: Focus states */
+      :focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+        border-radius: 2px;
+      }
+      a:focus-visible, button:focus-visible, details:focus-visible {
+        border-radius: 8px;
+      }
+
+      /* ─── Nav ─── */
+      .site-nav {
+        background: rgba(0,0,0,0.78);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--border);
+      }
+      [data-theme="light"] .site-nav {
+        background: rgba(250,250,250,0.90);
+      }
+      .nav-link { color: var(--text-2); font-weight: 500; transition: color .15s; text-decoration: none; }
+      .nav-link:hover { color: var(--text); }
+
+      /* Platform logos (external SVGs can't use currentColor — tint to match --text-2) */
+      .platform-icon {
+        display: block;
+        flex-shrink: 0;
+        object-fit: contain;
+      }
+      .platform-icon--glyph {
+        width: 1.125rem;
+        height: 1.125rem;
+      }
+      /* macOS wordmark is wide — cap width, single-line height */
+      .platform-icon--macos {
+        height: 0.9rem;
+        width: auto;
+        max-width: 3.75rem;
+      }
+      [data-theme="dark"] .platform-icon--tint {
+        filter: brightness(0) saturate(100%) invert(0.78);
+        opacity: 0.92;
+      }
+      [data-theme="light"] .platform-icon--tint {
+        filter: brightness(0) saturate(100%) invert(0.32);
+        opacity: 0.9;
+      }
+      /* Windows row: optical align with macOS wordmark + Linux glyph */
+      .platform-row-windows {
+        transform: translateY(2px);
+      }
+
+      /* ─── Buttons ─── */
+      .btn-primary {
+        background: var(--primary);
+        color: var(--btn-primary-text);
+        font-weight: 600;
+        font-size: 0.9375rem;
+        border-radius: 10px;
+        padding: .75rem 1.625rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+        text-decoration: none;
+        white-space: nowrap;
+        position: relative;
+        overflow: hidden;
+      }
+      [data-theme="light"] .btn-primary {
+        border: 1px solid rgba(0, 0, 0, 0.05);
+      }
+      .btn-primary::after {
+        content: '';
+        position: absolute;
+        top: -50%; left: -50%;
+        width: 200%; height: 200%;
+        background: radial-gradient(circle, rgba(255,255,255,0.3) 0%, transparent 60%);
+        opacity: 0;
+        transform: scale(0.5);
+        transition: opacity 0.3s, transform 0.3s;
+        pointer-events: none;
+      }
+      .btn-primary:hover { 
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px var(--primary-dim);
+      }
+      .btn-primary:hover::after {
+        opacity: 1;
+        transform: scale(1);
+      }
+      .btn-primary:active {
+        transform: translateY(1px);
+        box-shadow: 0 2px 4px var(--primary-dim);
+      }
+
+      .btn-secondary {
+        background: var(--bg-card);
+        color: var(--text);
+        font-weight: 500;
+        font-size: 0.9375rem;
+        border-radius: 10px;
+        padding: .75rem 1.625rem;
+        border: 1px solid var(--border-hi);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .btn-secondary:hover { 
+        background: var(--bg-input); 
+        transform: translateY(-2px);
+        box-shadow: var(--sh-sm);
+      }
+      .btn-secondary:active {
+        transform: translateY(1px);
+      }
+
+      .btn-ghost {
+        background: var(--primary-dim);
+        color: var(--primary);
+        font-weight: 500;
+        font-size: 0.875rem;
+        border-radius: 10px;
+        padding: .65rem 1.375rem;
+        border: 1px solid var(--primary-mid);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
+        text-decoration: none;
+      }
+      .btn-ghost:hover { 
+        background: var(--primary-mid); 
+        transform: translateY(-2px);
+      }
+      .btn-ghost:active {
+        transform: translateY(1px);
+      }
+
+      /* ─── Hero ─── */
+      .hero-section {
+        position: relative;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      /* Single clean radial — teal glow at top center, like a lamp */
+      .hero-glow {
+        position: absolute;
+        top: -200px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 1000px;
+        height: 700px;
+        background: radial-gradient(ellipse at center top, var(--primary-dim) 0%, transparent 62%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      /* ─── Platform pills hover ─── */
+      .platform-pill {
+        transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), color 0.2s;
+        cursor: default;
+      }
+      .platform-pill:hover {
+        transform: translateY(-2px);
+        color: var(--text);
+      }
+      .platform-pill:hover .platform-icon--tint {
+        filter: brightness(0) saturate(100%) invert(1);
+        opacity: 1;
+      }
+      [data-theme="light"] .platform-pill:hover .platform-icon--tint {
+        filter: brightness(0) saturate(100%) invert(0);
+      }
+
+      /* ─── Faux app shell in hero ─── */
+      .app-shell {
+        border-radius: 14px;
+        border: 1px solid var(--border-hi);
+        background: var(--bg-card);
+        box-shadow: var(--sh-xl);
+        overflow: hidden;
+        transform: perspective(1000px) rotateX(2deg) rotateY(-4deg) rotateZ(1deg);
+        transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+        transform-origin: center right;
+      }
+      .app-shell:hover {
+        transform: perspective(1000px) rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(1.02);
+      }
+      .app-shell-bar {
+        height: 38px;
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        gap: 6px;
+      }
+      .shell-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+      .shell-spacer { flex: 1; }
+      .shell-pill { width: 72px; height: 14px; border-radius: 4px; background: var(--border-hi); }
+      .app-shell-body { display: flex; }
+      .app-sidebar {
+        width: 50px;
+        background: #0d0d0d;
+        border-right: 1px solid rgba(255,255,255,0.05);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 12px 0;
+        gap: 9px;
+      }
+      .sidebar-icon {
+        width: 30px; height: 30px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.05);
+      }
+      .sidebar-icon.on { background: rgba(74,174,190,0.18); }
+      .app-content { flex: 1; padding: 14px; }
+      .mock-line { border-radius: 4px; background: rgba(255,255,255,0.06); margin-bottom: 7px; height: 8px; }
+      .mock-stat-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; margin-top: 12px; }
+      .mock-stat {
+        border-radius: 8px;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.06);
+        height: 52px;
+        padding: 8px;
+        display: flex; flex-direction: column; gap: 6px;
+      }
+      .mock-bar { height: 5px; border-radius: 3px; }
+
+      /* ─── Scroll Reveal Animations ─── */
+      .reveal-on-scroll {
+        opacity: 0;
+        transform: translateY(30px);
+        transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .reveal-on-scroll.is-visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .stagger-1 { transition-delay: 0.1s; }
+      .stagger-2 { transition-delay: 0.2s; }
+      .stagger-3 { transition-delay: 0.3s; }
+      .stagger-4 { transition-delay: 0.4s; }
+
+      /* ─── Photo divider ─── */
+      .photo-divider {
+        background-image:
+          linear-gradient(to bottom, var(--bg) 0%, transparent 12%, transparent 88%, var(--bg) 100%),
+          linear-gradient(rgba(0,0,0,.6), rgba(0,0,0,.6)),
+          url('hero-bg.webp');
+        background-size: cover;
+        background-position: center;
+      }
+
+      /* ─── Image Placeholders ─── */
+      @keyframes shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+      }
+      .img-placeholder {
+        background: var(--bg-input);
+        border: 1px dashed var(--border-hi);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-3);
+        font-weight: 500;
+        position: relative;
+        overflow: hidden;
+      }
+      .img-placeholder::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at top left, var(--primary-dim), transparent 70%);
+        opacity: 0.5;
+      }
+      .img-placeholder::after {
+        content: '';
+        position: absolute;
+        top: 0; right: 0; bottom: 0; left: 0;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
+        transform: translateX(-100%);
+        animation: shimmer 3s infinite;
+        pointer-events: none;
+      }
+      [data-theme="light"] .img-placeholder::after {
+        background: linear-gradient(90deg, transparent, rgba(0,0,0,0.02), transparent);
+      }
+      .img-placeholder iconify-icon {
+        font-size: 1.75rem;
+        margin-bottom: 0.5rem;
+        color: var(--primary);
+        opacity: 0.8;
+      }
+
+      /* ─── Section helpers ─── */
+      .s-base { background: var(--bg); }
+      .s-raise { background: var(--bg-elevated); }
+      .divider { border-top: 1px solid var(--border); }
+
+      /* ─── Cards — borderless; depth from shadow only ─── */
+      .card {
+        background: var(--bg-card);
+        border: none;
+        border-radius: 14px;
+        padding: 1.625rem;
+        box-shadow: var(--sh-sm);
+        transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+      .card:hover { 
+        box-shadow: var(--sh-md); 
+        transform: translateY(-4px);
+      }
+      .card:hover .ibadge {
+        transform: scale(1.08) rotate(-4deg);
+        background: var(--primary-dim);
+        color: var(--primary);
+      }
+
+      /* ─── Icon badge — neutral surface like app icon buttons (no pastel fills) ─── */
+      .ibadge {
+        width: 40px; height: 40px;
+        border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        margin-bottom: 1rem;
+        font-size: 1.125rem;
+        background: var(--bg-input);
+        color: var(--text-2);
+        border: none;
+        transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+      .ibadge iconify-icon { color: inherit; opacity: 0.92; }
+
+      /* ─── Section text — matches .kalam-sleek .page-title (Inter 600, tight tracking) ─── */
+      .eyebrow {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+        color: var(--primary);
+        margin-bottom: .625rem;
+      }
+      .s-heading {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-weight: 600;
+        letter-spacing: -0.04em;
+        color: var(--text);
+        line-height: 1.08;
+      }
+      @keyframes slideUpFade {
+        from { opacity: 0; transform: translateY(20px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .hero-title {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-size: clamp(2.5rem, 5.5vw, 4rem);
+        font-weight: 600;
+        letter-spacing: -0.04em;
+        line-height: 1.05;
+        color: var(--text);
+        animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+      .hero-title span {
+        display: inline-block;
+        opacity: 0;
+        animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
+      }
+      .s-body { color: var(--text-2); line-height: 1.7; }
+      .h3-card {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-weight: 600;
+        color: var(--text);
+        letter-spacing: -0.02em;
+      }
+
+      /* ─── Bento ─── */
+      .bento { display: grid; gap: 10px; }
+      @media (min-width: 768px) {
+        .bento { grid-template-columns: repeat(3,1fr); }
+        .bento-wide { grid-column: span 2; }
+      }
+
+      /* ─── Steps ─── */
+      .step-num {
+        width: 40px; height: 40px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        font-size: 0.9375rem;
+        background: var(--bg-card);
+        color: var(--text);
+        border: none;
+        flex-shrink: 0;
+        transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+      .step-card:hover .step-num {
+        transform: scale(1.1) rotate(5deg);
+        background: var(--primary-dim);
+        color: var(--primary);
+      }
+      .step-card {
+        transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      }
+      .step-card:hover {
+        transform: translateY(-4px);
+      }
+
+      /* ─── FAQ ─── */
+      .faq-item { border-bottom: 1px solid var(--border); padding: 1.25rem 0; }
+      .faq-item:last-child { border-bottom: none; }
+      .faq-q { font-family: 'Inter', sans-serif; font-weight: 600; color: var(--text); margin-bottom: .4rem; }
+      .faq-a { color: var(--text-2); line-height: 1.65; }
+
+      /* ─── Compare table — full Kalam column outline ─── */
+      .ctable { color: var(--text-2); }
+      .ctable .kalam-col-head { color: var(--primary); font-weight: 600; }
+      .kalam-col-cell {
+        border-left: 2px solid var(--primary);
+        border-right: 2px solid var(--primary);
+        background: var(--primary-dim);
+      }
+      .kalam-col-first {
+        border-top: 2px solid var(--primary);
+        border-radius: 10px 10px 0 0;
+      }
+      .kalam-col-mid {
+        border-top: 1px solid var(--border);
+      }
+      .kalam-col-last {
+        border-top: 1px solid var(--border);
+        border-bottom: 2px solid var(--primary);
+        border-radius: 0 0 10px 10px;
+      }
+      .c-check { color: var(--primary); }
+
+      /* ─── KBD ─── */
+      .kbd {
+        display: inline-block;
+        padding: 1px 7px;
+        font-size: .72em;
+        font-family: ui-monospace, 'Cascadia Code', monospace;
+        border-radius: 5px;
+        border: 1px solid var(--border);
+        background: var(--bg-card);
+        color: var(--text-2);
+      }
+
+      /* ─── Theme toggle ─── */
+      #theme-toggle {
+        transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.15s;
+      }
+      #theme-toggle:active {
+        transform: scale(0.9) rotate(-15deg);
+      }
+      [data-theme="dark"]  .t-sun  { display: block; }
+      [data-theme="dark"]  .t-moon { display: none;  }
+      [data-theme="light"] .t-sun  { display: none;  }
+      [data-theme="light"] .t-moon { display: block; }
+
+      /* ─── details/summary ─── */
+      details summary::-webkit-details-marker { display: none; }
+      details[open] summary svg.chevron { transform: rotate(180deg); }
+      summary svg.chevron { transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1); }
+      
+      /* Mobile menu icon swap */
+      details[open] summary .menu-open { display: none; }
+      details[open] summary .menu-close { display: block; }
+      details:not([open]) summary .menu-open { display: block; }
+      details:not([open]) summary .menu-close { display: none; }
+
+      /* ─── Accessibility: Reduced Motion ─── */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
         }
-        
-        .glass-nav {
-            background: rgba(255, 255, 255, 0.8);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.3);
-        }
-        
-        .hero-gradient {
-            background: radial-gradient(circle at top right, rgba(74, 174, 190, 0.1), transparent 40%),
-                        radial-gradient(circle at bottom left, rgba(7, 16, 41, 0.05), transparent 40%);
-        }
-        
-        .photo-section {
-            background-image: linear-gradient(to bottom, rgba(7, 16, 41, 0.45) 0%, rgba(11, 26, 52, 0.6) 50%, rgba(7, 16, 41, 0.85) 100%),
-                              url('hero-bg.webp');
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-        }
-        @media (max-width: 640px) {
-            .compare-table-wrap {
-                -webkit-overflow-scrolling: touch;
-                margin-left: -1rem;
-                margin-right: -1rem;
-                padding-left: 1rem;
-                padding-right: 1rem;
-            }
-        }
-        @supports (padding: env(safe-area-inset-top)) {
-            nav { padding-top: max(0.75rem, env(safe-area-inset-top)); }
-            main .hero-gradient { padding-top: calc(6rem + env(safe-area-inset-top)); }
-        }
+        html { scroll-behavior: auto; }
+      }
+
+      /* ─── Mobile compare scroll ─── */
+      @media (max-width: 640px) {
+        .ctable-wrap { margin-left: -1.25rem; margin-right: -1.25rem; padding-left: 1.25rem; }
+      }
+
+      @supports (padding: env(safe-area-inset-top)) {
+        .site-nav { padding-top: max(0px, env(safe-area-inset-top)); }
+      }
     </style>
 </head>
-<body class="antialiased selection:bg-primary selection:text-white min-h-screen flex flex-col">
+<body>
 
-    <!-- Navigation -->
-    <nav class="fixed w-full z-50 glass-nav transition-all duration-300" aria-label="Main">
-        <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex justify-between items-center gap-4">
-            <a href="#" class="flex items-center gap-2 sm:gap-3 group shrink-0">
-                <img src="favicon.svg" alt="Kalam Logo" class="w-7 h-7 sm:w-8 sm:h-8 group-hover:scale-105 transition-transform">
-                <span class="font-heading font-bold text-xl sm:text-2xl text-navy-deep tracking-tight">Kalam</span>
+<!-- ═══════════════════════════════════════════ NAV ══ -->
+<nav class="site-nav fixed w-full z-50">
+  <div class="max-w-6xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between gap-4">
+
+    <a href="#" class="flex items-center gap-3 shrink-0 group" style="text-decoration:none">
+      <img src="favicon.svg" alt="Kalam" width="44" height="44" class="group-hover:scale-105 transition-transform" style="width:44px;height:44px">
+      <span class="font-semibold text-[1.125rem] tracking-tight" style="color:var(--text);font-family:Inter,sans-serif;letter-spacing:-0.03em">Kalam</span>
+    </a>
+
+    <!-- Desktop links (slim bar; other landing sections live in footer) -->
+    <div class="hidden md:flex items-center gap-0.5 text-sm">
+      <a href="documentation.html" class="nav-link px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors">Documentation</a>
+      <a href="#features"         class="nav-link px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors">Features</a>
+      <a href="#faq"              class="nav-link px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors">FAQ</a>
+    </div>
+
+    <div class="hidden md:flex items-center gap-2">
+      <!-- Theme toggle -->
+      <button id="theme-toggle" class="nav-link flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--bg-card)] transition-colors" aria-label="Toggle theme">
+        <svg class="t-sun w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <svg class="t-moon w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+      <!-- GitHub -->
+      <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="nav-link flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] font-medium transition-colors">
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
+        GitHub
+      </a>
+    </div>
+
+    <!-- Mobile hamburger -->
+    <details class="md:hidden relative">
+      <summary class="list-none flex items-center justify-center w-10 h-10 rounded-xl hover:bg-[var(--bg-card)] transition-colors cursor-pointer" style="color:var(--text)" aria-label="Open menu">
+        <svg class="menu-open w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <svg class="menu-close w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </summary>
+      <div class="absolute right-0 top-full mt-2 w-52 py-2 rounded-2xl text-sm" style="background:var(--bg-card);border:1px solid var(--border);box-shadow:var(--sh-lg)">
+        <a href="documentation.html" class="nav-link block px-4 py-2.5">Documentation</a>
+        <a href="#features"     class="nav-link block px-4 py-2.5">Features</a>
+        <a href="#faq"          class="nav-link block px-4 py-2.5">FAQ</a>
+        <button class="theme-toggle-mobile nav-link block w-full text-left px-4 py-2.5">Toggle theme</button>
+        <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="nav-link block px-4 py-2.5">GitHub</a>
+      </div>
+    </details>
+
+  </div>
+</nav>
+
+<main style="flex:1">
+
+  <!-- ═══════════════════════════════════════════ HERO ══ -->
+  <section class="hero-section pt-32 pb-24 sm:pt-36 sm:pb-32 px-5 sm:px-8">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="max-w-6xl mx-auto relative" style="z-index:1">
+      <div class="grid lg:grid-cols-[1fr_400px] gap-14 xl:gap-20 items-center">
+
+        <!-- Copy -->
+        <div>
+          <!-- Beta chip -->
+          <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold mb-8" style="background:var(--bg-card);color:var(--primary);border:1px solid var(--primary-mid)">
+            <span class="relative flex" style="width:8px;height:8px">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-70" style="background:var(--primary)"></span>
+              <span class="relative flex rounded-full" style="width:8px;height:8px;background:var(--primary)"></span>
+            </span>
+            Now in beta
+          </div>
+
+          <h1 class="hero-title mb-6">
+            Speak.<br>It types.<br>
+            <span style="color:var(--primary)">Everywhere.</span>
+          </h1>
+
+          <p class="s-body text-base sm:text-lg mb-3 max-w-lg">
+            Free, open-source <strong style="color:var(--text);font-weight:600">voice typing for your computer</strong>—Windows, Mac, and Linux. Types into <strong style="color:var(--text);font-weight:600">any app</strong> the moment you speak.
+          </p>
+          <p class="text-sm sm:text-base mb-10 max-w-lg" style="color:var(--text-3);line-height:1.65">
+            No subscription, no lock-in. BYOK or fully offline—your audio stays yours.
+          </p>
+
+          <!-- CTA row -->
+          <div id="download-section" class="flex flex-col sm:flex-row gap-3 mb-5 flex-wrap">
+            <a id="download-primary" href="https://github.com/afaraha8403/kalam/releases/latest" class="btn-primary">
+              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+              <span id="download-primary-text">Download Latest Release</span>
             </a>
-            <!-- Desktop nav: main links + More dropdown + GitHub -->
-            <div class="hidden sm:flex items-center gap-5 lg:gap-6">
-                <a href="#features" class="text-text-secondary hover:text-primary font-medium transition-colors">Features</a>
-                <a href="#how-it-works" class="text-text-secondary hover:text-primary font-medium transition-colors">How it Works</a>
-                <a href="#faq" class="text-text-secondary hover:text-primary font-medium transition-colors">FAQ</a>
-                <details class="relative group/details">
-                    <summary class="list-none text-text-secondary hover:text-primary font-medium transition-colors cursor-pointer flex items-center gap-1" aria-haspopup="true">More <span class="text-[0.6em] opacity-80" aria-hidden="true">▾</span></summary>
-                    <div class="absolute left-0 top-full pt-1">
-                        <div class="w-48 py-2 bg-white rounded-xl shadow-app-lg border border-gray-200">
-                            <a href="#command-center" class="block px-4 py-2.5 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Workspace</a>
-                            <a href="#compare" class="block px-4 py-2.5 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Compare</a>
-                            <a href="documentation.html" class="block px-4 py-2.5 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Documentation</a>
-                            <a href="business.html" class="block px-4 py-2.5 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">For business</a>
-                        </div>
-                    </div>
-                </details>
-                <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="text-navy-deep hover:text-primary transition-colors flex items-center gap-2 font-medium">
-                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
-                    <span>GitHub</span>
-                </a>
-            </div>
-            <!-- Mobile nav (dropdown) -->
-            <details class="sm:hidden relative group/details">
-                <summary class="list-none flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-lg bg-app-input hover:bg-gray-200 text-navy-deep cursor-pointer touch-manipulation" aria-expanded="false" aria-controls="mobile-menu">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
-                </summary>
-                <div id="mobile-menu" class="absolute right-0 top-full mt-2 w-56 py-2 bg-white rounded-xl shadow-app-lg border border-gray-200">
-                    <a href="#features" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Features</a>
-                    <a href="#command-center" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Workspace</a>
-                    <a href="#compare" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Compare</a>
-                    <a href="#how-it-works" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">How it Works</a>
-                    <a href="#faq" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">FAQ</a>
-                    <a href="documentation.html" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">Documentation</a>
-                    <a href="business.html" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">For business</a>
-                    <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="block px-4 py-3 text-text-secondary hover:bg-app-input hover:text-navy-deep font-medium">GitHub</a>
-                </div>
-            </details>
+            <a href="https://github.com/afaraha8403/kalam" class="btn-secondary">View source</a>
+          </div>
+          <p id="download-secondary" class="text-sm min-h-[1.25rem]" style="color:var(--text-3)"></p>
+
+          <!-- Platform pills -->
+          <div class="flex items-center gap-6 mt-7 text-xs font-medium flex-wrap" style="color:var(--text-3)">
+            <span class="platform-pill platform-row-windows flex items-center gap-2">
+              <img class="platform-icon platform-icon--glyph platform-icon--tint" src="platform-windows.svg" width="18" height="18" alt="" />
+              Windows
+            </span>
+            <span class="platform-pill flex items-center gap-2">
+              <img class="platform-icon platform-icon--macos platform-icon--tint" src="platform-macos.svg" width="120" height="24" alt="macOS" />
+            </span>
+            <span class="platform-pill flex items-center gap-2">
+              <img class="platform-icon platform-icon--glyph platform-icon--tint" src="platform-linux.svg" width="18" height="18" alt="" />
+              Linux
+            </span>
+          </div>
         </div>
-    </nav>
 
-    <main class="flex-1">
-        <!-- Hero Section -->
-        <section class="pt-24 sm:pt-28 md:pt-32 pb-14 sm:pb-20 px-4 sm:px-6 hero-gradient min-h-0 sm:min-h-[80vh] flex items-center">
-            <div class="max-w-4xl mx-auto text-center w-full">
-                <img src="favicon.svg" alt="Kalam" class="w-16 h-16 sm:w-20 sm:h-20 md:w-28 md:h-28 mx-auto mb-6 sm:mb-8 drop-shadow-sm" />
-                <div class="inline-flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full bg-white shadow-app-sm text-xs sm:text-sm font-medium text-primary mb-6 sm:mb-8 border border-primary/10">
-                    <span class="relative flex h-2 w-2">
-                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                        <span class="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                    </span>
-                    Now in beta
-                </div>
-                
-                <h1 class="font-heading text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-navy-deep mb-4 sm:mb-6 leading-tight">
-                    Speak. It types. <br/>
-                    <span class="text-transparent bg-clip-text bg-gradient-to-r from-primary to-primary-dark">Everywhere.</span>
-                </h1>
-                
-                <p class="text-base sm:text-lg md:text-xl text-text-secondary mb-3 sm:mb-4 max-w-2xl mx-auto leading-relaxed px-1">
-                    Kalam is free, open-source <strong class="text-navy-deep">voice typing for your computer</strong>—Windows, Mac, and Linux. It turns your voice into text and types it into <strong class="text-navy-deep">any app</strong>: email, Slack, VS Code, Notion, your browser. Press a hotkey, talk, done. No switching windows. No copy-paste.
-                </p>
-                <p class="text-sm sm:text-base md:text-lg text-text-secondary mb-3 sm:mb-4 max-w-2xl mx-auto px-1">
-                    <strong class="text-navy-deep">100% open source. Zero cost.</strong> Bring your own API key (free tier works) or run fully offline. No subscriptions, no lock-in, no catch.
-                </p>
-                <p class="text-text-muted mb-8 sm:mb-10 max-w-2xl mx-auto text-sm sm:text-base px-1">
-                    The voice dictation app that doesn’t spy on you or charge you.
-                </p>
-                
-                <div id="download-section" class="flex flex-col items-center justify-center gap-3 sm:gap-4 max-w-sm sm:max-w-none mx-auto">
-                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 sm:gap-4 w-full sm:w-auto">
-                        <a id="download-primary" href="https://github.com/afaraha8403/kalam/releases/latest" class="w-full sm:w-auto px-6 sm:px-8 py-3.5 sm:py-4 bg-navy-deep hover:bg-navy text-white rounded-xl font-medium text-base sm:text-lg shadow-app-md hover:shadow-app-lg transition-all hover:-translate-y-0.5 flex items-center justify-center gap-2">
-                            <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                            <span id="download-primary-text">Download Latest Release</span>
-                        </a>
-                        <a href="https://github.com/afaraha8403/kalam" class="w-full sm:w-auto px-6 sm:px-8 py-3.5 sm:py-4 bg-white hover:bg-app-input text-navy-deep rounded-xl font-medium text-base sm:text-lg shadow-app-sm border border-gray-200 transition-all hover:-translate-y-0.5 flex items-center justify-center gap-2">
-                            View Source Code
-                        </a>
-                    </div>
-                    <p id="download-secondary" class="text-text-muted text-sm text-center min-h-[1.5rem]"></p>
-                </div>
-                
-                <div class="mt-10 sm:mt-12 flex items-center justify-center gap-5 sm:gap-8 text-text-muted text-xs sm:text-sm font-medium flex-wrap px-2">
-                    <div class="flex items-center gap-2" title="Windows">
-                        <iconify-icon icon="ph:windows-logo" style="font-size: 1.25rem;"></iconify-icon>
-                        Windows
-                    </div>
-                    <div class="flex items-center gap-2" title="macOS">
-                        <iconify-icon icon="ph:apple-logo" style="font-size: 1.25rem;"></iconify-icon>
-                        macOS
-                    </div>
-                    <div class="flex items-center gap-2" title="Linux">
-                        <iconify-icon icon="ph:linux-logo" style="font-size: 1.25rem;"></iconify-icon>
-                        Linux
-                    </div>
-                </div>
+        <!-- Faux app preview (desktop only) -->
+        <div class="hidden lg:block" aria-hidden="true" style="opacity: 0; animation: slideUpFade 1s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards;">
+          <div class="app-shell">
+            <div class="app-shell-bar">
+              <span class="shell-dot" style="background:#FF5F57"></span>
+              <span class="shell-dot" style="background:#FEBC2E"></span>
+              <span class="shell-dot" style="background:#28C840"></span>
+              <span class="shell-spacer"></span>
+              <span class="shell-pill"></span>
             </div>
-        </section>
-
-        <!-- Photo section: full-bleed background -->
-        <section class="photo-section min-h-[35vh] sm:min-h-[45vh] md:min-h-[50vh] flex items-center justify-center px-4 sm:px-6 py-16 sm:py-20 md:py-24">
-            <div class="max-w-2xl mx-auto text-center px-2">
-                <p class="font-heading text-xl sm:text-2xl md:text-3xl font-semibold text-white drop-shadow-sm">
-                    Focus on what you say. We’ll handle the rest.
-                </p>
+            <div class="app-shell-body img-placeholder" style="height:340px; border:none; border-top: 1px solid var(--border); border-radius:0;">
+              <iconify-icon icon="ph:image-duotone"></iconify-icon>
+              <span class="text-sm">Main Application Interface</span>
             </div>
-        </section>
-
-        <!-- Features Section -->
-        <section id="features" class="py-12 sm:py-16 md:py-20 px-4 sm:px-6 bg-white">
-            <div class="max-w-6xl mx-auto">
-                <div class="text-center mb-10 sm:mb-14 md:mb-16">
-                    <h2 class="font-heading text-2xl sm:text-3xl md:text-4xl font-bold text-navy-deep mb-3 sm:mb-4">Powerful Features</h2>
-                    <p class="text-text-secondary text-base sm:text-lg max-w-2xl mx-auto px-1">Built with Rust and Tauri for maximum performance and minimal resource usage.</p>
-                </div>
-                
-                <div class="grid sm:grid-cols-2 gap-5 sm:gap-6 md:gap-8">
-                    <!-- Feature 1 -->
-                    <div class="bg-app-bg p-5 sm:p-6 md:p-8 rounded-xl shadow-app-sm border border-gray-100 hover:shadow-app-md transition-shadow">
-                        <div class="w-12 h-12 bg-white rounded-lg flex items-center justify-center text-primary mb-6 shadow-sm">
-                            <iconify-icon icon="ph:lightning-duotone" class="text-2xl"></iconify-icon>
-                        </div>
-                        <h3 class="text-lg sm:text-xl font-bold text-navy-deep mb-2 sm:mb-3 font-heading">Lightning Fast</h3>
-                        <p class="text-text-secondary text-sm sm:text-base leading-relaxed">Speak up to 4x faster than typing. Kalam captures your voice and injects the text instantly into whatever application you're using.</p>
-                    </div>
-                    
-                    <!-- Feature 2 -->
-                    <div class="bg-app-bg p-5 sm:p-6 md:p-8 rounded-xl shadow-app-sm border border-gray-100 hover:shadow-app-md transition-shadow">
-                        <div class="w-12 h-12 bg-white rounded-lg flex items-center justify-center text-primary mb-6 shadow-sm">
-                            <iconify-icon icon="ph:shield-check-duotone" class="text-2xl"></iconify-icon>
-                        </div>
-                        <h3 class="text-lg sm:text-xl font-bold text-navy-deep mb-2 sm:mb-3 font-heading">Privacy First</h3>
-                        <p class="text-text-secondary text-sm sm:text-base leading-relaxed">Your audio is never stored to disk. Choose between secure cloud processing (zero retention) or completely offline local models.</p>
-                    </div>
-                    
-                    <!-- Feature 3 -->
-                    <div class="bg-app-bg p-5 sm:p-6 md:p-8 rounded-xl shadow-app-sm border border-gray-100 hover:shadow-app-md transition-shadow">
-                        <div class="w-12 h-12 bg-white rounded-lg flex items-center justify-center text-primary mb-6 shadow-sm">
-                            <iconify-icon icon="ph:cpu-duotone" class="text-2xl"></iconify-icon>
-                        </div>
-                        <h3 class="text-lg sm:text-xl font-bold text-navy-deep mb-2 sm:mb-3 font-heading">Dual-Engine STT</h3>
-                        <p class="text-text-secondary text-sm sm:text-base leading-relaxed">Use Groq's lightning-fast Whisper API for cloud processing, or switch to SenseVoice/Whisper.cpp for entirely on-device transcription.</p>
-                    </div>
-                    
-                    <!-- Feature 4 -->
-                    <div class="bg-app-bg p-5 sm:p-6 md:p-8 rounded-xl shadow-app-sm border border-gray-100 hover:shadow-app-md transition-shadow">
-                        <div class="w-12 h-12 bg-white rounded-lg flex items-center justify-center text-primary mb-6 shadow-sm">
-                            <iconify-icon icon="ph:keyboard-duotone" class="text-2xl"></iconify-icon>
-                        </div>
-                        <h3 class="text-lg sm:text-xl font-bold text-navy-deep mb-2 sm:mb-3 font-heading">Global Hotkeys</h3>
-                        <p class="text-text-secondary text-sm sm:text-base leading-relaxed">Activate dictation from anywhere with a simple keyboard shortcut (Ctrl+Win / Ctrl+Cmd). No need to switch windows.</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Command Center Section -->
-        <section id="command-center" class="py-16 sm:py-24 px-4 sm:px-6 bg-navy-deep text-white relative overflow-hidden">
-            <!-- Decorative background elements -->
-            <div class="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
-                <div class="absolute -top-32 -right-32 w-96 h-96 bg-primary opacity-10 rounded-full blur-3xl"></div>
-                <div class="absolute -bottom-32 -left-32 w-96 h-96 bg-primary-dark opacity-10 rounded-full blur-3xl"></div>
-            </div>
-            
-            <div class="max-w-6xl mx-auto relative z-10">
-                <div class="text-center mb-12 sm:mb-16">
-                    <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 text-primary-light text-xs sm:text-sm font-medium mb-6 border border-white/10 shadow-sm">
-                        <iconify-icon icon="ph:command" class="text-lg"></iconify-icon>
-                        Built-in Command Center
-                    </div>
-                    <h2 class="font-heading text-3xl sm:text-4xl md:text-5xl font-bold mb-4 sm:mb-6">More than just dictation.</h2>
-                    <p class="text-gray-300 text-base sm:text-lg max-w-2xl mx-auto px-1">Kalam isn't just a pass-through tool. It's a complete voice-first workspace. Manage your life without touching the keyboard.</p>
-                </div>
-                
-                <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6 md:gap-8">
-                    <!-- Notes -->
-                    <div class="bg-white/5 border border-white/10 p-6 sm:p-8 rounded-2xl hover:bg-white/10 transition-colors backdrop-blur-sm">
-                        <div class="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center text-primary-light mb-6">
-                            <iconify-icon icon="ph:note-duotone" class="text-2xl"></iconify-icon>
-                        </div>
-                        <h3 class="text-xl font-bold mb-3 font-heading">Smart Notes</h3>
-                        <p class="text-gray-400 text-sm sm:text-base leading-relaxed">Capture fleeting thoughts instantly. Tag, pin, and organize your voice notes in a dedicated, searchable workspace.</p>
-                    </div>
-                    
-                    <!-- Tasks -->
-                    <div class="bg-white/5 border border-white/10 p-6 sm:p-8 rounded-2xl hover:bg-white/10 transition-colors backdrop-blur-sm">
-                        <div class="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center text-primary-light mb-6">
-                            <iconify-icon icon="ph:check-square-duotone" class="text-2xl"></iconify-icon>
-                        </div>
-                        <h3 class="text-xl font-bold mb-3 font-heading">Task Management</h3>
-                        <p class="text-gray-400 text-sm sm:text-base leading-relaxed">Brain dump your to-dos with your voice. Kalam organizes them into actionable checklists you can manage later.</p>
-                    </div>
-                    
-                    <!-- Reminders -->
-                    <div class="bg-white/5 border border-white/10 p-6 sm:p-8 rounded-2xl hover:bg-white/10 transition-colors backdrop-blur-sm">
-                        <div class="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center text-primary-light mb-6">
-                            <iconify-icon icon="ph:bell-duotone" class="text-2xl"></iconify-icon>
-                        </div>
-                        <h3 class="text-xl font-bold mb-3 font-heading">Voice Reminders</h3>
-                        <p class="text-gray-400 text-sm sm:text-base leading-relaxed">Set reminders completely hands-free. Never forget a follow-up, meeting, or random idea again.</p>
-                    </div>
-                    
-                    <!-- Snippets -->
-                    <div class="bg-white/5 border border-white/10 p-6 sm:p-8 rounded-2xl hover:bg-white/10 transition-colors backdrop-blur-sm lg:col-span-1">
-                        <div class="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center text-primary-light mb-6">
-                            <iconify-icon icon="ph:scissors-duotone" class="text-2xl"></iconify-icon>
-                        </div>
-                        <h3 class="text-xl font-bold mb-3 font-heading">Text Snippets</h3>
-                        <p class="text-gray-400 text-sm sm:text-base leading-relaxed">Create voice shortcuts for things you type often. Say a short trigger phrase to instantly paste long templates or links.</p>
-                    </div>
-                    
-                    <!-- History -->
-                    <div class="bg-white/5 border border-white/10 p-6 sm:p-8 rounded-2xl hover:bg-white/10 transition-colors backdrop-blur-sm lg:col-span-2">
-                        <div class="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center text-primary-light mb-6">
-                            <iconify-icon icon="ph:clock-counter-clockwise-duotone" class="text-2xl"></iconify-icon>
-                        </div>
-                        <h3 class="text-xl font-bold mb-3 font-heading">Local History & Search</h3>
-                        <p class="text-gray-400 text-sm sm:text-base leading-relaxed">Everything you dictate is securely saved to a local, encrypted SQLite database. Easily search past transcriptions, copy them, or turn them into notes and tasks after the fact.</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- Comparison: Kalam vs Wispr Flow, Otter, Superwhisper -->
-        <section id="compare" class="py-12 sm:py-16 md:py-20 px-4 sm:px-6 bg-app-bg">
-            <div class="max-w-5xl mx-auto">
-                <div class="text-center mb-8 sm:mb-12 md:mb-14">
-                    <h2 class="font-heading text-2xl sm:text-3xl md:text-4xl font-bold text-navy-deep mb-3 sm:mb-4">How Kalam compares</h2>
-                    <p class="text-text-secondary text-sm sm:text-base md:text-lg max-w-2xl mx-auto px-1">Stacked against the voice tools you’ve heard of: <a href="https://wisprflow.ai/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Wispr Flow</a>, <a href="https://otter.ai/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Otter.ai</a>, and <a href="https://superwhisper.com/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Superwhisper</a>.</p>
-                </div>
-                <p class="text-center text-text-secondary text-sm sm:text-base max-w-2xl mx-auto mb-6 px-2">If you search for <strong>Wispr Flow open source</strong> or <strong>Whisperflow for computer</strong>, Kalam is the free, open-source option that runs on desktop with BYOK or full offline.</p>
-                <p class="sm:hidden text-center text-text-muted text-xs mb-3">Scroll horizontally to see all columns →</p>
-                <div class="overflow-x-auto compare-table-wrap">
-                    <div class="min-w-[800px] bg-white rounded-xl shadow-app-md border border-gray-100 overflow-hidden">
-                        <div class="grid grid-cols-5 gap-0 text-xs sm:text-sm md:text-base">
-                            <div class="p-3 sm:p-4 md:p-5 bg-gray-50 font-semibold text-navy-deep border-b border-r border-gray-200"></div>
-                            <div class="p-3 sm:p-4 md:p-5 bg-primary/10 border-b border-r border-primary/20 font-heading font-bold text-primary-dark text-center">Kalam</div>
-                            <div class="p-3 sm:p-4 md:p-5 bg-gray-50 border-b border-r border-gray-200 font-medium text-text-secondary text-center">Wispr Flow</div>
-                            <div class="p-3 sm:p-4 md:p-5 bg-gray-50 border-b border-r border-gray-200 font-medium text-text-secondary text-center">Otter.ai</div>
-                            <div class="p-3 sm:p-4 md:p-5 bg-gray-50 border-b border-gray-200 font-medium text-text-secondary text-center">Superwhisper</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-text-secondary">Cost</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center font-medium text-navy-deep">Free</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center">$89–249/mo or limited free</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center">Free / $19.99/mo+</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-gray-200 text-center">Free / Pro $8/mo+</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-text-secondary">Open source</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-text-secondary">Dictation in any app</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">Meeting-focused</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-text-secondary">100% offline option</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-text-secondary">BYOK (your API key)</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-gray-200 text-center text-text-muted">Pro only</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-text-secondary">Platform</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center font-medium text-navy-deep">Win, Mac, Linux<br><span class="text-xs text-text-muted">(desktop only)</span></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">Win, Mac, iOS, Android</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">Desktop, iOS, Android, Chrome</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-gray-200 text-center text-text-muted">Mac, Win, iOS</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-text-secondary">Includes Linux</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-gray-200 text-center text-text-muted">No</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-text-secondary">No word limits (free)</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">Free: 2k words/wk</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-r border-gray-200 text-center text-text-muted">Free tier limits</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-b border-gray-200 text-center text-text-muted">Free tier limits</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-r border-gray-200 text-text-secondary">You choose where your voice goes</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-r border-gray-200 text-center"><iconify-icon icon="ph:check-circle-fill" class="text-primary text-lg sm:text-xl"></iconify-icon></div>
-                            <div class="p-3 sm:p-4 md:p-5 border-r border-gray-200 text-center text-text-muted">Wispr cloud</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-r border-gray-200 text-center text-text-muted">Otter cloud</div>
-                            <div class="p-3 sm:p-4 md:p-5 border-gray-200 text-center text-text-muted">Your keys (Pro) / vendor</div>
-                        </div>
-                    </div>
-                </div>
-                <p class="text-center text-text-muted text-xs sm:text-sm mt-4 sm:mt-6 max-w-3xl mx-auto px-2">Sources: <a href="https://wisprflow.ai/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Wispr Flow</a> (flow in every app, subscription pricing); <a href="https://otter.ai/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Otter.ai</a> (AI Notetaker for meetings, free / Business $19.99/mo); <a href="https://superwhisper.com/" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Superwhisper</a> (any-app dictation, offline, BYOK on Pro). Kalam is the only one that’s free, open source, includes Linux, and gives you BYOK and full offline at no cost.</p>
-                <p class="text-center text-text-muted text-xs sm:text-sm mt-3 max-w-3xl mx-auto px-2"><strong>Note:</strong> Kalam is <strong>desktop only</strong> (Windows, macOS, Linux). We are not building for Android or iOS.</p>
-            </div>
-        </section>
-
-        <!-- How it Works -->
-        <section id="how-it-works" class="py-12 sm:py-16 md:py-20 px-4 sm:px-6 bg-white">
-            <div class="max-w-4xl mx-auto">
-                <div class="text-center mb-10 sm:mb-14 md:mb-16">
-                    <h2 class="font-heading text-2xl sm:text-3xl md:text-4xl font-bold text-navy-deep mb-3 sm:mb-4">How It Works</h2>
-                    <p class="text-text-secondary text-base sm:text-lg">Three simple steps to faster typing.</p>
-                </div>
-                
-                <div class="space-y-6 sm:space-y-8 relative pl-2 sm:pl-0 before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-gray-300 before:to-transparent">
-                    
-                    <!-- Step 1 -->
-                    <div class="relative flex items-start sm:items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active gap-4">
-                        <div class="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-full border-4 border-app-bg bg-primary text-white font-bold shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow-sm z-10 text-sm sm:text-base">1</div>
-                        <div class="flex-1 min-w-0 md:flex-none w-[calc(100%-3rem)] md:w-[calc(50%-3rem)] bg-white p-4 sm:p-6 rounded-xl shadow-app-sm border border-gray-100">
-                            <h3 class="font-bold text-base sm:text-lg text-navy-deep mb-1.5 sm:mb-2">Press the Hotkey</h3>
-                            <p class="text-text-secondary text-sm sm:text-base">Hit <kbd class="px-1.5 sm:px-2 py-0.5 sm:py-1 bg-gray-100 rounded text-xs sm:text-sm font-mono border border-gray-200">Ctrl+Win</kbd> (or <kbd class="px-1.5 sm:px-2 py-0.5 sm:py-1 bg-gray-100 rounded text-xs sm:text-sm font-mono border border-gray-200">Ctrl+Cmd</kbd> on Mac) from any application.</p>
-                        </div>
-                    </div>
-                    
-                    <!-- Step 2 -->
-                    <div class="relative flex items-start sm:items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active gap-4">
-                        <div class="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-full border-4 border-app-bg bg-primary text-white font-bold shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow-sm z-10 text-sm sm:text-base">2</div>
-                        <div class="flex-1 min-w-0 md:flex-none w-[calc(100%-3rem)] md:w-[calc(50%-3rem)] bg-white p-4 sm:p-6 rounded-xl shadow-app-sm border border-gray-100">
-                            <h3 class="font-bold text-base sm:text-lg text-navy-deep mb-1.5 sm:mb-2">Speak Naturally</h3>
-                            <p class="text-text-secondary text-sm sm:text-base">Talk normally. Kalam captures your voice and processes it instantly using advanced AI models.</p>
-                        </div>
-                    </div>
-                    
-                    <!-- Step 3 -->
-                    <div class="relative flex items-start sm:items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active gap-4">
-                        <div class="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-full border-4 border-app-bg bg-primary text-white font-bold shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow-sm z-10 text-sm sm:text-base">3</div>
-                        <div class="flex-1 min-w-0 md:flex-none w-[calc(100%-3rem)] md:w-[calc(50%-3rem)] bg-white p-4 sm:p-6 rounded-xl shadow-app-sm border border-gray-100">
-                            <h3 class="font-bold text-base sm:text-lg text-navy-deep mb-1.5 sm:mb-2">Text Injected</h3>
-                            <p class="text-text-secondary text-sm sm:text-base">Perfectly transcribed text is automatically typed into your active window, ready to send or format.</p>
-                        </div>
-                    </div>
-                    
-                </div>
-            </div>
-        </section>
-
-        <!-- FAQ -->
-        <section id="faq" class="py-12 sm:py-16 md:py-20 px-4 sm:px-6 bg-app-bg">
-            <div class="max-w-3xl mx-auto">
-                <h2 class="font-heading text-2xl sm:text-3xl md:text-4xl font-bold text-navy-deep mb-8 sm:mb-10 text-center">Frequently asked questions</h2>
-                <dl class="space-y-6 sm:space-y-8">
-                    <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
-                        <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">Is Kalam free?</dt>
-                        <dd class="text-text-secondary text-sm sm:text-base leading-relaxed">Yes. Kalam is open source and free. You can use cloud transcription with your own API key (Groq has a free tier) or run fully offline with local models—no subscription.</dd>
-                    </div>
-                    <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
-                        <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">Is Kalam like Wispr Flow or Whisperflow?</dt>
-                        <dd class="text-text-secondary text-sm sm:text-base leading-relaxed">Yes—same idea (voice typing in any app). Kalam is free, open source, and runs on Windows, Mac, and Linux (desktop only); Wispr Flow is paid and also on mobile.</dd>
-                    </div>
-                    <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
-                        <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">What platforms does Kalam support?</dt>
-                        <dd class="text-text-secondary text-sm sm:text-base leading-relaxed">Kalam runs on <strong>Windows</strong>, <strong>macOS</strong>, and <strong>Linux</strong> (desktop only). We are not building for Android or iOS.</dd>
-                    </div>
-                    <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
-                        <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">Does Kalam work offline?</dt>
-                        <dd class="text-text-secondary text-sm sm:text-base leading-relaxed">Yes. You can use a local STT model (SenseVoice or Whisper) so no audio leaves your device. No API key required for offline mode.</dd>
-                    </div>
-                    <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
-                        <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">Do I need an API key?</dt>
-                        <dd class="text-text-secondary text-sm sm:text-base leading-relaxed">Only for <strong>cloud</strong> transcription (e.g. Groq). Sign up at <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Groq Console</a>, get a free key, and add it in Settings → STT Provider. For local mode, no key is needed.</dd>
-                    </div>
-                    <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
-                        <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">Is my audio stored or sent somewhere?</dt>
-                        <dd class="text-text-secondary text-sm sm:text-base leading-relaxed">Audio is <strong>not</strong> stored to disk (in-memory only). In cloud mode it’s sent to the provider over TLS and not retained. In local mode, nothing leaves your machine.</dd>
-                    </div>
-                    <div class="bg-white rounded-xl shadow-app-sm border border-gray-100 p-5 sm:p-6">
-                        <dt class="font-heading font-semibold text-navy-deep text-base sm:text-lg mb-2">How do I start dictating?</dt>
-                        <dd class="text-text-secondary text-sm sm:text-base leading-relaxed">Press <kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono border border-gray-200">Ctrl+Win</kbd> (Windows) or <kbd class="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono border border-gray-200">Ctrl+Cmd</kbd> (macOS), hold while you speak, then release. Text is typed into the app that had focus when you pressed the key.</dd>
-                    </div>
-                </dl>
-            </div>
-        </section>
-
-        <!-- Documentation -->
-        <section class="py-12 sm:py-16 md:py-20 px-4 sm:px-6 bg-white">
-            <div class="max-w-4xl mx-auto text-center">
-                <h2 class="font-heading text-2xl sm:text-3xl md:text-4xl font-bold text-navy-deep mb-3 sm:mb-4">Documentation</h2>
-                <p class="text-text-secondary text-base sm:text-lg mb-6 sm:mb-8 px-1">Setup, API keys, building from source, and a full <strong>user manual</strong> that explains every feature. Everything lives on this site—no third-party docs.</p>
-                <a href="documentation.html" class="inline-flex items-center gap-2 px-5 sm:px-6 py-2.5 sm:py-3 bg-primary/10 hover:bg-primary/20 text-primary-dark rounded-xl font-medium text-sm sm:text-base transition-colors">
-                    View documentation
-                    <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-                </a>
-                <p class="mt-4 text-sm text-text-muted"><a href="documentation.html#user-manual" class="text-primary hover:underline">Jump to User Manual</a></p>
-            </div>
-        </section>
-    </main>
-
-    <!-- Footer -->
-    <footer class="bg-white border-t border-gray-200 py-8 sm:py-10 md:py-12 px-4 sm:px-6">
-        <div class="max-w-6xl mx-auto">
-            <div class="flex flex-col md:flex-row justify-between items-center gap-4 sm:gap-6">
-                <div class="flex items-center gap-2 sm:gap-3">
-                    <img src="favicon.svg" alt="Kalam Logo" class="w-5 h-5 sm:w-6 sm:h-6 opacity-80">
-                    <span class="font-heading font-bold text-lg sm:text-xl text-navy-deep">Kalam</span>
-                </div>
-                <div class="flex flex-wrap justify-center gap-4 sm:gap-6 text-sm font-medium">
-                    <a href="documentation.html" class="text-text-secondary hover:text-primary transition-colors">Documentation</a>
-                    <a href="privacy.html" class="text-text-secondary hover:text-primary transition-colors">Privacy Policy</a>
-                    <a href="terms.html" class="text-text-secondary hover:text-primary transition-colors">Terms</a>
-                    <a href="business.html" class="text-text-secondary hover:text-primary transition-colors">Sponsors &amp; commercial</a>
-                    <a href="https://github.com/afaraha8403/kalam" class="text-text-secondary hover:text-primary transition-colors">GitHub</a>
-                    <a href="https://github.com/afaraha8403/kalam/issues" class="text-text-secondary hover:text-primary transition-colors">Report an Issue</a>
-                </div>
-            </div>
-            <div class="mt-6 pt-6 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-3 text-text-muted text-xs sm:text-sm text-center sm:text-left">
-                <p>&copy; 2026 Kalam. Noncommercial use: MIT. <a href="business.html" class="text-primary hover:underline">Commercial</a> by agreement.</p>
-                <p>Created by <a href="https://alifarahat.com" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Ali Farahat</a> &amp; <a href="https://balacode.io" target="_blank" rel="noopener noreferrer" class="text-primary hover:underline">Balacode</a> — open-source voice tech for everyone.</p>
-            </div>
+          </div>
         </div>
-    </footer>
 
-    <script>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════ QUOTE DIVIDER ══ -->
+  <div class="photo-divider divider" style="min-height:260px;display:flex;align-items:center;justify-content:center;padding:4rem 1.5rem">
+    <p class="text-white text-xl sm:text-2xl md:text-3xl text-center max-w-2xl drop-shadow font-semibold" style="font-family:Inter,sans-serif;letter-spacing:-0.04em;line-height:1.2">
+      Focus on what you say.<br>We'll handle the rest.
+    </p>
+  </div>
+
+  <!-- ═══════════════════════════════════════════ FEATURES ══ -->
+  <section id="features" class="s-raise divider py-20 sm:py-28 px-5 sm:px-8">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-14 reveal-on-scroll">
+        <p class="eyebrow">Features</p>
+        <h2 class="s-heading text-3xl sm:text-4xl mb-4">Built to disappear into your workflow</h2>
+        <p class="s-body text-base max-w-lg mx-auto">Rust + Tauri: near-zero memory, instant startup, stays out of your way.</p>
+      </div>
+
+      <!-- Overlay Screenshot Placeholder -->
+      <div class="mb-12 sm:mb-16 rounded-2xl overflow-hidden shadow-[var(--sh-md)] reveal-on-scroll stagger-1" style="border: 1px solid var(--border); background: var(--bg-card);">
+        <div class="img-placeholder w-full aspect-video sm:aspect-[21/9]" style="border: none; border-radius: 0;">
+          <iconify-icon icon="ph:magic-wand-duotone" style="font-size: 2.5rem;"></iconify-icon>
+          <span class="text-base mt-2" style="color: var(--text);">Floating Dictation Overlay</span>
+          <p class="text-xs mt-2 max-w-md text-center px-4" style="color:var(--text-3)">Shows the minimal UI that appears when you press the hotkey, floating above your active application.</p>
+        </div>
+      </div>
+
+      <div class="grid sm:grid-cols-2 gap-3 sm:gap-4">
+
+        <div class="card reveal-on-scroll stagger-1">
+          <div class="ibadge">
+            <iconify-icon icon="ph:lightning-duotone" aria-hidden="true"></iconify-icon>
+          </div>
+          <h3 class="h3-card text-base mb-2">Lightning-fast transcription</h3>
+          <p class="s-body text-sm leading-relaxed">Speak up to 4× faster than typing. Text is injected into the active window the moment you release the hotkey.</p>
+        </div>
+
+        <div class="card reveal-on-scroll stagger-2">
+          <div class="ibadge">
+            <iconify-icon icon="ph:shield-check-duotone" aria-hidden="true"></iconify-icon>
+          </div>
+          <h3 class="h3-card text-base mb-2">Privacy first</h3>
+          <p class="s-body text-sm leading-relaxed">Audio never touches disk. Use cloud (zero-retention TLS) or go fully offline—SenseVoice and Whisper.cpp run entirely on-device.</p>
+        </div>
+
+        <div class="card reveal-on-scroll stagger-3">
+          <div class="ibadge">
+            <iconify-icon icon="ph:cpu-duotone" aria-hidden="true"></iconify-icon>
+          </div>
+          <h3 class="h3-card text-base mb-2">Dual-engine STT</h3>
+          <p class="s-body text-sm leading-relaxed">Groq Whisper API for ultra-fast cloud, or SenseVoice / Whisper.cpp for completely on-device transcription. Switch any time in Settings.</p>
+        </div>
+
+        <div class="card reveal-on-scroll stagger-4">
+          <div class="ibadge">
+            <iconify-icon icon="ph:keyboard-duotone" aria-hidden="true"></iconify-icon>
+          </div>
+          <h3 class="h3-card text-base mb-2">Works in any app</h3>
+          <p class="s-body text-sm leading-relaxed">One global hotkey—<span class="kbd">Ctrl+Win</span> / <span class="kbd">Ctrl+Cmd</span>—activates from anywhere. Email, Slack, VS Code, your browser: all of them.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════ WORKSPACE ══ -->
+  <section id="workspace" class="s-base divider py-20 sm:py-28 px-5 sm:px-8">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-14 reveal-on-scroll">
+        <p class="eyebrow">Workspace</p>
+        <h2 class="s-heading text-3xl sm:text-4xl mb-4">More than just dictation</h2>
+        <p class="s-body text-base max-w-lg mx-auto">Kalam is a complete voice-first workspace. Manage your whole day without touching the keyboard.</p>
+      </div>
+
+      <div class="bento">
+
+        <div class="card flex flex-col h-full reveal-on-scroll stagger-1">
+          <div class="ibadge">
+            <iconify-icon icon="ph:note-duotone" aria-hidden="true"></iconify-icon>
+          </div>
+          <h3 class="h3-card text-sm mb-1.5">Smart notes</h3>
+          <p class="s-body text-sm leading-relaxed mb-6">Capture fleeting thoughts. Tag, pin, color, and search your voice notes in a dedicated workspace.</p>
+          <div class="mt-auto img-placeholder w-full h-32 rounded-lg" style="border-radius: 8px;">
+            <iconify-icon icon="ph:notebook-duotone"></iconify-icon>
+            <span class="text-xs">Notes View</span>
+          </div>
+        </div>
+
+        <div class="card flex flex-col h-full reveal-on-scroll stagger-2">
+          <div class="ibadge">
+            <iconify-icon icon="ph:check-square-duotone" aria-hidden="true"></iconify-icon>
+          </div>
+          <h3 class="h3-card text-sm mb-1.5">Task management</h3>
+          <p class="s-body text-sm leading-relaxed mb-6">Brain-dump to-dos by voice. Kalam organizes them into actionable checklists you manage later.</p>
+          <div class="mt-auto img-placeholder w-full h-32 rounded-lg" style="border-radius: 8px;">
+            <iconify-icon icon="ph:list-checks-duotone"></iconify-icon>
+            <span class="text-xs">Tasks View</span>
+          </div>
+        </div>
+
+        <div class="card flex flex-col h-full reveal-on-scroll stagger-3">
+          <div class="ibadge">
+            <iconify-icon icon="ph:bell-duotone" aria-hidden="true"></iconify-icon>
+          </div>
+          <h3 class="h3-card text-sm mb-1.5">Voice reminders</h3>
+          <p class="s-body text-sm leading-relaxed mb-6">Set reminders completely hands-free. Never lose a follow-up, meeting, or fleeting idea.</p>
+          <div class="mt-auto img-placeholder w-full h-32 rounded-lg" style="border-radius: 8px;">
+            <iconify-icon icon="ph:alarm-duotone"></iconify-icon>
+            <span class="text-xs">Reminders UI</span>
+          </div>
+        </div>
+
+        <div class="card flex flex-col h-full reveal-on-scroll stagger-1">
+          <div class="ibadge">
+            <iconify-icon icon="ph:scissors-duotone" aria-hidden="true"></iconify-icon>
+          </div>
+          <h3 class="h3-card text-sm mb-1.5">Text snippets</h3>
+          <p class="s-body text-sm leading-relaxed mb-6">Say a short trigger phrase to instantly expand long templates or boilerplate—entirely by voice.</p>
+          <div class="mt-auto img-placeholder w-full h-32 rounded-lg" style="border-radius: 8px;">
+            <iconify-icon icon="ph:keyboard-duotone"></iconify-icon>
+            <span class="text-xs">Snippets Manager</span>
+          </div>
+        </div>
+
+        <div class="card bento-wide flex flex-col sm:flex-row gap-6 items-center reveal-on-scroll stagger-2">
+          <div class="flex-1">
+            <div class="ibadge">
+              <iconify-icon icon="ph:clock-counter-clockwise-duotone" aria-hidden="true"></iconify-icon>
+            </div>
+            <h3 class="h3-card text-sm mb-1.5">Local history &amp; search</h3>
+            <p class="s-body text-sm leading-relaxed">Everything you dictate is saved to an encrypted local SQLite database. Search past transcriptions, copy them, or promote them into notes and tasks—after the fact. Nothing leaves your device unless you choose cloud STT.</p>
+          </div>
+          <div class="flex-1 w-full img-placeholder h-40 sm:h-full min-h-[160px] rounded-xl" style="border-radius: 10px;">
+            <iconify-icon icon="ph:magnifying-glass-duotone"></iconify-icon>
+            <span class="text-xs">History &amp; Search Interface</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════ HOW IT WORKS ══ -->
+  <section id="how-it-works" class="s-raise divider py-20 sm:py-28 px-5 sm:px-8">
+    <div class="max-w-4xl mx-auto">
+      <div class="text-center mb-14 reveal-on-scroll">
+        <p class="eyebrow">How it works</p>
+        <h2 class="s-heading text-3xl sm:text-4xl mb-4">Three steps. That's it.</h2>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-8 md:gap-10">
+
+        <div class="step-card flex flex-col gap-4 h-full reveal-on-scroll stagger-1">
+          <div class="step-num">1</div>
+          <div>
+            <h3 class="h3-card text-sm mb-1.5">Press the hotkey</h3>
+            <p class="s-body text-sm leading-relaxed mb-5">Hit <span class="kbd">Ctrl+Win</span> (or <span class="kbd">Ctrl+Cmd</span> on Mac) from any app. Kalam captures focus instantly.</p>
+          </div>
+          <div class="mt-auto img-placeholder w-full h-28 rounded-lg" style="border-radius: 8px;">
+            <iconify-icon icon="ph:keyboard-duotone"></iconify-icon>
+            <span class="text-xs">Hotkey Action</span>
+          </div>
+        </div>
+
+        <div class="step-card flex flex-col gap-4 h-full reveal-on-scroll stagger-2">
+          <div class="step-num">2</div>
+          <div>
+            <h3 class="h3-card text-sm mb-1.5">Speak naturally</h3>
+            <p class="s-body text-sm leading-relaxed mb-5">Talk at your normal pace. Kalam processes your voice instantly using advanced AI models—cloud or on-device.</p>
+          </div>
+          <div class="mt-auto img-placeholder w-full h-28 rounded-lg" style="border-radius: 8px;">
+            <iconify-icon icon="ph:microphone-duotone"></iconify-icon>
+            <span class="text-xs">Recording State</span>
+          </div>
+        </div>
+
+        <div class="step-card flex flex-col gap-4 h-full reveal-on-scroll stagger-3">
+          <div class="step-num">3</div>
+          <div>
+            <h3 class="h3-card text-sm mb-1.5">Text appears</h3>
+            <p class="s-body text-sm leading-relaxed mb-5">Transcribed text is typed directly into your active window. Ready to send, edit, or format.</p>
+          </div>
+          <div class="mt-auto img-placeholder w-full h-28 rounded-lg" style="border-radius: 8px;">
+            <iconify-icon icon="ph:text-aa-duotone"></iconify-icon>
+            <span class="text-xs">Text Injection</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════ COMPARE ══ -->
+  <section id="compare" class="s-base divider py-20 sm:py-28 px-5 sm:px-8">
+    <div class="max-w-5xl mx-auto">
+      <div class="text-center mb-10 reveal-on-scroll">
+        <p class="eyebrow">Comparison</p>
+        <h2 class="s-heading text-3xl sm:text-4xl mb-4">How Kalam compares</h2>
+        <p class="s-body text-sm max-w-xl mx-auto">Stacked against <a href="https://wisprflow.ai/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Wispr Flow</a>, <a href="https://otter.ai/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Otter.ai</a>, and <a href="https://superwhisper.com/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Superwhisper</a>.</p>
+      </div>
+      <p class="text-xs text-center mb-3 sm:hidden reveal-on-scroll stagger-1" style="color:var(--text-3)">Scroll right to see all columns →</p>
+      <div class="overflow-x-auto ctable-wrap reveal-on-scroll stagger-2">
+        <div class="ctable min-w-[680px] rounded-2xl overflow-hidden" style="border:1px solid var(--border)">
+          <div class="grid grid-cols-5 text-xs sm:text-sm">
+            <div class="p-3 sm:p-4" style="background:var(--bg-card);color:var(--text-3);font-weight:600"></div>
+            <div class="p-3 sm:p-4 text-center kalam-col-cell kalam-col-first kalam-col-head">Kalam</div>
+            <div class="p-3 sm:p-4 text-center font-medium" style="background:var(--bg-card);color:var(--text-2)">Wispr Flow</div>
+            <div class="p-3 sm:p-4 text-center font-medium" style="background:var(--bg-card);color:var(--text-2)">Otter.ai</div>
+            <div class="p-3 sm:p-4 text-center font-medium" style="background:var(--bg-card);color:var(--text-2)">Superwhisper</div>
+
+            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">Cost</div>
+            <div class="p-3 sm:p-4 text-center font-semibold kalam-col-cell kalam-col-mid" style="color:var(--text)">Free</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-2)">$89–249/mo</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-2)">Free / $19.99+</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-2)">Free / $8+</div>
+
+            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">Open source</div>
+            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+
+            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">Dictate in any app</div>
+            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
+            <div class="p-3 sm:p-4 text-center c-check" style="border-top:1px solid var(--border)"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">Meeting-focused</div>
+            <div class="p-3 sm:p-4 text-center c-check" style="border-top:1px solid var(--border)"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
+
+            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">100% offline</div>
+            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+            <div class="p-3 sm:p-4 text-center c-check" style="border-top:1px solid var(--border)"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
+
+            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">BYOK</div>
+            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">Pro only</div>
+
+            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">Includes Linux</div>
+            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
+
+            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">No word limits</div>
+            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-last"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">2k/wk free</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">Limited free</div>
+            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">Limited free</div>
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-center mt-4" style="color:var(--text-3)">
+        Kalam is <strong style="color:var(--text-2)">desktop only</strong> (Windows, macOS, Linux). Not building for Android or iOS.
+        Sources: <a href="https://wisprflow.ai/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Wispr Flow</a>,
+        <a href="https://otter.ai/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Otter.ai</a>,
+        <a href="https://superwhisper.com/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Superwhisper</a>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════ FAQ ══ -->
+  <section id="faq" class="s-raise divider py-20 sm:py-28 px-5 sm:px-8">
+    <div class="max-w-3xl mx-auto">
+      <div class="text-center mb-12 reveal-on-scroll">
+        <p class="eyebrow">FAQ</p>
+        <h2 class="s-heading text-3xl sm:text-4xl">Common questions</h2>
+      </div>
+
+      <div style="border-top:1px solid var(--border)" class="reveal-on-scroll stagger-1">
+        <div class="faq-item">
+          <p class="faq-q text-base">Is Kalam free?</p>
+          <p class="faq-a text-sm">Yes. Open source and free. Use cloud transcription with your own API key (Groq has a free tier) or run fully offline—no subscription ever.</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q text-base">Is Kalam like Wispr Flow or Whisperflow?</p>
+          <p class="faq-a text-sm">Same idea—voice typing in any app. Kalam is free, open source, and runs on Windows, Mac, and Linux (desktop only). Wispr Flow is paid and covers mobile too.</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q text-base">What platforms does Kalam support?</p>
+          <p class="faq-a text-sm">Windows, macOS, and Linux (desktop only). We are not building for Android or iOS.</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q text-base">Does Kalam work offline?</p>
+          <p class="faq-a text-sm">Yes. SenseVoice or Whisper.cpp keeps everything on-device. No API key required for offline mode.</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q text-base">Do I need an API key?</p>
+          <p class="faq-a text-sm">Only for cloud transcription (e.g. Groq). Sign up at <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">console.groq.com</a>, get a free key, add it in Settings → STT Provider. Local mode needs no key.</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q text-base">Is my audio stored or sent somewhere?</p>
+          <p class="faq-a text-sm">Audio is never stored to disk (in-memory only). Cloud mode sends to the provider over TLS with zero retention. Local mode: nothing leaves your machine.</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q text-base">How do I start dictating?</p>
+          <p class="faq-a text-sm">Press <span class="kbd">Ctrl+Win</span> (Windows) or <span class="kbd">Ctrl+Cmd</span> (macOS), hold while you speak, then release. Text appears in whatever app had focus.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════ DOCS CTA ══ -->
+  <section class="s-base divider py-20 sm:py-24 px-5 sm:px-8">
+    <div class="max-w-3xl mx-auto text-center reveal-on-scroll">
+      <p class="eyebrow">Documentation</p>
+      <h2 class="s-heading text-3xl sm:text-4xl mb-4">Everything you need to get started</h2>
+      <p class="s-body text-base mb-8 max-w-xl mx-auto">Setup guides, API key instructions, building from source, and a complete user manual—all on this site.</p>
+      <a href="documentation.html" class="btn-ghost mx-auto" style="display:inline-flex">
+        View documentation
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      </a>
+      <p class="mt-4 text-sm" style="color:var(--text-3)"><a href="documentation.html#user-manual" style="color:var(--primary)">Jump to User Manual</a></p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══════════════════════════════════════════ FOOTER ══ -->
+<footer class="divider py-10 sm:py-12 px-5 sm:px-8" style="background:var(--bg-elevated)">
+  <div class="max-w-6xl mx-auto">
+    <div class="flex flex-col md:flex-row justify-between items-center gap-5">
+      <div class="flex items-center gap-3">
+        <img src="favicon.svg" alt="Kalam" width="36" height="36" style="width:36px;height:36px;opacity:.9">
+        <span class="font-semibold" style="color:var(--text);font-size:1.0625rem;font-family:Inter,sans-serif;letter-spacing:-0.03em">Kalam</span>
+      </div>
+      <div class="flex flex-wrap justify-center gap-5 text-sm font-medium">
+        <a href="documentation.html" class="nav-link">Documentation</a>
+        <a href="index.html#compare"      class="nav-link">Compare</a>
+        <a href="index.html#workspace"    class="nav-link">Workspace</a>
+        <a href="index.html#how-it-works" class="nav-link">How it works</a>
+        <a href="privacy.html"       class="nav-link">Privacy</a>
+        <a href="terms.html"         class="nav-link">Terms</a>
+        <a href="business.html"      class="nav-link">Sponsors &amp; commercial</a>
+        <a href="https://github.com/afaraha8403/kalam"        class="nav-link">GitHub</a>
+        <a href="https://github.com/afaraha8403/kalam/issues" class="nav-link">Report an issue</a>
+      </div>
+    </div>
+    <div class="mt-6 pt-6 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs sm:text-sm" style="border-top:1px solid var(--border);color:var(--text-3)">
+      <p>&copy; 2026 Kalam. Noncommercial use: MIT. <a href="business.html" style="color:var(--primary)">Commercial</a> by agreement.</p>
+      <p>Created by <a href="https://alifarahat.com" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Ali Farahat</a> &amp; <a href="https://balacode.io" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Balacode</a>.</p>
+    </div>
+  </div>
+</footer>
+
+<!-- Theme toggle -->
+<script>
+(function () {
+  var root = document.documentElement;
+  var btn = document.getElementById('theme-toggle');
+  var mobile = document.querySelector('.theme-toggle-mobile');
+
+  function syncLabel() {
+    var dark = root.getAttribute('data-theme') !== 'light';
+    if (btn) btn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+  }
+
+  function setTheme(t) {
+    root.setAttribute('data-theme', t);
+    try { localStorage.setItem('kalam-site-theme', t); } catch (e) { /* ignore */ }
+    syncLabel();
+  }
+
+  function toggle() {
+    // Add a quick rotation class for delight
+    if (btn) {
+      btn.style.transform = 'scale(0.8) rotate(180deg)';
+      setTimeout(() => {
+        btn.style.transform = '';
+      }, 300);
+    }
+    setTheme(root.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+  }
+
+  syncLabel();
+  if (btn) btn.addEventListener('click', toggle);
+  if (mobile) mobile.addEventListener('click', toggle);
+})();
+
+// Scroll Reveal Animation Observer
+(function() {
+  var observerOptions = {
+    root: null,
+    rootMargin: '0px',
+    threshold: 0.15
+  };
+
+  var observer = new IntersectionObserver(function(entries, observer) {
+    entries.forEach(function(entry) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target); // Only animate once
+      }
+    });
+  }, observerOptions);
+
+  document.querySelectorAll('.reveal-on-scroll').forEach(function(el) {
+    observer.observe(el);
+  });
+})();
+
+// Close details menus when clicking outside
+document.addEventListener('click', function(event) {
+  var detailsElements = document.querySelectorAll('details');
+  detailsElements.forEach(function(details) {
+    if (details.hasAttribute('open') && !details.contains(event.target)) {
+      details.removeAttribute('open');
+    }
+  });
+});
+
+// Close mobile menu when a link is clicked
+document.querySelectorAll('.md\\:hidden details .nav-link').forEach(function(link) {
+  link.addEventListener('click', function() {
+    var details = this.closest('details');
+    if (details) details.removeAttribute('open');
+  });
+});
+</script>
+
+<!-- Smart download detection (preserved exactly) -->
+<script>
     (function() {
       var REPO = 'afaraha8403/kalam';
       var RELEASES_URL = 'https://api.github.com/repos/' + REPO + '/releases?per_page=20';
@@ -693,7 +1315,7 @@
             if (!Array.isArray(releases) || releases.length === 0) {
               primary.href = fallbackUrl;
               primaryText.textContent = fallbackLabel;
-              secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" class="text-primary hover:underline">all releases</a> for other platforms.';
+              secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">all releases</a> for other platforms.';
               return;
             }
             var stable = releases.find(function(r) { return !r.prerelease; });
@@ -718,16 +1340,16 @@
 
             var parts = [];
             if (stable && beta) {
-              parts.push('<a href="' + beta.html_url + '" class="text-primary hover:underline">Beta</a> available. ');
+              parts.push('<a href="' + beta.html_url + '" style="color:var(--primary)">Beta</a> available. ');
             }
-            parts.push('<a href="https://github.com/' + REPO + '/releases" class="text-primary hover:underline">Other platforms &amp; releases</a>');
+            parts.push('<a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">Other platforms &amp; releases</a>');
             secondary.innerHTML = parts.join('');
             });
           });
         }).catch(function() {
           primary.href = fallbackUrl;
           primaryText.textContent = fallbackLabel;
-          secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" class="text-primary hover:underline">all releases</a> for other platforms.';
+          secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">all releases</a> for other platforms.';
         });
       }
 
@@ -737,6 +1359,6 @@
         run();
       }
     })();
-    </script>
+</script>
 </body>
 </html>

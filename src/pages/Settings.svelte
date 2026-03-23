@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
-  import { listen } from '@tauri-apps/api/event'
+  import { invoke, listenSafe } from '$lib/backend'
   import Icon from '@iconify/svelte'
   import { initTelemetry, optOut } from '../lib/telemetry'
   import { sidebarDictationStore } from '../lib/sidebarDictation'
@@ -23,7 +22,6 @@
   let apiKeyInput = ''
   let addLanguageCode = ''
   let logEmpty = true
-  /** Message shown when log/CSV export is empty or fails (Advanced tab). */
   let logExportMessage: string | null = null
   let saveError: string | null = null
   let appDataPath: string | null = null
@@ -32,6 +30,7 @@
   let saveDebounceId: ReturnType<typeof setTimeout> | null = null
   let resetting = false
   let resetError: string | null = null
+
   type ModelRequirement = { can_run: boolean; reason: string | null }
   type ModelStatusEntry = {
     installed: boolean
@@ -54,7 +53,6 @@
   let unlistenDownloadProgress: (() => void) | null = null
   let unlistenEngineDownloadProgress: (() => void) | null = null
   let sidecarInstalled = false
-  /** Engine (sidecar) has a download for this platform; when false show "Engine not available on this platform". */
   let sidecarAvailable: Record<string, boolean> = {}
 
   function modelIdToSidecarId(modelId: string): string | null {
@@ -64,13 +62,13 @@
   }
 
   const tabs = [
-    { id: 'general', label: 'General' },
-    { id: 'dictation', label: 'Audio & Dictation' },
-    { id: 'dictionary', label: 'Dictionary' },
-    { id: 'command', label: 'Command Mode' },
-    { id: 'privacy', label: 'Privacy' },
-    { id: 'advanced', label: 'Advanced' },
-    { id: 'about', label: 'About' },
+    { id: 'general', label: 'General', icon: 'ph:sliders-horizontal' },
+    { id: 'dictation', label: 'Audio & Dictation', icon: 'ph:microphone' },
+    { id: 'dictionary', label: 'Dictionary', icon: 'ph:book-open' },
+    { id: 'command', label: 'Command Mode', icon: 'ph:terminal' },
+    { id: 'privacy', label: 'Privacy', icon: 'ph:shield' },
+    { id: 'advanced', label: 'Advanced', icon: 'ph:gear-fine' },
+    { id: 'about', label: 'About', icon: 'ph:info' },
   ]
 
   let commandApiKeyInput = ''
@@ -82,22 +80,19 @@
   let dictionaryNewTerm = ''
   let dictionaryLoading = false
 
-  // Collapsible sections state - basic sections expanded, advanced collapsed by default
+  // Collapsible sections state
   let collapsedSections: Record<string, boolean> = {
-    // General tab
     general_hotkeys: false,
-    general_startup: false,
-    general_overlay: false,
-    // Dictation tab
+    general_startup: true,
+    general_overlay: true,
     dictation_audio: false,
     dictation_stt: false,
-    dictation_formatting: false,
-    // Other tabs
+    dictation_formatting: true,
     dictionary: false,
     command: false,
     privacy: false,
-    advanced: true,  // Collapsed by default (advanced)
-    advanced_danger: false  // Keep danger zone visible by default
+    advanced: false,
+    advanced_danger: false
   }
 
   function toggleSection(section: string) {
@@ -117,7 +112,6 @@
 
   onMount(async () => {
     try {
-      // Load settings and audio devices in parallel
       const [settings, devices, platform, sensevoiceReqs, whisperReqs, sensevoiceAvail, whisperAvail] = await Promise.all([
         invoke('get_settings') as Promise<AppConfig>,
         invoke('get_audio_devices') as Promise<AudioDevice[]>,
@@ -127,16 +121,16 @@
         invoke('is_sidecar_available_for_model', { modelId: 'sensevoice' }) as Promise<boolean>,
         invoke('is_sidecar_available_for_model', { modelId: 'whisper_base' }) as Promise<boolean>,
       ])
-      
+
       hardwareReqs['sensevoice'] = sensevoiceReqs as ModelRequirement
       hardwareReqs['whisper_base'] = whisperReqs as ModelRequirement
       sidecarAvailable['sensevoice'] = sensevoiceAvail
       sidecarAvailable['whisper_base'] = whisperAvail
-      
+
       config = settings
       audioDevices = devices
       sidebarDictationStore.updateFromConfig(settings, platform)
-      // Normalize so UI never sees missing or invalid shape
+
       if (config) {
         if (config.audio_device == null || config.audio_device === 'default' || config.audio_device === '') {
           config.audio_device = ''
@@ -160,7 +154,7 @@
         if (config.stt_config.api_key && !config.stt_config.api_keys[sttProvider]) {
           config.stt_config.api_keys[sttProvider] = config.stt_config.api_key
         }
-        if (!config.waveform_style) config.waveform_style = 'Heartbeat'
+        if (!config.waveform_style) config.waveform_style = 'Aurora'
         if (!config.overlay_position) config.overlay_position = 'BottomCenter'
         if (config.overlay_offset_x == null) config.overlay_offset_x = 0
         if (config.overlay_offset_y == null) config.overlay_offset_y = 0
@@ -179,7 +173,7 @@
         if (!config.command_config.api_keys) config.command_config.api_keys = {}
         if (!config.command_config.models) config.command_config.models = {}
       }
-      
+
       if (config?.command_config?.provider) {
         hasCommandApiKey = !!config.command_config.api_keys[config.command_config.provider]
       } else {
@@ -188,11 +182,9 @@
 
       await checkLogEmpty()
 
-      // Check if API key is already configured
       hasApiKey = !!getStoredSttApiKey()
-      // Don't populate the input with the actual key for security
       apiKeyInput = ''
-      
+
       await refreshModelStatuses()
       statusPollInterval = setInterval(refreshModelStatuses, 2000)
 
@@ -202,22 +194,20 @@
         appDataPath = null
       }
 
-      unlistenDownloadProgress = await listen<{ model_type: string; downloaded_bytes: number; total_bytes: number | null; percent: number | null }>(
+      unlistenDownloadProgress = await listenSafe<{ model_type: string; downloaded_bytes: number; total_bytes: number | null; percent: number | null }>(
         'model-download-progress',
         (e) => {
           const { model_type, downloaded_bytes, total_bytes, percent } = e.payload
           downloadProgress = { ...downloadProgress, [model_type]: { percent: percent ?? null, downloaded_bytes, total_bytes } }
         }
       )
-      unlistenEngineDownloadProgress = await listen<{ sidecar_id: string; downloaded_bytes: number; total_bytes: number | null; percent: number | null }>(
+      unlistenEngineDownloadProgress = await listenSafe<{ sidecar_id: string; downloaded_bytes: number; total_bytes: number | null; percent: number | null }>(
         'sidecar-download-progress',
         (e) => {
           const { sidecar_id, downloaded_bytes, total_bytes, percent } = e.payload
           engineDownloadProgress = { ...engineDownloadProgress, [sidecar_id]: { percent: percent ?? null, downloaded_bytes, total_bytes } }
         }
       )
-      
-      console.log('Loaded audio devices:', devices)
     } catch (e) {
       console.error('Failed to load settings:', e)
     } finally {
@@ -235,7 +225,6 @@
     try {
       const next = await invoke('get_model_status') as Record<string, ModelStatusEntry>
       modelStatuses = next
-      // Clear engine download progress when model is no longer Starting
       let cleared = false
       const nextEngine: typeof engineDownloadProgress = { ...engineDownloadProgress }
       for (const modelId of LOCAL_MODEL_IDS) {
@@ -246,7 +235,7 @@
         }
       }
       if (cleared) engineDownloadProgress = nextEngine
-      // Update engine installed for current local model
+
       if (config?.stt_config?.mode === 'Local' || config?.stt_config?.mode === 'Hybrid') {
         const localModel = config.stt_config.local_model ?? 'sensevoice'
         try {
@@ -306,7 +295,6 @@
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setModelError(modelId, msg)
-      console.error('Failed to start model:', e)
     }
   }
 
@@ -318,7 +306,6 @@
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setModelError(modelId, msg)
-      console.error('Failed to stop model:', e)
     }
   }
 
@@ -330,12 +317,11 @@
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setModelError(modelId, msg)
-      console.error('Failed to restart model:', e)
     }
   }
 
   async function uninstallEngine(modelId: string) {
-    if (!confirm('Uninstall the local STT engine? It will be downloaded again when you start a local model.')) return
+    if (!confirm('Uninstall the local STT engine?')) return
     try {
       await invoke('uninstall_sidecar', { modelId })
       await refreshModelStatuses()
@@ -347,16 +333,16 @@
   }
 
   async function deleteModel(modelId: string) {
-    if (!confirm('Are you sure you want to delete this model? You will need to download it again.')) return
+    if (!confirm('Delete this model?')) return
     clearModelError(modelId)
     const installedCount = LOCAL_MODEL_IDS.filter((id) => modelStatuses[id]?.installed).length
     const isLastModel = installedCount === 1
-    let uninstallEngine = false
-    if (isLastModel && confirm('This is your last local model. Do you also want to uninstall the local STT engine to free up space?')) {
-      uninstallEngine = true
+    let shouldUninstallEngine = false
+    if (isLastModel && confirm('Also uninstall the local STT engine?')) {
+      shouldUninstallEngine = true
     }
     try {
-      if (uninstallEngine) {
+      if (shouldUninstallEngine) {
         await invoke('uninstall_sidecar', { modelId })
       }
       await invoke('delete_local_model', { modelId })
@@ -364,7 +350,6 @@
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setModelError(modelId, msg)
-      console.error('Failed to delete model:', e)
     }
   }
 
@@ -374,7 +359,6 @@
     try {
       await invoke('download_model', { modelType: modelId })
       await refreshModelStatuses()
-      // Auto-start so engine downloads (if needed) and starts; UI then shows Stop/Restart
       if (sidecarAvailable[modelId] !== false) {
         try {
           await invoke('start_local_model', { modelId })
@@ -382,13 +366,11 @@
         } catch (startErr) {
           const msg = startErr instanceof Error ? startErr.message : String(startErr)
           setModelError(modelId, msg)
-          console.error('Failed to start after download:', startErr)
         }
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setModelError(modelId, msg)
-      console.error('Failed to download model:', e)
     } finally {
       const next = { ...downloadProgress }
       delete next[modelId]
@@ -415,14 +397,9 @@
   }
 
   async function saveSettings() {
-    console.log('saveSettings called')
-    if (!config) {
-      console.log('No config to save')
-      return
-    }
+    if (!config) return
     saving = true
-    
-    // If user entered a new API key, update it
+
     if (apiKeyInput.trim()) {
       if (!config.stt_config.api_keys) config.stt_config.api_keys = {}
       config.stt_config.api_keys[getCurrentSttProvider()] = apiKeyInput.trim()
@@ -431,7 +408,6 @@
       if (!config.command_config.api_keys) config.command_config.api_keys = {}
       config.command_config.api_keys[config.command_config.provider] = commandApiKeyInput.trim()
     }
-    // Clamp logging max_records to valid range
     if (config.logging) {
       config.logging.max_records = Math.min(20000, Math.max(500, config.logging.max_records || 2000))
     }
@@ -441,8 +417,6 @@
     }
     if (!Array.isArray(config.languages) || config.languages.length === 0) config.languages = ['en']
 
-    console.log('Config object:', JSON.stringify(config, null, 2))
-    console.log('Saving config with api_key for provider:', getCurrentSttProvider(), !!getStoredSttApiKey())
     saveError = null
     try {
       await invoke('save_settings', { newConfig: config })
@@ -454,7 +428,7 @@
         optOut()
       }
       hasApiKey = !!getStoredSttApiKey()
-      apiKeyInput = '' // Clear input after save
+      apiKeyInput = ''
       if (config.command_config?.provider) {
         hasCommandApiKey = !!config.command_config.api_keys?.[config.command_config.provider]
       } else {
@@ -488,7 +462,6 @@
       logExportMessage = null
       await checkLogEmpty()
     } catch (e) {
-      console.error('Failed to save log:', e)
       const msg = e instanceof Error ? e.message : String(e)
       logExportMessage = msg === 'Save cancelled' ? null : msg
     }
@@ -500,7 +473,6 @@
       await invoke('save_logs_csv_to_file')
       logExportMessage = null
     } catch (e) {
-      console.error('Failed to save logs CSV:', e)
       const msg = e instanceof Error ? e.message : String(e)
       logExportMessage = msg === 'Save cancelled' ? null : msg
     }
@@ -511,20 +483,18 @@
     try {
       await invoke('open_app_data_folder')
     } catch (e) {
-      console.error('Failed to open app data folder:', e)
       const err = e as Error & { message?: string }
       openFolderError = err?.message ?? String(e)
     }
   }
 
   async function confirmAndReset() {
-    if (!confirm('Reset the entire application? This will delete all settings, history, and data. You will see the onboarding again. This cannot be undone.')) return
+    if (!confirm('Reset the entire application? This will delete all settings, history, and data.')) return
     resetError = null
     resetting = true
     try {
       await invoke('reset_application')
     } catch (e) {
-      console.error('Reset failed:', e)
       const err = e as Error & { message?: string }
       resetError = err?.message ?? String(e)
     } finally {
@@ -577,12 +547,10 @@
     try {
       const result = await invoke('test_microphone_stop') as { level: number; samples: number[]; sample_rate: number }
       micLevel = result.level
-      console.log('Microphone test result:', result.level, 'samples:', result.samples?.length)
       if (result.samples?.length && result.sample_rate) {
         await playTestAudio(result.samples, result.sample_rate)
       }
     } catch (e) {
-      console.error('Microphone test failed:', e)
       micLevel = 0
     } finally {
       testingMic = false
@@ -590,28 +558,18 @@
   }
 
   async function checkApiKey() {
-    console.log('checkApiKey called')
-    // Use the input value if present, otherwise use the stored key
     const keyToCheck = apiKeyInput.trim() || getStoredSttApiKey()
-    
-    if (!keyToCheck) {
-      console.log('No API key to check')
-      return
-    }
-    console.log('Calling check_api_key with provider:', config?.stt_config?.provider)
-    console.log('API key length:', keyToCheck.length)
+    if (!keyToCheck) return
     try {
       apiKeyValid = await invoke('check_api_key', {
         provider: config?.stt_config?.provider || 'groq',
         apiKey: keyToCheck
       })
-      console.log('API validation result:', apiKeyValid)
     } catch (e) {
-      console.error('API validation error:', e)
       apiKeyValid = false
     }
   }
-  
+
   function clearApiKey() {
     if (config) {
       const provider = getCurrentSttProvider()
@@ -623,12 +581,11 @@
       scheduleSave()
     }
   }
-  
+
   function refreshAudioDevices() {
     invoke('get_audio_devices')
       .then((devices) => {
         audioDevices = devices as AudioDevice[]
-        console.log('Refreshed audio devices:', audioDevices)
       })
       .catch((e) => {
         console.error('Failed to refresh audio devices:', e)
@@ -689,7 +646,7 @@
     const v = (e.currentTarget as HTMLSelectElement).value
     if (config && config.command_config) {
       config.command_config.provider = v ? (v as import('../types').CommandModeProvider) : null
-      
+
       const provider = config.command_config.provider
       if (provider) {
         commandApiKeyInput = ''
@@ -707,7 +664,6 @@
       scheduleSave()
     }
   }
-
 
   function setCommandHotkey(hotkey: string) {
     if (config?.command_config) {
@@ -764,12 +720,11 @@
     }
   }
 
-  // Auto-load models and validate saved state when switching to Command tab or after saving a new key
   $: if (activeTab === 'command' && config?.command_config?.provider) {
     const provider = config.command_config.provider;
     const hasSavedKey = !!config.command_config.api_keys?.[provider];
     const isTypingNewKey = commandApiKeyInput.trim().length > 0;
-    
+
     if (hasSavedKey && !isTypingNewKey && commandApiKeyStatus === 'idle' && !loadingLlmModels) {
       (async () => {
         await fetchCommandLlmModels();
@@ -798,7 +753,7 @@
         delete config.command_config.models[config.command_config.provider]
       }
       scheduleSave()
-      
+
       if (commandModelTestTimeout) clearTimeout(commandModelTestTimeout)
       if (v) {
         commandModelStatus = 'testing'
@@ -849,7 +804,6 @@
       llmModels = await invoke('fetch_llm_models', { provider, apiKey }) as string[]
       commandApiKeyStatus = 'valid'
     } catch (e) {
-      console.error('Failed to fetch LLM models:', e)
       llmModels = []
       commandApiKeyStatus = 'invalid'
       commandApiKeyError = String(e)
@@ -863,7 +817,7 @@
     const provider = config.command_config.provider ?? 'groq'
     const apiKey = (commandApiKeyInput.trim() || config.command_config.api_keys?.[provider]) ?? ''
     if (!apiKey || !model) return
-    
+
     testingModel = true
     commandModelStatus = 'testing'
     commandModelError = null
@@ -871,7 +825,6 @@
       await invoke('test_llm_model', { provider, apiKey, model })
       commandModelStatus = 'valid'
     } catch (e) {
-      console.error('Failed to test LLM model:', e)
       commandModelStatus = 'invalid'
       commandModelError = String(e)
     } finally {
@@ -884,7 +837,6 @@
     try {
       dictionaryEntries = (await invoke('get_dictionary_entries')) as DictionaryEntry[]
     } catch (e) {
-      console.error('Failed to load dictionary:', e)
       dictionaryEntries = []
     } finally {
       dictionaryLoading = false
@@ -923,23 +875,25 @@
 </script>
 
 {#if config}
-  <div class="settings">
-    <header>
-      <h2>Settings</h2>
+  <div class="page fade-in settings-page">
+    <header class="page-header settings-header">
+      <h1 class="page-title">Settings</h1>
       {#if saving}
         <span class="save-status">Saving…</span>
       {:else if saveError}
         <span class="save-status error">Save failed</span>
       {/if}
     </header>
+
     {#if saveError}
       <p class="save-error" role="alert">{saveError}</p>
     {/if}
 
-    <div class="tabs">
+    <div class="settings-tabs">
       {#each tabs as tab}
         <button
-          class="tab"
+          type="button"
+          class="settings-tab"
           class:active={activeTab === tab.id}
           on:click={() => {
             activeTab = tab.id
@@ -948,778 +902,769 @@
             if (tab.id === 'dictionary') loadDictionaryEntries()
           }}
         >
-          {tab.label}
+          <Icon icon={tab.icon} />
+          <span>{tab.label}</span>
         </button>
       {/each}
     </div>
 
-    <div class="tab-content">
+    <div class="settings-content">
       {#if activeTab === 'general'}
-        <section class:collapsed={collapsedSections.general_hotkeys}>
-          <h3 on:click={() => toggleSection('general_hotkeys')}>Dictation Hotkeys</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.general_hotkeys}>
+          <button type="button" class="section-header" on:click={() => toggleSection('general_hotkeys')}>
+            <h3>Dictation Hotkeys</h3>
+            <Icon icon={collapsedSections.general_hotkeys ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-            <div class="form-group">
-              <label for="hotkey">Hold to Dictate</label>
-              <HotkeyCapture
-                value={config.hotkey ?? ''}
-                onChange={setHotkey}
-              />
-              <p class="hint">Press and hold this hotkey to dictate, release to stop.</p>
-
-              <div class="sub-setting" style="margin-top: 12px;">
-                <label for="min-hold-ms">Short-press threshold (ms)</label>
-                <input
-                  id="min-hold-ms"
-                  type="number"
-                  min="0"
-                  max="2000"
-                  step="50"
-                  bind:value={config.min_hold_ms}
-                  on:change={scheduleSave}
-                />
-                <p class="hint">Applies to Hold to Dictate only: releases earlier than this are treated as short presses and cancelled.</p>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Hold to Dictate</span>
+                <span class="setting-desc">Press and hold this hotkey to dictate, release to stop</span>
+              </div>
+              <div class="setting-control">
+                <HotkeyCapture value={config.hotkey ?? ''} onChange={setHotkey} />
               </div>
             </div>
-
-            <div class="form-group">
-              <label for="toggle-hotkey">Toggle Dictation</label>
-              <HotkeyCapture
-                value={config.toggle_dictation_hotkey ?? ''}
-                onChange={setToggleHotkey}
-              />
-              <p class="hint">Press this hotkey once to start dictating, press again to stop.</p>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Short-press threshold (ms)</span>
+                <span class="setting-desc">Releases earlier than this are treated as short presses and cancelled</span>
+              </div>
+              <div class="setting-control">
+                <input type="number" min="0" max="2000" step="50" bind:value={config.min_hold_ms} on:change={scheduleSave} />
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Toggle Dictation</span>
+                <span class="setting-desc">Press once to start, again to stop</span>
+              </div>
+              <div class="setting-control">
+                <HotkeyCapture value={config.toggle_dictation_hotkey ?? ''} onChange={setToggleHotkey} />
+              </div>
             </div>
           </div>
         </section>
 
-        <section class:collapsed={collapsedSections.general_startup}>
-          <h3 on:click={() => toggleSection('general_startup')}>Startup</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.general_startup}>
+          <button type="button" class="section-header" on:click={() => toggleSection('general_startup')}>
+            <h3>Startup</h3>
+            <Icon icon={collapsedSections.general_startup ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-            <div class="form-group checkbox">
-              <label>
+            <div class="setting-row checkbox-row">
+              <label class="checkbox-label">
                 <input type="checkbox" bind:checked={config.auto_start} on:change={scheduleSave} />
-                Start on login
+                <span>Start on login</span>
               </label>
             </div>
-
-            <div class="form-group checkbox">
-              <label>
+            <div class="setting-row checkbox-row">
+              <label class="checkbox-label">
                 <input type="checkbox" bind:checked={config.start_in_focus} on:change={scheduleSave} />
-                Start in focus (show window on startup)
+                <span>Start in focus (show window on startup)</span>
               </label>
-              <p class="hint">If disabled, app starts minimized to tray and plays a sound</p>
+              <span class="setting-desc">If disabled, app starts minimized to tray</span>
             </div>
           </div>
         </section>
 
-        <section class:collapsed={collapsedSections.general_overlay}>
-          <h3 on:click={() => toggleSection('general_overlay')}>Overlay Appearance</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.general_overlay}>
+          <button type="button" class="section-header" on:click={() => toggleSection('general_overlay')}>
+            <h3>Overlay Appearance</h3>
+            <Icon icon={collapsedSections.general_overlay ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-            <div class="form-group">
-              <label for="waveform-style">Waveform Style</label>
-              <select id="waveform-style" bind:value={config.waveform_style} on:change={scheduleSave}>
-                <option value="Line">Line</option>
-                <option value="Symmetric">Symmetric Wave</option>
-                <option value="Heartbeat">Heartbeat</option>
-                <option value="Snake">Snake</option>
-                <option value="DoubleHelix">Double Helix</option>
-                <option value="Liquid">Liquid</option>
-                <option value="Waves">Waves</option>
-                <option value="Glitch">Glitch</option>
-                <option value="Bars">Bars</option>
-                <option value="CenterSplit">Center Split</option>
-              </select>
-              <p class="hint">Choose how your voice is visualized in the overlay pill.</p>
-            </div>
-
-            <div class="form-group">
-              <label for="overlay-expand-direction">Expand Direction</label>
-              <select id="overlay-expand-direction" bind:value={config.overlay_expand_direction} on:change={scheduleSave}>
-                <option value="Up">Upwards (Default)</option>
-                <option value="Down">Downwards</option>
-                <option value="Center">Center</option>
-              </select>
-              <p class="hint">Which direction the pill expands when you start dictating.</p>
-            </div>
-
-            <div class="form-group">
-              <label for="overlay-position">Screen Position</label>
-              <select id="overlay-position" bind:value={config.overlay_position} on:change={scheduleSave}>
-                <option value="BottomCenter">Bottom Center (Default)</option>
-                <option value="BottomLeft">Bottom Left</option>
-                <option value="BottomRight">Bottom Right</option>
-                <option value="TopCenter">Top Center</option>
-                <option value="TopLeft">Top Left</option>
-                <option value="TopRight">Top Right</option>
-                <option value="CenterLeft">Center Left</option>
-                <option value="CenterRight">Center Right</option>
-                <option value="Center">Center</option>
-              </select>
-              <p class="hint">Where the pill appears on your primary monitor.</p>
-            </div>
-
-            <div class="form-group row-group">
-              <div class="sub-setting">
-                <label for="overlay-offset-x">X Offset (px)</label>
-                <input
-                  id="overlay-offset-x"
-                  type="number"
-                  bind:value={config.overlay_offset_x}
-                  on:input={scheduleSave}
-                />
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Waveform Style</span>
+                <span class="setting-desc">Choose how your voice is visualized</span>
               </div>
-              <div class="sub-setting">
-                <label for="overlay-offset-y">Y Offset (px)</label>
-                <input
-                  id="overlay-offset-y"
-                  type="number"
-                  bind:value={config.overlay_offset_y}
-                  on:input={scheduleSave}
-                />
+              <div class="setting-control">
+                <select bind:value={config.waveform_style} on:change={scheduleSave}>
+                  <option value="SiriWave">Siri Wave</option>
+                  <option value="EchoRing">Echo Ring</option>
+                  <option value="RoundedBars">Rounded Bars</option>
+                  <option value="BreathingAura">Breathing Aura</option>
+                  <option value="Oscilloscope">Oscilloscope</option>
+                  <option value="NeonPulse">Neon Pulse</option>
+                  <option value="Aurora">Aurora Borealis</option>
+                </select>
               </div>
             </div>
-            <p class="hint">Fine-tune the position by adding horizontal (X) or vertical (Y) pixel offsets.</p>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Expand Direction</span>
+                <span class="setting-desc">Which direction the pill expands</span>
+              </div>
+              <div class="setting-control">
+                <select bind:value={config.overlay_expand_direction} on:change={scheduleSave}>
+                  <option value="Up">Upwards</option>
+                  <option value="Down">Downwards</option>
+                  <option value="Center">Center</option>
+                </select>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Screen Position</span>
+                <span class="setting-desc">Where the pill appears on your primary monitor</span>
+              </div>
+              <div class="setting-control">
+                <select bind:value={config.overlay_position} on:change={scheduleSave}>
+                  <option value="BottomCenter">Bottom Center</option>
+                  <option value="BottomLeft">Bottom Left</option>
+                  <option value="BottomRight">Bottom Right</option>
+                  <option value="TopCenter">Top Center</option>
+                  <option value="TopLeft">Top Left</option>
+                  <option value="TopRight">Top Right</option>
+                  <option value="CenterLeft">Center Left</option>
+                  <option value="CenterRight">Center Right</option>
+                  <option value="Center">Center</option>
+                </select>
+              </div>
+            </div>
+            <div class="setting-row row-group">
+              <div class="setting-label">
+                <span class="setting-name">X Offset (px)</span>
+              </div>
+              <div class="setting-control">
+                <input type="number" bind:value={config.overlay_offset_x} on:input={scheduleSave} />
+              </div>
+              <div class="setting-label">
+                <span class="setting-name">Y Offset (px)</span>
+              </div>
+              <div class="setting-control">
+                <input type="number" bind:value={config.overlay_offset_y} on:input={scheduleSave} />
+              </div>
+            </div>
           </div>
         </section>
 
       {:else if activeTab === 'dictation'}
-        <section class:collapsed={collapsedSections.dictation_audio}>
-          <h3 on:click={() => toggleSection('dictation_audio')}>Audio Input</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.dictation_audio}>
+          <button type="button" class="section-header" on:click={() => toggleSection('dictation_audio')}>
+            <h3>Audio Input</h3>
+            <Icon icon={collapsedSections.dictation_audio ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-            <div class="form-group">
-              <label for="microphone">
-                Microphone
-                <button class="btn-refresh" on:click={refreshAudioDevices} title="Refresh device list">
-                  ↻
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Microphone</span>
+                <button class="btn-refresh" on:click={refreshAudioDevices} title="Refresh">
+                  <Icon icon="ph:arrow-clockwise" />
                 </button>
-              </label>
-              <select id="microphone" bind:value={config.audio_device} on:change={scheduleSave}>
+              </div>
+              <div class="setting-control full-width">
+                <select bind:value={config.audio_device} on:change={scheduleSave}>
+                  {#if audioDevices.length === 0}
+                    <option value="">No devices found</option>
+                  {:else}
+                    {#each audioDevices as device}
+                      <option value={device.id === 'default' ? '' : device.id}>
+                        {device.is_default ? 'Default — ' + device.name : device.name}
+                      </option>
+                    {/each}
+                  {/if}
+                </select>
                 {#if audioDevices.length === 0}
-                  <option value="">No devices found</option>
+                  <span class="hint warning">No audio devices found. Try refreshing.</span>
                 {:else}
-                  {#each audioDevices as device}
-                    <option value={device.id === 'default' ? '' : device.id}>
-                      {device.is_default ? 'Default — ' + device.name : device.name}
-                    </option>
-                  {/each}
-                {/if}
-              </select>
-              {#if audioDevices.length === 0}
-                <p class="hint warning">No audio devices found. Try refreshing the list.</p>
-              {:else}
-                <p class="hint">{audioDevices.length} audio device(s) available</p>
-              {/if}
-            </div>
-
-            <div class="form-group">
-              <span class="label-text">Test Microphone</span>
-              {#if testingMic}
-                <button class="btn-secondary" on:click={stopTestRecording}>
-                  Stop
-                </button>
-              {:else}
-                <button class="btn-secondary" on:click={startTestRecording}>
-                  Start
-                </button>
-              {/if}
-              <p class="hint">Record with Start/Stop, then hear playback. The bar shows how loud your mic picked up the recording.</p>
-              <div class="mic-level-container">
-                <div class="mic-level" role="meter" aria-label="Microphone input level" aria-valuenow={Math.round(micLevel * 100)} aria-valuemin={0} aria-valuemax={100}>
-                  <div class="mic-bar" style="width: {micLevel * 100}%"></div>
-                </div>
-                {#if testingMic}
-                  <span class="mic-status">Recording… Click Stop when done.</span>
-                {:else if micLevel > 0}
-                  <span class="mic-status">Volume captured: {Math.round(micLevel * 100)}% — higher means your mic heard you louder</span>
+                  <span class="hint">{audioDevices.length} audio device(s) available</span>
                 {/if}
               </div>
             </div>
 
-            <div class="form-group">
-              <label for="vad-preset">VAD Sensitivity</label>
-              <select id="vad-preset" bind:value={config.stt_config.vad_preset} on:change={scheduleSave}>
-                <option value="Fast">Fast (0.8s silence)</option>
-                <option value="Balanced">Balanced (1.5s silence)</option>
-                <option value="Accurate">Accurate (2.5s silence)</option>
-              </select>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Test Microphone</span>
+                <span class="setting-desc">Record and hear playback</span>
+              </div>
+              <div class="setting-control">
+                {#if testingMic}
+                  <button class="btn-secondary" on:click={stopTestRecording}>Stop</button>
+                {:else}
+                  <button class="btn-secondary" on:click={startTestRecording}>Start</button>
+                {/if}
+              </div>
+            </div>
+            <div class="mic-level-container">
+              <div class="mic-level" role="meter" aria-valuenow={Math.round(micLevel * 100)}>
+                <div class="mic-bar" style="width: {micLevel * 100}%"></div>
+              </div>
+              {#if testingMic}
+                <span class="mic-status">Recording…</span>
+              {:else if micLevel > 0}
+                <span class="mic-status">Volume: {Math.round(micLevel * 100)}%</span>
+              {/if}
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">VAD Sensitivity</span>
+                <span class="setting-desc">Voice Activity Detection sensitivity</span>
+              </div>
+              <div class="setting-control">
+                <select bind:value={config.stt_config.vad_preset} on:change={scheduleSave}>
+                  <option value="Fast">Fast (0.8s silence)</option>
+                  <option value="Balanced">Balanced (1.5s silence)</option>
+                  <option value="Accurate">Accurate (2.5s silence)</option>
+                </select>
+              </div>
             </div>
           </div>
         </section>
 
-        <section class:collapsed={collapsedSections.dictation_stt}>
-          <h3 on:click={() => toggleSection('dictation_stt')}>Speech-to-Text Mode</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.dictation_stt}>
+          <button type="button" class="section-header" on:click={() => toggleSection('dictation_stt')}>
+            <h3>Speech-to-Text Mode</h3>
+            <Icon icon={collapsedSections.dictation_stt ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-          <div class="form-group">
-            <label for="stt-mode">Mode</label>
-            <select id="stt-mode" bind:value={config.stt_config.mode} on:change={onSttModeChange}>
-              <option value="Cloud">Cloud</option>
-              <option value="Local">Local (SenseVoice)</option>
-              <option value="Hybrid">Hybrid (Auto-switch)</option>
-            </select>
-          </div>
-
-          {#if config.stt_config.mode === 'Cloud' || config.stt_config.mode === 'Hybrid'}
-            <div class="form-group">
-              <label for="cloud-provider">Cloud Provider</label>
-              <select id="cloud-provider" bind:value={config.stt_config.provider} on:change={onCloudProviderChange}>
-                <option value="groq">Groq (whisper-large-v3-turbo)</option>
-                <option value="openai">OpenAI (whisper-1)</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label for="api-key">
-                API Key
-                {#if hasApiKey && !apiKeyInput}
-                  <span class="badge configured">✓ Configured</span>
-                {/if}
-              </label>
-              <div class="input-group">
-                <input
-                  id="api-key"
-                  type="password"
-                  bind:value={apiKeyInput}
-                  on:input={scheduleSave}
-                  placeholder={hasApiKey ? "•••••••••••••••• (enter new key to change)" : `Enter your ${config.stt_config.provider === 'openai' ? 'OpenAI' : 'Groq'} API key`}
-                />
-                <button class="btn-secondary" on:click={checkApiKey}>
-                  Validate
-                </button>
-                {#if hasApiKey && !apiKeyInput}
-                  <button class="btn-secondary btn-danger" on:click={clearApiKey}>
-                    Clear
-                  </button>
-                {/if}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Mode</span>
               </div>
-              {#if apiKeyValid !== null}
-                <span class="validation {apiKeyValid ? 'success' : 'error'}">
-                  {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
-                </span>
-              {/if}
-              <p class="hint">
-                {#if config.stt_config.provider === 'openai'}
-                  <a href="https://platform.openai.com/api-keys" target="_blank">Get your API key from OpenAI →</a>
-                {:else}
-                  <a href="https://console.groq.com" target="_blank">Get your API key from Groq →</a>
-                {/if}
-              </p>
+              <div class="setting-control">
+                <select bind:value={config.stt_config.mode} on:change={onSttModeChange}>
+                  <option value="Cloud">Cloud</option>
+                  <option value="Local">Local (SenseVoice)</option>
+                  <option value="Hybrid">Hybrid (Auto-switch)</option>
+                </select>
+              </div>
             </div>
-          {/if}
 
-          {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
-            <div class="form-group">
-              <span class="label-text">Local model</span>
-              <p class="hint">Select one model; it is used when mode is Local. Download, start, or delete from the list.</p>
-              <div class="model-list model-radio-list">
-                {#each LOCAL_MODEL_IDS as modelId}
-                  {@const status = modelStatuses[modelId]}
-                  {@const progress = downloadProgress[modelId]}
-                  {@const sidecarId = modelIdToSidecarId(modelId)}
-                  {@const engineProgress = sidecarId ? engineDownloadProgress[sidecarId] : null}
-                  {@const err = modelErrors[modelId]}
-                  {@const isActive = (config.stt_config.local_model ?? 'sensevoice') === modelId}
-                  <div class="model-item" class:model-item-active={isActive}>
-                    <div class="model-radio-row" role="button" tabindex="0" on:click={() => setActiveLocalModel(modelId)} on:keydown={(ev) => ev.key === 'Enter' && setActiveLocalModel(modelId)}>
-                      <span class="model-radio" aria-checked={isActive} role="radio">
-                        {#if isActive}
-                          <span class="model-radio-checked">●</span>
-                        {:else}
-                          <span class="model-radio-unchecked">○</span>
+            {#if config.stt_config.mode === 'Cloud' || config.stt_config.mode === 'Hybrid'}
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span class="setting-name">Cloud Provider</span>
+                </div>
+                <div class="setting-control">
+                  <select bind:value={config.stt_config.provider} on:change={onCloudProviderChange}>
+                    <option value="groq">Groq</option>
+                    <option value="openai">OpenAI</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span class="setting-name">API Key</span>
+                  {#if hasApiKey && !apiKeyInput}
+                    <span class="badge configured">✓ Configured</span>
+                  {/if}
+                </div>
+                <div class="setting-control full-width">
+                  <div class="input-group">
+                    <input
+                      type="password"
+                      bind:value={apiKeyInput}
+                      on:input={scheduleSave}
+                      placeholder={hasApiKey ? "Enter new key to change" : "Enter API key"}
+                    />
+                    <button class="btn-secondary" on:click={checkApiKey}>Validate</button>
+                    {#if hasApiKey && !apiKeyInput}
+                      <button class="btn-secondary danger" on:click={clearApiKey}>Clear</button>
+                    {/if}
+                  </div>
+                  {#if apiKeyValid !== null}
+                    <span class="validation {apiKeyValid ? 'success' : 'error'}">
+                      {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
+                    </span>
+                  {/if}
+                  <p class="hint">
+                    {#if config.stt_config.provider === 'openai'}
+                      <a href="https://platform.openai.com/api-keys" target="_blank">Get your API key from OpenAI →</a>
+                    {:else}
+                      <a href="https://console.groq.com" target="_blank">Get your API key from Groq →</a>
+                    {/if}
+                  </p>
+                </div>
+              </div>
+            {/if}
+
+            {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
+              <div class="setting-row local-model-row">
+                <div class="setting-label full-width">
+                  <span class="setting-name">Local Model</span>
+                  <span class="setting-desc">Select and manage local STT models</span>
+
+                  <div class="model-list">
+                    {#each LOCAL_MODEL_IDS as modelId}
+                      {@const status = modelStatuses[modelId]}
+                      {@const progress = downloadProgress[modelId]}
+                      {@const sidecarId = modelIdToSidecarId(modelId)}
+                      {@const engineProgress = sidecarId ? engineDownloadProgress[sidecarId] : null}
+                      {@const err = modelErrors[modelId]}
+                      {@const isActive = (config.stt_config.local_model ?? 'sensevoice') === modelId}
+                      <div class="model-item" class:active={isActive}>
+                        <div class="model-radio-row" role="button" tabindex="0" on:click={() => setActiveLocalModel(modelId)} on:keydown={(ev) => ev.key === 'Enter' && setActiveLocalModel(modelId)}>
+                          <span class="model-radio" aria-checked={isActive} role="radio">
+                            {#if isActive}
+                              <Icon icon="ph:radio-button-fill" />
+                            {:else}
+                              <Icon icon="ph:circle" />
+                            {/if}
+                          </span>
+                          <div class="model-info">
+                            <strong>{status?.label ?? modelId}</strong>
+                            <span>{status?.size_mb ?? 0} MB • {status?.quality ?? '—'} • {status?.languages ?? '—'}</span>
+                            {#if hardwareReqs[modelId] && !hardwareReqs[modelId].can_run}
+                              <span class="warning">⚠️ {hardwareReqs[modelId].reason}</span>
+                            {/if}
+                            {#if sidecarAvailable[modelId] === false}
+                              <span class="warning">Engine not available on this platform</span>
+                            {/if}
+                            {#if status}
+                              <span class="status-badge {status.status.toLowerCase()}">{status.status}</span>
+                            {/if}
+                          </div>
+                        </div>
+                        {#if progress}
+                          <div class="model-download-progress">
+                            <progress value={progress.percent ?? 0} max="100" />
+                            <span>{progress.percent != null ? Math.round(progress.percent) + '%' : 'Downloading…'}</span>
+                          </div>
+                        {/if}
+                        {#if status?.status === 'Starting' && engineProgress}
+                          <div class="model-download-progress">
+                            <progress value={engineProgress.percent ?? 0} max="100" />
+                            <span>{engineProgress.percent != null ? Math.round(engineProgress.percent) + '%' : 'Downloading engine…'}</span>
+                          </div>
+                        {/if}
+                        {#if err}
+                          <p class="model-error">{err}</p>
+                        {/if}
+                        <div class="model-actions">
+                          {#if !status?.installed}
+                            <button class="btn-secondary" disabled={(hardwareReqs[modelId] && !hardwareReqs[modelId].can_run) || sidecarAvailable[modelId] === false} on:click|stopPropagation={() => downloadModel(modelId)}>Download</button>
+                          {:else}
+                            {#if status.status === 'Stopped' || status.status === 'Error'}
+                              <button class="btn-secondary" disabled={sidecarAvailable[modelId] === false} on:click|stopPropagation={() => startModel(modelId)}>Start</button>
+                            {:else if status.status === 'Running'}
+                              <button class="btn-secondary" on:click|stopPropagation={() => stopModel(modelId)}>Stop</button>
+                              <button class="btn-secondary" on:click|stopPropagation={() => restartModel(modelId)}>Restart</button>
+                            {/if}
+                            <button class="btn-secondary danger" on:click|stopPropagation={() => deleteModel(modelId)}>Delete</button>
+                          {/if}
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+
+                  {#if sidecarInstalled}
+                    <div class="local-engine-section">
+                      <span class="setting-desc">Local STT engine is installed</span>
+                      <button class="btn-secondary danger" on:click={() => uninstallEngine(config?.stt_config?.local_model ?? 'sensevoice')}>Uninstall engine</button>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+
+            <div class="setting-row language-row">
+              <div class="setting-label full-width">
+                <span class="setting-name">Recognition Languages</span>
+                <span class="setting-desc">First language is the default. Support depends on provider.</span>
+
+                <div class="selected-languages">
+                  {#each (config.languages ?? ['en']) as code, i}
+                    {@const supported = isLanguageSupportedByProvider(code, langProviderKey)}
+                    <div class="lang-row" class:unsupported={!supported}>
+                      <span class="lang-badge">
+                        {#if i === 0}<span class="default-tag">Default</span>{/if}
+                        {languageLabel(code)}
+                        {#if !supported}
+                          <span class="unsupported-icon" title="Not supported">⚠</span>
                         {/if}
                       </span>
-                      <div class="model-info">
-                        <strong>{status?.label ?? modelId}</strong>
-                        <span>{status?.size_mb ?? 0} MB • {status?.quality ?? '—'} • {status?.languages ?? '—'}</span>
-                        {#if hardwareReqs[modelId] && !hardwareReqs[modelId].can_run}
-                          <span class="warning">⚠️ {hardwareReqs[modelId].reason}</span>
+                      <div class="lang-actions">
+                        {#if i > 0}
+                          <button type="button" class="btn-icon" title="Move up" on:click={() => moveLanguageUp(i)}><Icon icon="ph:arrow-up" /></button>
                         {/if}
-                        {#if sidecarAvailable[modelId] === false}
-                          <span class="warning">Engine not available on this platform</span>
+                        {#if i < (config.languages?.length ?? 1) - 1}
+                          <button type="button" class="btn-icon" title="Move down" on:click={() => moveLanguageDown(i)}><Icon icon="ph:arrow-down" /></button>
                         {/if}
-                        {#if status}
-                          <span class="status-badge {status.status.toLowerCase()}">{status.status}</span>
-                        {/if}
+                        <button type="button" class="btn-icon remove" title="Remove" on:click={() => removeLanguage(i)}><Icon icon="ph:x" /></button>
                       </div>
                     </div>
-                    {#if progress}
-                      <div class="model-download-progress">
-                        <progress value={progress.percent ?? 0} max="100" />
-                        <span>{progress.percent != null ? Math.round(progress.percent) + '%' : 'Downloading model…'}</span>
-                      </div>
-                    {/if}
-                    {#if status?.status === 'Starting' && engineProgress}
-                      <div class="model-download-progress">
-                        <progress value={engineProgress.percent ?? 0} max="100" />
-                        <span>{engineProgress.percent != null ? Math.round(engineProgress.percent) + '%' : 'Downloading engine…'}</span>
-                      </div>
-                    {/if}
-                    {#if err}
-                      <p class="model-error">{err}</p>
-                    {/if}
-                    <div class="model-actions">
-                      {#if !status?.installed}
-                        <button class="btn-secondary" disabled={(hardwareReqs[modelId] && !hardwareReqs[modelId].can_run) || sidecarAvailable[modelId] === false} on:click|stopPropagation={() => downloadModel(modelId)}>Download</button>
-                      {:else}
-                        {#if status.status === 'Stopped' || status.status === 'Error'}
-                          <button class="btn-secondary" disabled={sidecarAvailable[modelId] === false} on:click|stopPropagation={() => startModel(modelId)} title={sidecarAvailable[modelId] === false ? 'Engine not available on this platform' : ''}>Start</button>
-                        {:else if status.status === 'Running'}
-                          <button class="btn-secondary" on:click|stopPropagation={() => stopModel(modelId)}>Stop</button>
-                          <button class="btn-secondary" on:click|stopPropagation={() => restartModel(modelId)}>Restart</button>
-                        {/if}
-                        <button class="btn-secondary btn-danger" title="Delete model" on:click|stopPropagation={() => deleteModel(modelId)}>Delete</button>
-                      {/if}
-                    </div>
+                  {/each}
+                </div>
+                <div class="add-language">
+                  <select bind:value={addLanguageCode} on:change={addSelectedLanguage}>
+                    <option value="">Add a language…</option>
+                    {#each LANGUAGE_OPTIONS as opt}
+                      <option value={opt.code} disabled={(config?.languages ?? []).includes(opt.code)}>{opt.label}</option>
+                    {/each}
+                  </select>
+                </div>
+
+                {#if (config?.languages?.length ?? 0) >= 2}
+                  <div class="language-toggle-hotkey">
+                    <span class="setting-desc">Language toggle hotkey</span>
+                    <HotkeyCapture value={config.language_toggle_hotkey ?? ''} onChange={setLanguageToggleHotkey} />
                   </div>
-                {/each}
+                {/if}
               </div>
-              {#if sidecarInstalled}
-                <div class="local-engine-section">
-                  <span class="label-text">Local engine</span>
-                  <p class="hint">The STT engine binary is installed. You can uninstall it to free space; it will be downloaded again when you start a local model.</p>
-                  <button class="btn-secondary btn-danger" type="button" on:click={() => uninstallEngine(config?.stt_config?.local_model ?? 'sensevoice')}>Uninstall engine</button>
-                </div>
-              {/if}
             </div>
-          {/if}
-
-          <div class="form-group language-multiselect">
-            <label for="recognition-languages">Recognition languages</label>
-            <p class="hint">First language is the default. Support depends on the current provider above; unsupported languages are dimmed.</p>
-            <div class="selected-languages">
-              {#each (config.languages ?? ['en']) as code, i}
-                {@const supported = isLanguageSupportedByProvider(code, langProviderKey)}
-                <div class="lang-row" class:unsupported={!supported}>
-                  <span class="lang-badge">
-                    {#if i === 0}<span class="default-tag">Default</span> {/if}
-                    {languageLabel(code)}
-                    {#if !supported}
-                      <span class="unsupported-icon" title="Not supported by current STT provider">⚠</span>
-                    {/if}
-                  </span>
-                  <div class="lang-actions">
-                    {#if i > 0}
-                      <button type="button" class="btn-icon" title="Move up" on:click={() => moveLanguageUp(i)}>↑</button>
-                    {/if}
-                    {#if i < (config.languages?.length ?? 1) - 1}
-                      <button type="button" class="btn-icon" title="Move down" on:click={() => moveLanguageDown(i)}>↓</button>
-                    {/if}
-                    <button type="button" class="btn-icon remove" title="Remove" on:click={() => removeLanguage(i)}>×</button>
-                  </div>
-                </div>
-              {/each}
-            </div>
-            <div class="add-language">
-              <select
-                id="recognition-languages"
-                bind:value={addLanguageCode}
-                on:change={addSelectedLanguage}
-              >
-                <option value="">Add a language…</option>
-                {#each LANGUAGE_OPTIONS as opt}
-                  <option value={opt.code} disabled={(config?.languages ?? []).includes(opt.code)}>{opt.label}</option>
-                {/each}
-              </select>
-            </div>
-          </div>
-
-          {#if (config?.languages?.length ?? 0) >= 2}
-            <div class="form-group">
-              <label for="language-toggle-hotkey">Language toggle hotkey</label>
-              <HotkeyCapture
-                value={config.language_toggle_hotkey ?? ''}
-                onChange={setLanguageToggleHotkey}
-              />
-              <p class="hint">Press to switch between the first two languages. A notification is shown on toggle.</p>
-            </div>
-          {/if}
           </div>
         </section>
 
-        <section class:collapsed={collapsedSections.dictation_formatting}>
-          <h3 on:click={() => toggleSection('dictation_formatting')}>Text Formatting</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.dictation_formatting}>
+          <button type="button" class="section-header" on:click={() => toggleSection('dictation_formatting')}>
+            <h3>Text Formatting</h3>
+            <Icon icon={collapsedSections.dictation_formatting ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-            <div class="form-group checkbox">
-              <label>
+            <div class="setting-row checkbox-row">
+              <label class="checkbox-label">
                 <input type="checkbox" bind:checked={config.formatting.voice_commands} on:change={scheduleSave} />
-                Enable voice commands ("period", "new line", etc.)
+                <span>Enable voice commands ("period", "new line", etc.)</span>
               </label>
             </div>
-
-            <div class="form-group checkbox">
-              <label>
+            <div class="setting-row checkbox-row">
+              <label class="checkbox-label">
                 <input type="checkbox" bind:checked={config.formatting.filler_word_removal} on:change={scheduleSave} />
-                Remove filler words ("um", "uh", "like")
+                <span>Remove filler words ("um", "uh", "like")</span>
               </label>
             </div>
-
-            <div class="form-group checkbox">
-              <label>
+            <div class="setting-row checkbox-row">
+              <label class="checkbox-label">
                 <input type="checkbox" bind:checked={config.formatting.auto_punctuation} on:change={scheduleSave} />
-                Auto-punctuation
+                <span>Auto-punctuation</span>
               </label>
             </div>
-
-            <div class="form-group">
-              <label for="injection-method">Text Injection Method</label>
-              <select id="injection-method" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
-                <option value="Auto">Auto (recommended)</option>
-                <option value="Keystrokes">Keystrokes only</option>
-                <option value="Clipboard">Clipboard only</option>
-              </select>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Text Injection Method</span>
+              </div>
+              <div class="setting-control">
+                <select bind:value={config.formatting.injection_method} on:change={scheduleSave}>
+                  <option value="Auto">Auto (recommended)</option>
+                  <option value="Keystrokes">Keystrokes only</option>
+                  <option value="Clipboard">Clipboard only</option>
+                </select>
+              </div>
             </div>
           </div>
         </section>
 
       {:else if activeTab === 'dictionary'}
-        <section class:collapsed={collapsedSections.dictionary}>
-          <h3 on:click={() => toggleSection('dictionary')}>Custom vocabulary</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.dictionary}>
+          <button type="button" class="section-header" on:click={() => toggleSection('dictionary')}>
+            <h3>Custom Vocabulary</h3>
+            <Icon icon={collapsedSections.dictionary ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-            {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
-              <p class="hint" style="margin-bottom: 16px;">
-                Custom words improve cloud transcription. In Local mode (or when Hybrid uses the local engine), entries are saved but not applied to recognition.
-              </p>
-            {:else}
-              <p class="hint" style="margin-bottom: 16px;">
-                These words and phrases are sent to the cloud transcription engine to improve accuracy (e.g. names, brands).
-              </p>
-            {/if}
-            <div class="form-group">
-              <label for="dictionary-new-term">Add term</label>
-              <div class="input-group" style="display: flex; gap: 8px; align-items: center;">
-                <input
-                  id="dictionary-new-term"
-                  type="text"
-                  bind:value={dictionaryNewTerm}
-                  placeholder="e.g. Kalam, Balacode"
-                  on:keydown={(e) => e.key === 'Enter' && addDictionaryTerm()}
-                />
-                <button
-                  type="button"
-                  class="btn-secondary"
-                  disabled={!dictionaryNewTerm.trim() || dictionaryLoading}
-                  on:click={addDictionaryTerm}
-                >
-                  Add
-                </button>
+            <p class="hint">
+              These words improve transcription accuracy for names, brands, and specialized terms.
+            </p>
+            <div class="setting-row">
+              <div class="setting-label full-width">
+                <span class="setting-name">Add Term</span>
+                <div class="input-group">
+                  <input
+                    type="text"
+                    bind:value={dictionaryNewTerm}
+                    placeholder="e.g. Kalam, Balacode"
+                    on:keydown={(e) => e.key === 'Enter' && addDictionaryTerm()}
+                  />
+                  <button type="button" class="btn-secondary" disabled={!dictionaryNewTerm.trim() || dictionaryLoading} on:click={addDictionaryTerm}>
+                    Add
+                  </button>
+                </div>
               </div>
             </div>
-            <div class="form-group">
-              <span class="label-text">Current terms</span>
-              {#if dictionaryLoading && dictionaryEntries.length === 0}
-                <p class="hint">Loading…</p>
-              {:else if dictionaryEntries.length === 0}
-                <p class="hint">No terms yet. Add words or phrases above to improve cloud transcription.</p>
-              {:else}
-                <ul class="dictionary-list">
-                  {#each dictionaryEntries as entry (entry.id)}
-                    <li>
-                      <span class="dictionary-term">{entry.term}</span>
-                      <button
-                        type="button"
-                        class="btn-icon btn-remove"
-                        title="Remove"
-                        on:click={() => deleteDictionaryEntry(entry.id)}
-                      >
-                        ×
-                      </button>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
+            <div class="setting-row">
+              <div class="setting-label full-width">
+                <span class="setting-name">Current Terms</span>
+                {#if dictionaryLoading && dictionaryEntries.length === 0}
+                  <p class="hint">Loading…</p>
+                {:else if dictionaryEntries.length === 0}
+                  <p class="hint">No terms yet. Add words above.</p>
+                {:else}
+                  <ul class="dictionary-list">
+                    {#each dictionaryEntries as entry (entry.id)}
+                      <li>
+                        <span class="dictionary-term">{entry.term}</span>
+                        <button type="button" class="btn-icon remove" on:click={() => deleteDictionaryEntry(entry.id)}>
+                          <Icon icon="ph:trash" />
+                        </button>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
             </div>
           </div>
         </section>
 
       {:else if activeTab === 'command'}
-        <section class:collapsed={collapsedSections.command}>
-          <h3 on:click={() => toggleSection('command')}>Command Mode</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.command}>
+          <button type="button" class="section-header" on:click={() => toggleSection('command')}>
+            <h3>Command Mode</h3>
+            <Icon icon={collapsedSections.command ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-            <p class="hint">Use a dedicated hotkey to speak a command. The app creates a note, task, or reminder instead of typing. Without an LLM you must say "new note", "new task", or "new reminder" followed by your content. With an LLM provider, you can speak naturally—the app infers the type and extracts dates, times, repetition, and description from what you say.</p>
-
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={config.command_config.enabled} on:change={scheduleSave} />
-              Enable Command Mode
-            </label>
-          </div>
-
-          {#if config.command_config.enabled}
-            <div class="form-group">
-              <label for="command-hotkey">Command Hotkey</label>
-              <HotkeyCapture
-                value={config.command_config.hotkey ?? ''}
-                onChange={setCommandHotkey}
-              />
-              {#if config.command_config.provider}
-                <p class="hint">Press this hotkey, then speak naturally (e.g. "Remind me to call Mom tomorrow at 5pm" or "Task: buy milk by Friday"). The app infers note/task/reminder and extracts details. Must be different from the main dictation hotkey.</p>
-              {:else}
-                <p class="hint">Press this hotkey, then say "new note ...", "new task ...", or "new reminder ...". Must be different from the main dictation hotkey.</p>
-              {/if}
+            <p class="hint">
+              Use a dedicated hotkey to speak commands. Creates notes, tasks, or reminders.
+            </p>
+            <div class="setting-row checkbox-row">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={config.command_config.enabled} on:change={scheduleSave} />
+                <span>Enable Command Mode</span>
+              </label>
             </div>
 
-            <div class="form-group">
-              <label for="command-llm-provider">LLM Provider (optional)</label>
-              <select
-                id="command-llm-provider"
-                value={config.command_config.provider ?? ''}
-                on:change={setCommandProvider}
-              >
-                <option value="">None (basic parsing only)</option>
-                <option value="groq">Groq</option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="gemini">Gemini (AI Studio)</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-              </select>
-              <p class="hint">With an LLM provider, command mode understands natural language: you don't need to say "new note", "new task", or "new reminder". The app infers the type and extracts dates, times, repetition, and description from your speech.</p>
-            </div>
-
-            {#if config.command_config.provider}
-              <div class="form-group">
-                <label for="command-api-key">
-                  API Key
-                  {#if commandApiKeyStatus === 'valid'}
-                    <span class="badge configured">✓ Valid</span>
-                  {:else if commandApiKeyStatus === 'invalid'}
-                    <span class="badge error">✗ Invalid</span>
-                  {:else if hasCommandApiKey && !commandApiKeyInput}
-                    <span class="badge configured">✓ Configured</span>
-                  {/if}
-                </label>
-                <div class="input-group">
-                  <input
-                    id="command-api-key"
-                    type="password"
-                    bind:value={commandApiKeyInput}
-                    on:input={() => {
-                      commandApiKeyStatus = 'idle'
-                      commandApiKeyError = null
-                      scheduleSave()
-                    }}
-                    placeholder={hasCommandApiKey ? "•••••••••••••••• (enter new key to change)" : "Enter your API key"}
-                  />
-                  <button
-                    class="btn-secondary"
-                    disabled={loadingLlmModels || (!commandApiKeyInput.trim() && !config.command_config.api_keys?.[config.command_config.provider])}
-                    on:click={fetchCommandLlmModels}
-                  >
-                    {loadingLlmModels ? 'Testing…' : 'Test & Load Models'}
-                  </button>
-                  {#if hasCommandApiKey && !commandApiKeyInput}
-                    <button class="btn-secondary btn-danger" on:click={clearCommandApiKey}>
-                      Clear
-                    </button>
-                  {/if}
+            {#if config.command_config.enabled}
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span class="setting-name">Command Hotkey</span>
+                  <span class="setting-desc">Press, then speak naturally</span>
                 </div>
-                {#if commandApiKeyError}
-                  <p class="hint error-text">{commandApiKeyError}</p>
-                {/if}
+                <div class="setting-control">
+                  <HotkeyCapture value={config.command_config.hotkey ?? ''} onChange={setCommandHotkey} />
+                </div>
               </div>
 
-              {#if commandApiKeyStatus === 'valid' || llmModels.length > 0 || config.command_config.models?.[config.command_config.provider]}
-                <div class="form-group">
-                  <label for="command-model">
-                    Model
-                    {#if commandModelStatus === 'valid'}
-                      <span class="badge configured">✓ Valid</span>
-                    {:else if commandModelStatus === 'invalid'}
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span class="setting-name">LLM Provider</span>
+                  <span class="setting-desc">Optional: enables natural language understanding</span>
+                </div>
+                <div class="setting-control">
+                  <select value={config.command_config.provider ?? ''} on:change={setCommandProvider}>
+                    <option value="">None (basic parsing)</option>
+                    <option value="groq">Groq</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </div>
+              </div>
+
+              {#if config.command_config.provider}
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">API Key</span>
+                    {#if commandApiKeyStatus === 'valid'}
+                      <span class="badge success">✓ Valid</span>
+                    {:else if commandApiKeyStatus === 'invalid'}
                       <span class="badge error">✗ Invalid</span>
-                    {:else if commandModelStatus === 'testing'}
-                      <span class="badge">Testing…</span>
-                    {/if}
-                  </label>
-                  <div class="custom-combobox" class:open={commandModelDropdownOpen} bind:this={comboboxEl}>
-                    <div class="input-wrapper">
-                      <input
-                        id="command-model"
-                        type="text"
-                        bind:value={commandModelInputText}
-                        on:focus={openDropdown}
-                        on:blur={closeDropdown}
-                        on:input={handleModelInput}
-                        placeholder="Type or select a model..."
-                        autocomplete="off"
-                        spellcheck="false"
-                      />
-                      <Icon icon="ph:caret-down-bold" class="dropdown-icon" />
-                    </div>
-                    {#if commandModelDropdownOpen}
-                      <div class="combobox-dropdown-container" style="position: fixed; top: {dropdownTop}px; left: {dropdownLeft}px; width: {dropdownWidth}px;">
-                        {#if filteredModels.length > 0}
-                          <ul class="combobox-dropdown" role="listbox">
-                            {#each filteredModels as m}
-                              <li 
-                                role="option"
-                                aria-selected={commandModelInputText === m}
-                                class:selected={config.command_config.models?.[config.command_config.provider] === m}
-                                tabindex="0"
-                                on:click={() => selectModelFromDropdown(m)}
-                                on:keydown={(e) => e.key === 'Enter' && selectModelFromDropdown(m)}
-                              >
-                                <span class="model-name">{m}</span>
-                                {#if config.command_config.models?.[config.command_config.provider] === m}
-                                  <Icon icon="ph:check-bold" class="check-icon" />
-                                {/if}
-                              </li>
-                            {/each}
-                          </ul>
-                        {:else}
-                          <div class="combobox-empty">
-                            <span class="empty-text">Use custom model:</span>
-                            <span class="custom-model-badge">{commandModelInputText || '...'}</span>
-                          </div>
-                        {/if}
-                        <div class="combobox-footer">
-                          <Icon icon="ph:info-duotone" /> Select from the list or type a custom model ID
-                        </div>
-                      </div>
+                    {:else if hasCommandApiKey && !commandApiKeyInput}
+                      <span class="badge configured">✓ Configured</span>
                     {/if}
                   </div>
-                  {#if commandModelError}
-                    <p class="hint error-text">{commandModelError}</p>
-                  {/if}
+                  <div class="setting-control full-width">
+                    <div class="input-group">
+                      <input
+                        type="password"
+                        bind:value={commandApiKeyInput}
+                        on:input={() => { commandApiKeyStatus = 'idle'; commandApiKeyError = null; scheduleSave(); }}
+                        placeholder={hasCommandApiKey ? "Enter new key to change" : "Enter API key"}
+                      />
+                      <button class="btn-secondary" disabled={loadingLlmModels || (!commandApiKeyInput.trim() && !config.command_config.api_keys?.[config.command_config.provider])} on:click={fetchCommandLlmModels}>
+                        {loadingLlmModels ? 'Testing…' : 'Test & Load'}
+                      </button>
+                      {#if hasCommandApiKey && !commandApiKeyInput}
+                        <button class="btn-secondary danger" on:click={clearCommandApiKey}>Clear</button>
+                      {/if}
+                    </div>
+                    {#if commandApiKeyError}
+                      <p class="hint error">{commandApiKeyError}</p>
+                    {/if}
+                  </div>
                 </div>
+
+                {#if commandApiKeyStatus === 'valid' || llmModels.length > 0 || config.command_config.models?.[config.command_config.provider]}
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span class="setting-name">Model</span>
+                      {#if commandModelStatus === 'valid'}
+                        <span class="badge success">✓ Valid</span>
+                      {:else if commandModelStatus === 'invalid'}
+                        <span class="badge error">✗ Invalid</span>
+                      {:else if commandModelStatus === 'testing'}
+                        <span class="badge">Testing…</span>
+                      {/if}
+                    </div>
+                    <div class="setting-control full-width">
+                      <div class="custom-combobox" class:open={commandModelDropdownOpen} bind:this={comboboxEl}>
+                        <div class="input-wrapper">
+                          <input
+                            type="text"
+                            bind:value={commandModelInputText}
+                            on:focus={openDropdown}
+                            on:blur={closeDropdown}
+                            on:input={handleModelInput}
+                            placeholder="Type or select a model..."
+                            autocomplete="off"
+                          />
+                          <Icon icon="ph:caret-down" class="dropdown-icon" />
+                        </div>
+                        {#if commandModelDropdownOpen}
+                          <div class="combobox-dropdown-container" style="position: fixed; top: {dropdownTop}px; left: {dropdownLeft}px; width: {dropdownWidth}px;">
+                            {#if filteredModels.length > 0}
+                              <ul class="combobox-dropdown">
+                                {#each filteredModels as m}
+                                  <li class:selected={config.command_config.models?.[config.command_config.provider] === m} on:click={() => selectModelFromDropdown(m)}>
+                                    <span>{m}</span>
+                                    {#if config.command_config.models?.[config.command_config.provider] === m}
+                                      <Icon icon="ph:check" />
+                                    {/if}
+                                  </li>
+                                {/each}
+                              </ul>
+                            {:else}
+                              <div class="combobox-empty">
+                                <span>Use custom: {commandModelInputText || '...'}</span>
+                              </div>
+                            {/if}
+                          </div>
+                        {/if}
+                      </div>
+                      {#if commandModelError}
+                        <p class="hint error">{commandModelError}</p>
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
               {/if}
             {/if}
-          {/if}
           </div>
         </section>
 
       {:else if activeTab === 'privacy'}
-        <section class:collapsed={collapsedSections.privacy}>
-          <h3 on:click={() => toggleSection('privacy')}>Privacy</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.privacy}>
+          <button type="button" class="section-header" on:click={() => toggleSection('privacy')}>
+            <h3>Privacy</h3>
+            <Icon icon={collapsedSections.privacy ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-          <p class="hint" style="margin-bottom: 16px;">
-            Read our full <a href="https://afaraha8403.github.io/kalam/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
-          </p>
-          <div class="form-group">
-            <label for="history-retention">History Retention</label>
-            <select id="history-retention" bind:value={config.privacy.history_retention_days} on:change={scheduleSave}>
-              <option value={7}>7 days</option>
-              <option value={30}>30 days</option>
-              <option value={90}>90 days</option>
-              <option value={365}>1 year</option>
-              <option value={0}>Forever</option>
-            </select>
-          </div>
-
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={config.privacy.sensitive_app_detection} on:change={scheduleSave} />
-              Auto-switch to local mode in sensitive apps (password managers, etc.)
-            </label>
-          </div>
-
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={config.privacy.telemetry_enabled} on:change={scheduleSave} />
-              Help improve Kalam by sending anonymous usage data
-            </label>
-            <p class="hint">No audio or text is ever sent. Only metrics like session duration.</p>
-          </div>
+            <p class="hint">
+              <a href="https://kalam.stream/privacy.html" target="_blank">Read our Privacy Policy →</a>
+            </p>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">History Retention</span>
+              </div>
+              <div class="setting-control">
+                <select bind:value={config.privacy.history_retention_days} on:change={scheduleSave}>
+                  <option value={7}>7 days</option>
+                  <option value={30}>30 days</option>
+                  <option value={90}>90 days</option>
+                  <option value={365}>1 year</option>
+                  <option value={0}>Forever</option>
+                </select>
+              </div>
+            </div>
+            <div class="setting-row checkbox-row">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={config.privacy.sensitive_app_detection} on:change={scheduleSave} />
+                <span>Auto-switch to local mode in sensitive apps</span>
+              </label>
+            </div>
+            <div class="setting-row checkbox-row">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={config.privacy.telemetry_enabled} on:change={scheduleSave} />
+                <span>Send anonymous usage data to improve Kalam</span>
+              </label>
+              <span class="setting-desc">No audio or text is ever sent</span>
+            </div>
           </div>
         </section>
 
       {:else if activeTab === 'advanced'}
-        <section class:collapsed={collapsedSections.advanced}>
-          <h3 on:click={() => toggleSection('advanced')}>App Data & Logging</h3>
+        <section class="settings-section" class:collapsed={collapsedSections.advanced}>
+          <button type="button" class="section-header" on:click={() => toggleSection('advanced')}>
+            <h3>App Data & Logging</h3>
+            <Icon icon={collapsedSections.advanced ? 'ph:caret-right' : 'ph:caret-down'} />
+          </button>
           <div class="section-content">
-          <p class="hint" style="margin-bottom: 16px;">
-            When enabled, the app keeps a bounded in-memory log (no transcription or personal data).
-            Logs are stored in memory and in the database (data.db) in the app data folder—no separate .log files are created. Use the buttons below to export for support.
-          </p>
-          <div class="form-group">
-            <span class="label-text">App data folder</span>
-            <p class="hint">Config, database (data.db), and app data are stored here. Click to open the folder.</p>
-            {#if appDataPath}
-              <p class="path-display" title={appDataPath}><code>{appDataPath}</code></p>
-            {/if}
-            {#if openFolderError}
-              <p class="save-error" role="alert">Failed to open folder: {openFolderError}</p>
-            {/if}
-            <button
-              type="button"
-              class="btn-secondary btn-link"
-              on:click={openAppDataFolder}
-              title="Open app data folder in file manager"
-            >
-              Open app data folder
-            </button>
-          </div>
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={config.logging.enabled} on:change={scheduleSave} />
-              Enable in-app logging
-            </label>
-          </div>
-          <div class="form-group">
-            <label for="log-level">Log level</label>
-            <select id="log-level" bind:value={config.logging.level} on:change={scheduleSave}>
-              <option value="Off">Off</option>
-              <option value="Error">Error</option>
-              <option value="Warn">Warn</option>
-              <option value="Info">Info</option>
-              <option value="Debug">Debug</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="log-max-records">Max records to keep</label>
-            <input
-              id="log-max-records"
-              type="number"
-              min="500"
-              max="20000"
-              step="500"
-              bind:value={config.logging.max_records}
-              on:change={scheduleSave}
-            />
-            <p class="hint">Between 500 and 20,000. Oldest entries are dropped when the limit is reached.</p>
-          </div>
-          <div class="form-group">
-            <span class="label-text">Export log</span>
-            <div class="button-row">
-              <button
-                class="btn-secondary"
-                on:click={downloadLog}
-                title="Save current log buffer to a file (opens Save dialog)"
-              >
-                Download log
-              </button>
-              <button
-                class="btn-secondary"
-                on:click={downloadLogsCsv}
-                title="Download all logs from database as CSV"
-              >
-                Download logs (CSV)
-              </button>
+            <p class="hint">Logs are stored in memory and database—no separate .log files.</p>
+
+            <div class="setting-row">
+              <div class="setting-label full-width">
+                <span class="setting-name">App Data Folder</span>
+                {#if appDataPath}
+                  <code class="path-display">{appDataPath}</code>
+                {/if}
+                {#if openFolderError}
+                  <p class="hint error">Failed to open: {openFolderError}</p>
+                {/if}
+                <button type="button" class="btn-secondary" on:click={openAppDataFolder}>
+                  Open folder
+                </button>
+              </div>
             </div>
-            <p class="hint">
-              {#if logEmpty}
-                No log entries yet. Enable logging and use the app to capture entries, then download.
-              {:else}
-                Download log: current in-memory buffer. Download logs (CSV): full history from data.db. No transcription or sensitive data.
-              {/if}
-            </p>
-            {#if logExportMessage}
-              <p class="save-error" role="alert">{logExportMessage}</p>
-            {/if}
+
+            <div class="setting-row checkbox-row">
+              <label class="checkbox-label">
+                <input type="checkbox" bind:checked={config.logging.enabled} on:change={scheduleSave} />
+                <span>Enable in-app logging</span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Log Level</span>
+              </div>
+              <div class="setting-control">
+                <select bind:value={config.logging.level} on:change={scheduleSave}>
+                  <option value="Off">Off</option>
+                  <option value="Error">Error</option>
+                  <option value="Warn">Warn</option>
+                  <option value="Info">Info</option>
+                  <option value="Debug">Debug</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Max Records</span>
+                <span class="setting-desc">Between 500 and 20,000</span>
+              </div>
+              <div class="setting-control">
+                <input type="number" min="500" max="20000" step="500" bind:value={config.logging.max_records} on:change={scheduleSave} />
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label full-width">
+                <span class="setting-name">Export Log</span>
+                <div class="button-row">
+                  <button class="btn-secondary" on:click={downloadLog}>Download log</button>
+                  <button class="btn-secondary" on:click={downloadLogsCsv}>Download CSV</button>
+                </div>
+                <p class="hint">
+                  {#if logEmpty}
+                    No log entries yet. Enable logging to capture entries.
+                  {:else}
+                    Download current buffer or full history from database.
+                  {/if}
+                </p>
+                {#if logExportMessage}
+                  <p class="hint error">{logExportMessage}</p>
+                {/if}
+              </div>
+            </div>
           </div>
         </section>
 
-        <section class="danger-zone">
-          <h4 on:click={() => toggleSection('advanced_danger')}>Danger Zone</h4>
-          <div class="section-content">
-          <p class="hint" style="margin-bottom: 12px;">Reset removes all configuration, history, and data. You will see the onboarding again as if the app were newly installed.</p>
-          {#if resetError}
-            <p class="save-error" role="alert" style="margin-bottom: 12px;">{resetError}</p>
-          {/if}
-          <button
-            class="btn-danger"
-            disabled={resetting}
-            on:click={confirmAndReset}
-          >
-            {resetting ? 'Resetting…' : 'Reset entire application'}
+        <section class="settings-section danger-zone" class:collapsed={collapsedSections.advanced_danger}>
+          <button type="button" class="section-header" on:click={() => toggleSection('advanced_danger')}>
+            <h3>Danger Zone</h3>
+            <Icon icon={collapsedSections.advanced_danger ? 'ph:caret-right' : 'ph:caret-down'} />
           </button>
+          <div class="section-content">
+            <p class="hint">Reset removes all configuration, history, and data.</p>
+            {#if resetError}
+              <p class="hint error">{resetError}</p>
+            {/if}
+            <button class="btn-danger" disabled={resetting} on:click={confirmAndReset}>
+              {resetting ? 'Resetting…' : 'Reset entire application'}
+            </button>
           </div>
         </section>
 
@@ -1730,727 +1675,423 @@
       {/if}
     </div>
   </div>
+{:else}
+  <div class="page fade-in state-container">
+    {#if !initialLoadDone}
+      <Icon icon="ph:spinner-gap-duotone" />
+      <p>Loading settings…</p>
+    {:else}
+      <Icon icon="ph:info" />
+      <p>Settings are available in the Kalam desktop app.</p>
+    {/if}
+  </div>
 {/if}
 
 <style>
-  .settings {
-    max-width: 900px;
-    padding: 12px 16px 32px;
-    animation: settingsIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    position: relative;
+  /* Prototype-matching styles - using CSS custom properties from App.svelte */
+  .settings-page {
+    max-width: 800px;
   }
 
-  .settings::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 0;
-    height: 320px;
-    background: radial-gradient(ellipse 100% 100% at 50% -10%, var(--primary-alpha-light), transparent 55%);
-    pointer-events: none;
-    z-index: -1;
+  .settings-header {
+    margin-bottom: var(--space-xl);
   }
 
-  @keyframes settingsIn {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
+  .save-status {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    padding: 6px 12px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-full);
   }
 
-  header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 28px;
-    padding: 4px 0;
+  .save-status.error {
+    color: #FF3B30;
+    background: rgba(255, 59, 48, 0.1);
   }
 
-  header h2 {
-    font-size: 26px;
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    color: var(--navy-deep);
-    margin: 0;
-  }
-
-  .tabs {
-    display: flex;
-    gap: 2px;
-    margin-bottom: 28px;
-    background: var(--bg-card);
-    padding: 6px;
-    border-radius: var(--radius-lg);
-    overflow-x: auto;
-    scrollbar-width: none;
-    box-shadow: var(--shadow-sm);
-    border: 1px solid var(--border-subtle);
-    position: sticky;
-    top: 0;
-    z-index: 1;
-  }
-
-  .tabs::-webkit-scrollbar {
-    display: none;
-  }
-
-  .tab {
-    padding: 10px 18px;
-    background: transparent;
-    border: none;
+  .save-error {
+    margin: 0 0 var(--space-lg);
+    padding: 12px 16px;
+    background: rgba(255, 59, 48, 0.1);
+    border: 1px solid rgba(255, 59, 48, 0.2);
     border-radius: var(--radius-md);
+    color: #FF3B30;
+    font-size: 14px;
+  }
+
+  .settings-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: var(--space-xl);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1px;
+    overflow-x: auto;
+  }
+
+  .settings-tab {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border: none;
+    background: transparent;
     color: var(--text-secondary);
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
     white-space: nowrap;
-    position: relative;
   }
 
-  .tab:hover {
-    color: var(--primary-dark);
-    background: var(--primary-alpha-subtle);
+  .settings-tab:hover {
+    color: var(--text);
+    background: var(--bg-hover);
   }
 
-  .tab.active {
-    background: var(--primary-alpha);
-    color: var(--primary-dark);
+  .settings-tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
     font-weight: 600;
   }
 
-  .tab.active::after {
-    content: '';
-    position: absolute;
-    bottom: -6px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 20px;
-    height: 3px;
-    background: var(--primary);
-    border-radius: 2px;
+  .settings-content {
+    min-height: 400px;
   }
 
-  .tab-content section {
-    animation: sectionIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) backwards;
-  }
-
-  .tab-content section:nth-child(1) { animation-delay: 0.02s; }
-  .tab-content section:nth-child(2) { animation-delay: 0.05s; }
-  .tab-content section:nth-child(3) { animation-delay: 0.08s; }
-  .tab-content section:nth-child(4) { animation-delay: 0.11s; }
-  .tab-content section:nth-child(5) { animation-delay: 0.14s; }
-  .tab-content section:nth-child(6) { animation-delay: 0.17s; }
-  .tab-content section:nth-child(7) { animation-delay: 0.2s; }
-  .tab-content section:nth-child(8) { animation-delay: 0.23s; }
-  .tab-content section:nth-child(9) { animation-delay: 0.26s; }
-  .tab-content section:nth-child(10) { animation-delay: 0.29s; }
-
-  @keyframes sectionIn {
-    from { opacity: 0; transform: translateY(14px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  section {
-    background: var(--bg-card);
-    border: 1px solid var(--border-subtle);
+  .settings-section {
+    margin-bottom: var(--space-lg);
+    background: var(--bg-elevated);
     border-radius: var(--radius-lg);
-    padding: 28px 32px;
-    margin-bottom: 20px;
-    box-shadow: var(--shadow-sm);
-    transition: box-shadow 0.3s ease, border-color 0.2s ease, transform 0.2s ease;
-    position: relative;
+    border: 1px solid var(--border);
     overflow: hidden;
   }
 
-  section::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    background: linear-gradient(to bottom, var(--primary-alpha), var(--primary));
-    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
-    opacity: 0.9;
+  .settings-section.collapsed {
+    margin-bottom: var(--space-xs);
   }
 
-  section:hover {
-    box-shadow: var(--shadow-md);
-    border-color: var(--border);
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: var(--space-lg);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    text-align: left;
   }
 
-  section.collapsed {
-    padding-bottom: 20px;
+  .section-header:hover {
+    background: var(--bg-hover);
   }
 
-  section.collapsed .section-content {
+  .section-header h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
+  }
+
+  .section-content {
+    padding: 0 var(--space-lg) var(--space-lg);
+  }
+
+  .settings-section.collapsed .section-content {
     display: none;
   }
 
-  section h3 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0 0 20px 0;
-    padding-bottom: 12px;
-    color: var(--navy-deep);
-    border-bottom: 1px solid var(--border-subtle);
-    letter-spacing: -0.01em;
+  .setting-row {
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: 10px;
-    cursor: pointer;
+    padding: var(--space-md) 0;
+    gap: var(--space-lg);
+    border-bottom: 1px solid var(--border-light);
   }
 
-  section h3::before {
-    content: '▼';
-    font-size: 10px;
-    color: var(--text-muted);
-    transition: transform 0.2s ease;
+  .setting-row:last-child {
+    border-bottom: none;
   }
 
-  section.collapsed h3::before {
-    transform: rotate(-90deg);
+  .setting-row.checkbox-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-xs);
   }
 
-  section h3:hover::before {
-    color: var(--primary);
+  .setting-row.row-group {
+    flex-wrap: wrap;
   }
 
-  .form-group {
-    margin-bottom: 26px;
+  .setting-row.local-model-row,
+  .setting-row.language-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .form-group.row-group {
-    display: flex;
-    gap: 20px;
-    margin-bottom: 14px;
-  }
-
-  .form-group.row-group .sub-setting {
-    flex: 1;
-    margin-top: 0;
-  }
-
-  .form-group:last-child {
-    margin-bottom: 0;
-  }
-
-  .sub-setting {
-    margin-top: 0;
-  }
-
-  .dictionary-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
+  .setting-label {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
+    flex: 1;
   }
 
-  .dictionary-list li {
+  .setting-label.full-width {
+    flex: 1 1 100%;
+  }
+
+  .setting-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .setting-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .setting-control {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: var(--bg-input);
-    border-radius: var(--radius-md);
-    border: 1px solid transparent;
-    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    gap: var(--space-sm);
   }
 
-  .dictionary-list li:hover {
-    background: var(--bg-card);
-    border-color: var(--border-subtle);
-    box-shadow: var(--shadow-sm);
+  .setting-control.full-width {
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 200px;
   }
 
-  .dictionary-term {
-    font-size: 14px;
-    color: var(--text-primary);
-  }
-
-  .dictionary-list .btn-icon.btn-remove {
-    padding: 4px 10px;
-    min-width: auto;
-    font-size: 18px;
-    line-height: 1;
-    color: var(--text-muted);
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-  }
-
-  .dictionary-list .btn-icon.btn-remove:hover {
-    color: var(--text-primary);
-    background: var(--bg-app);
-  }
-
-  .about-tab {
-    padding: 0;
-  }
-
-  label,
-  .label-text {
-    display: block;
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 10px;
-    color: var(--navy-deep);
-    letter-spacing: -0.01em;
-  }
-
-  .form-group.checkbox label {
+  .checkbox-label {
     display: flex;
     align-items: center;
     gap: 12px;
     cursor: pointer;
-    font-weight: 500;
-    color: var(--text-primary);
-    user-select: none;
+    font-size: 14px;
+    color: var(--text);
   }
 
-  input[type="checkbox"] {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 20px;
-    height: 20px;
-    margin: 0;
-    background: var(--bg-input);
-    border: 2px solid var(--border-visible);
-    border-radius: 6px;
-    cursor: pointer;
-    position: relative;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: var(--shadow-inner);
-    flex-shrink: 0;
+  .checkbox-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
   }
 
-  input[type="checkbox"]:hover {
-    border-color: var(--primary);
-    background: var(--bg-card);
-  }
-
-  input[type="checkbox"]:checked {
-    background: var(--primary);
-    border-color: var(--primary);
-    box-shadow: 0 2px 8px var(--primary-alpha);
-  }
-
-  input[type="checkbox"]:checked::after {
-    content: '';
-    position: absolute;
-    left: 5px;
-    top: 1px;
-    width: 4px;
-    height: 9px;
-    border: solid var(--white);
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
-    animation: checkmark 0.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-  }
-
-  @keyframes checkmark {
-    0% { height: 0; width: 0; opacity: 0; }
-    100% { height: 9px; width: 4px; opacity: 1; }
-  }
-
-  select {
-    appearance: none;
-    -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 16px center;
-    background-size: 16px;
-    padding-right: 48px !important;
-  }
-
+  input[type="text"],
   input[type="password"],
   input[type="number"],
-  input[type="text"],
   select {
-    width: 100%;
-    padding: 14px 16px;
-    background: var(--bg-input);
-    border: 2px solid transparent;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    color: var(--text-primary);
-    font-size: 15px;
-    font-weight: 500;
-    transition: all 0.2s ease;
-    box-shadow: var(--shadow-inner);
-  }
-
-  input[type="password"]:focus,
-  input[type="number"]:focus,
-  input[type="text"]:focus,
-  select:focus {
-    outline: none;
-    background: var(--bg-card);
-    border-color: var(--primary);
-    box-shadow: 0 4px 12px var(--primary-alpha);
-  }
-  
-  input[type="password"]:hover,
-  input[type="number"]:hover,
-  input[type="text"]:hover,
-  select:hover {
-    background: var(--bg-input-hover);
-  }
-
-  .save-error {
-    margin: 0 0 20px;
-    padding: 14px 18px;
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.25);
-    border-radius: var(--radius-md);
-    color: var(--error);
+    color: var(--text);
     font-size: 14px;
-    font-weight: 500;
-    animation: shake 0.4s ease;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s ease;
   }
 
-  .path-display {
-    margin: 8px 0;
-    font-size: 13px;
-    word-break: break-all;
+  input:focus,
+  select:focus {
+    border-color: var(--text-muted);
   }
 
-  .path-display code {
-    background: var(--bg-input);
-    padding: 6px 10px;
-    border-radius: var(--radius-sm);
-    font-family: ui-monospace, monospace;
-  }
-
-  @keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    20% { transform: translateX(-4px); }
-    40% { transform: translateX(4px); }
-    60% { transform: translateX(-2px); }
-    80% { transform: translateX(2px); }
-  }
-
-  .hint {
-    font-size: 13px;
-    color: var(--text-muted);
-    margin-top: 10px;
-    line-height: 1.55;
-    max-width: 72ch;
-  }
-
-  .hint a {
-    color: var(--primary);
-    text-decoration: none;
-    font-weight: 500;
-  }
-  
-  .hint a:hover {
-    text-decoration: underline;
-  }
-
-  .hint.warning {
-    color: var(--warning);
+  select {
+    cursor: pointer;
+    min-width: 150px;
   }
 
   .input-group {
     display: flex;
-    gap: 12px;
+    gap: 8px;
+    align-items: center;
   }
 
   .input-group input {
     flex: 1;
   }
 
-  .language-multiselect .selected-languages {
-    margin-bottom: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .language-multiselect .lang-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 16px;
-    background: var(--bg-input);
+  .btn-secondary {
+    padding: 8px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    border: 1px solid transparent;
-    transition: all 0.2s ease;
-  }
-  
-  .language-multiselect .lang-row:hover {
-    background: var(--bg-card);
-    border-color: var(--border);
-    box-shadow: var(--shadow-sm);
-  }
-
-  .language-multiselect .lang-badge {
-    font-size: 15px;
+    color: var(--text);
+    font-size: 13px;
     font-weight: 500;
-    color: var(--navy-deep);
-  }
-
-  .language-multiselect .default-tag {
-    display: inline-block;
-    background: var(--primary);
-    color: var(--white);
-    font-size: 11px;
-    font-weight: 700;
-    padding: 4px 8px;
-    border-radius: var(--radius-sm);
-    margin-right: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .language-multiselect .lang-actions {
-    display: flex;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
     gap: 6px;
   }
 
-  .language-multiselect .btn-icon {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
-    width: 32px;
-    height: 32px;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font-size: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-  }
-
-  .language-multiselect .btn-icon:hover {
-    background: var(--bg-input);
-    color: var(--navy-deep);
-    border-color: var(--border-visible);
-  }
-
-  .language-multiselect .btn-icon.remove {
-    color: var(--error);
-  }
-  
-  .language-multiselect .btn-icon.remove:hover {
-    background: rgba(239, 68, 68, 0.1);
-    border-color: var(--error);
-  }
-
-  .language-multiselect .lang-row.unsupported {
-    opacity: 0.7;
-    background: var(--bg-app);
-  }
-
-  .language-multiselect .lang-row.unsupported .lang-badge {
-    color: var(--text-muted);
-  }
-
-  .language-multiselect .unsupported-icon {
-    margin-left: 8px;
-    color: var(--warning);
-    font-size: 14px;
-  }
-
-  .language-multiselect .add-language select {
-    width: 100%;
-  }
-
-  .validation {
-    font-size: 13px;
-    font-weight: 500;
-    margin-top: 8px;
-    display: block;
-  }
-
-  .validation.success {
-    color: var(--success);
-  }
-
-  .validation.error {
-    color: var(--error);
-  }
-
-  .btn-primary {
-    padding: 12px 24px;
-    background: var(--primary);
-    border: none;
-    border-radius: var(--radius-md);
-    color: var(--white);
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
-    box-shadow: 0 4px 12px var(--primary-alpha);
-  }
-
-  .btn-primary:hover {
-    background: var(--primary-dark);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px var(--primary-alpha);
-  }
-
-  .btn-primary:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    transform: none;
-    box-shadow: none;
-  }
-
-  .save-status {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-muted);
-    background: var(--bg-input);
-    padding: 8px 14px;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--border-subtle);
-    transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
-  }
-
-  .save-status.error {
-    color: var(--error);
-    background: rgba(239, 68, 68, 0.08);
-    border-color: rgba(239, 68, 68, 0.2);
-  }
-
-  .button-row {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-  }
-  .btn-secondary {
-    padding: 12px 20px;
-    background: var(--bg-card);
-    border: 1px solid var(--border-visible);
-    border-radius: var(--radius-md);
-    color: var(--navy-deep);
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-    box-shadow: var(--shadow-sm);
-  }
-
   .btn-secondary:hover {
-    background: var(--bg-input);
-    border-color: var(--navy-mid);
-    box-shadow: var(--shadow-sm);
+    background: var(--bg-hover);
+    border-color: var(--border-light);
   }
 
   .btn-secondary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    box-shadow: none;
   }
 
-  .btn-secondary.btn-link {
-    color: var(--primary);
-    border-color: transparent;
-    background: transparent;
-    box-shadow: none;
-    padding: 8px 0;
+  .btn-secondary.danger:hover {
+    color: #FF3B30;
+    border-color: #FF3B30;
+    background: rgba(255, 59, 48, 0.1);
   }
 
-  .btn-secondary.btn-link:hover {
+  .btn-danger {
+    padding: 10px 16px;
     background: transparent;
-    color: var(--primary-dark);
+    border: 1px solid #FF3B30;
+    border-radius: var(--radius-md);
+    color: #FF3B30;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-danger:hover {
+    background: #FF3B30;
+    color: white;
+  }
+
+  .btn-refresh {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    margin-left: 8px;
+    padding: 4px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .btn-refresh:hover {
+    color: var(--text);
+  }
+
+  .badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .badge.configured {
+    background: rgba(52, 199, 89, 0.15);
+    color: #34C759;
+  }
+
+  .badge.success {
+    background: rgba(52, 199, 89, 0.15);
+    color: #34C759;
+  }
+
+  .badge.error {
+    background: rgba(255, 59, 48, 0.15);
+    color: #FF3B30;
+  }
+
+  .hint {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+
+  .hint.warning {
+    color: #FF9500;
+  }
+
+  .hint.error {
+    color: #FF3B30;
+  }
+
+  .hint a {
+    color: var(--text);
     text-decoration: underline;
   }
 
+  .validation {
+    font-size: 13px;
+    font-weight: 500;
+    margin-top: 6px;
+    display: block;
+  }
+
+  .validation.success {
+    color: #34C759;
+  }
+
+  .validation.error {
+    color: #FF3B30;
+  }
+
   .mic-level-container {
-    margin-top: 16px;
-    background: var(--bg-input);
-    padding: 18px;
+    margin: var(--space-md) 0;
+    padding: 16px;
+    background: var(--bg);
     border-radius: var(--radius-md);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--border-light);
   }
 
   .mic-level {
-    height: 10px;
-    background: var(--bg-card);
-    border-radius: var(--radius-pill);
+    height: 8px;
+    background: var(--border);
+    border-radius: var(--radius-full);
     overflow: hidden;
-    box-shadow: var(--shadow-inner);
   }
 
   .mic-bar {
     height: 100%;
-    background: linear-gradient(90deg, var(--primary-dark), var(--primary), var(--primary-light));
-    border-radius: var(--radius-pill);
-    transition: width 0.12s ease-out;
+    background: var(--accent);
+    transition: width 0.1s ease-out;
     min-width: 4px;
   }
 
   .mic-status {
     font-size: 13px;
-    font-weight: 500;
     color: var(--text-secondary);
-    margin-top: 10px;
+    margin-top: 8px;
     display: block;
-    text-align: center;
   }
 
-  .btn-refresh {
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: 14px;
-    margin-left: 12px;
-    padding: 4px 8px;
-    border-radius: var(--radius-sm);
-    transition: all 0.2s ease;
-  }
-
-  .btn-refresh:hover {
-    background: var(--bg-card);
-    color: var(--navy-deep);
-    border-color: var(--border-visible);
-    box-shadow: var(--shadow-sm);
-  }
-
+  /* Model list styles */
   .model-list {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-  }
-
-  .model-radio-list .model-item {
-    flex-direction: column;
-    align-items: stretch;
     gap: 12px;
-  }
-
-  .model-radio-list .model-actions {
-    margin-top: 4px;
+    margin-top: 12px;
   }
 
   .model-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 22px;
-    background: var(--bg-input);
+    padding: 16px;
+    background: var(--bg);
     border-radius: var(--radius-md);
-    border: 1px solid transparent;
-    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    border: 1px solid var(--border);
+    transition: border-color 0.2s ease;
   }
 
   .model-item:hover {
-    background: var(--bg-card);
-    border-color: var(--border-subtle);
-    box-shadow: var(--shadow-sm);
+    border-color: var(--border-light);
   }
 
-  .model-item-active {
-    border-color: var(--primary);
-    background: var(--bg-card);
+  .model-item.active {
+    border-color: var(--accent);
   }
 
   .model-radio-row {
@@ -2462,55 +2103,22 @@
 
   .model-radio {
     flex-shrink: 0;
-    font-size: 18px;
-    line-height: 1.2;
-    color: var(--primary);
-  }
-
-  .model-radio-unchecked {
-    color: var(--text-muted);
-  }
-
-  .model-download-progress {
+    font-size: 20px;
+    color: var(--accent);
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-
-  .model-download-progress progress {
-    flex: 1;
-    max-width: 200px;
-    height: 8px;
-  }
-
-  .local-engine-section {
-    margin-top: 20px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border-subtle);
-  }
-
-  .local-engine-section .hint {
-    margin-bottom: 10px;
-  }
-
-  .model-error {
-    font-size: 13px;
-    color: var(--error);
-    margin: 0;
   }
 
   .model-info {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
     flex: 1;
   }
-  
+
   .model-info strong {
-    font-size: 15px;
-    color: var(--navy-deep);
+    font-size: 14px;
+    color: var(--text);
   }
 
   .model-info span {
@@ -2518,183 +2126,225 @@
     color: var(--text-secondary);
   }
 
-  .model-info span.warning {
-    color: var(--warning);
-    margin-top: 4px;
+  .model-info .warning {
+    color: #FF9500;
   }
 
   .status-badge {
     display: inline-block;
-    padding: 2px 6px;
+    padding: 2px 8px;
     border-radius: 4px;
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
-    margin-top: 4px;
+    width: fit-content;
   }
-  
-  .status-badge.running { background: var(--success); color: white; }
-  .status-badge.stopped { background: var(--bg-app); color: var(--text-secondary); }
-  .status-badge.starting { background: var(--primary); color: white; }
-  .status-badge.error { background: var(--error); color: white; }
-  .status-badge.notinstalled { background: var(--bg-app); color: var(--text-muted); }
+
+  .status-badge.running { background: #34C759; color: white; }
+  .status-badge.stopped { background: var(--border); color: var(--text-secondary); }
+  .status-badge.starting { background: var(--accent); color: var(--accent-fg); }
+  .status-badge.error { background: #FF3B30; color: white; }
+  .status-badge.notinstalled { background: var(--bg-hover); color: var(--text-muted); }
+
+  .model-download-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+  }
+
+  .model-download-progress progress {
+    flex: 1;
+    max-width: 200px;
+    height: 6px;
+  }
+
+  .model-error {
+    font-size: 13px;
+    color: #FF3B30;
+    margin: 8px 0 0;
+  }
 
   .model-actions {
     display: flex;
     gap: 8px;
-    align-items: center;
+    margin-top: 12px;
   }
 
-  .danger-zone {
-    margin-top: 40px;
-    padding: 24px 28px;
-    background: rgba(239, 68, 68, 0.04);
-    border: 1px solid rgba(239, 68, 68, 0.18);
-    border-radius: var(--radius-lg);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  .local-engine-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
-  .danger-zone:hover {
-    border-color: rgba(239, 68, 68, 0.3);
-    box-shadow: 0 2px 12px rgba(239, 68, 68, 0.06);
+  /* Language styles */
+  .selected-languages {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 12px 0;
   }
 
-  .danger-zone h4 {
-    color: var(--error);
-    margin-bottom: 12px;
-    font-size: 16px;
-    font-weight: 600;
+  .lang-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    cursor: pointer;
-  }
-
-  .danger-zone h4::before {
-    content: '▼';
-    font-size: 10px;
-    opacity: 0.6;
-    transition: transform 0.2s ease;
-  }
-
-  .danger-zone.collapsed h4::before {
-    transform: rotate(-90deg);
-  }
-
-  .btn-danger {
-    padding: 12px 24px;
-    background: var(--white);
-    border: 1px solid var(--error);
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--bg);
     border-radius: var(--radius-md);
-    color: var(--error);
+    border: 1px solid var(--border);
+  }
+
+  .lang-row:hover {
+    border-color: var(--border-light);
+  }
+
+  .lang-row.unsupported {
+    opacity: 0.7;
+  }
+
+  .lang-badge {
     font-size: 14px;
-    font-weight: 600;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .default-tag {
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+  }
+
+  .unsupported-icon {
+    color: #FF9500;
+  }
+
+  .lang-actions {
+    display: flex;
+    gap: 4px;
+  }
+
+  .btn-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
     transition: all 0.2s ease;
   }
 
-  .btn-danger:hover {
-    background: var(--error);
-    color: var(--white);
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
-  }
-  
-  .badge {
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: var(--radius-pill);
-    margin-left: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  
-  .badge.configured {
-    background: var(--success);
-    color: var(--white);
-  }
-  
-  .input-group .btn-danger {
-    margin-left: 0;
+  .btn-icon:hover {
+    background: var(--bg-hover);
+    color: var(--text);
   }
 
+  .btn-icon.remove:hover {
+    color: #FF3B30;
+    border-color: #FF3B30;
+    background: rgba(255, 59, 48, 0.1);
+  }
+
+  .add-language {
+    margin-top: 8px;
+  }
+
+  .add-language select {
+    width: 100%;
+  }
+
+  .language-toggle-hotkey {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* Dictionary styles */
+  .dictionary-list {
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .dictionary-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--bg);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+  }
+
+  .dictionary-term {
+    font-size: 14px;
+    color: var(--text);
+  }
+
+  /* Combobox styles */
   .custom-combobox {
     position: relative;
     width: 100%;
   }
 
   .custom-combobox.open {
-    z-index: 1000;
+    z-index: 100;
   }
 
-  .custom-combobox .input-wrapper {
+  .input-wrapper {
     position: relative;
   }
 
-  .custom-combobox input {
+  .input-wrapper input {
     width: 100%;
     padding-right: 36px;
   }
 
-  .custom-combobox.open input {
-    border-color: var(--primary);
-    box-shadow: 0 4px 12px var(--primary-alpha);
-    background: var(--bg-card);
-  }
-
-  :global(.custom-combobox .dropdown-icon) {
+  .dropdown-icon {
     position: absolute;
-    right: 14px;
+    right: 12px;
     top: 50%;
     transform: translateY(-50%);
     color: var(--text-muted);
     pointer-events: none;
-    font-size: 16px;
-    transition: transform 0.2s ease;
-  }
-
-  .custom-combobox.open :global(.dropdown-icon) {
-    transform: translateY(-50%) rotate(180deg);
   }
 
   .combobox-dropdown-container {
     position: fixed;
-    background: var(--bg-card);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow);
     z-index: 9999;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    animation: dropdownSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  @keyframes dropdownSlideIn {
-    from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
+    max-height: 240px;
+    overflow-y: auto;
   }
 
   .combobox-dropdown {
-    max-height: 240px;
-    overflow-y: auto;
     list-style: none;
     padding: 6px;
     margin: 0;
-  }
-
-  .combobox-dropdown::-webkit-scrollbar {
-    width: 6px;
-  }
-  .combobox-dropdown::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .combobox-dropdown::-webkit-scrollbar-thumb {
-    background: var(--border-visible);
-    border-radius: 3px;
-  }
-  .combobox-dropdown::-webkit-scrollbar-thumb:hover {
-    background: var(--text-muted);
   }
 
   .combobox-dropdown li {
@@ -2702,115 +2352,91 @@
     cursor: pointer;
     border-radius: var(--radius-sm);
     font-size: 14px;
-    color: var(--text-primary);
-    transition: all 0.1s ease;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    transition: background 0.15s ease;
   }
 
   .combobox-dropdown li:hover {
-    background: var(--bg-input);
-    color: var(--navy-deep);
+    background: var(--bg-hover);
   }
 
   .combobox-dropdown li.selected {
-    background: var(--primary-alpha-light);
-    color: var(--primary-dark);
-    font-weight: 600;
-  }
-
-  :global(.combobox-dropdown li .check-icon) {
-    color: var(--primary);
-    font-size: 16px;
+    background: var(--bg-hover);
+    font-weight: 500;
   }
 
   .combobox-empty {
-    padding: 20px 16px;
+    padding: 16px;
     text-align: center;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .combobox-empty .empty-text {
     color: var(--text-secondary);
-    font-size: 14px;
   }
 
-  .custom-model-badge {
-    background: var(--bg-input);
-    padding: 6px 12px;
-    border-radius: var(--radius-pill);
-    font-size: 13px;
-    color: var(--navy-deep);
-    border: 1px solid var(--border);
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  /* Danger zone */
+  .danger-zone {
+    border-color: rgba(255, 59, 48, 0.3);
   }
 
-  .combobox-footer {
-    padding: 10px 14px;
-    background: var(--bg-app);
-    border-top: 1px solid var(--border);
-    font-size: 12px;
-    color: var(--text-muted);
+  .danger-zone .section-header h3 {
+    color: #FF3B30;
+  }
+
+  .button-row {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    gap: 8px;
+    margin: 8px 0;
+  }
+
+  .path-display {
+    font-size: 12px;
+    word-break: break-all;
+    padding: 8px 12px;
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    margin: 8px 0;
+  }
+
+  .about-tab {
+    padding: 0;
+  }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
 
   @media (max-width: 768px) {
-    .settings {
-      padding: 0;
-    }
-
-    header {
+    .setting-row {
       flex-direction: column;
       align-items: flex-start;
-      gap: 12px;
-      margin-bottom: 24px;
+      gap: var(--space-sm);
     }
 
-    .tabs {
-      padding: 4px;
-    }
-
-    .tab {
-      padding: 8px 16px;
-      font-size: 13px;
-    }
-
-    section {
-      padding: 24px 20px;
-    }
-
-    .form-group.row-group {
-      flex-direction: column;
-      gap: 16px;
+    .setting-control {
+      width: 100%;
     }
 
     .input-group {
       flex-direction: column;
+      width: 100%;
     }
 
+    .input-group input,
     .input-group button {
       width: 100%;
-      margin-left: 0 !important;
     }
 
-    .language-multiselect .lang-row {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 12px;
+    .settings-tabs {
+      gap: 0;
     }
 
-    .language-multiselect .lang-actions {
-      width: 100%;
-      justify-content: flex-end;
+    .settings-tab {
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+
+    .settings-tab span {
+      display: none;
     }
   }
 </style>
