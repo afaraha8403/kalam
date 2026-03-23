@@ -61,7 +61,7 @@ Traces with **rdev** and **willhook** (separate runs, same machine) both showed 
 ### How to test willhook (alternative listener)
 
 1. Set both env vars and start the app:  
-   `$env:KALAM_LATENCY_DEBUG="1"; $env:KALAM_USE_WILLHOOK="1"; npm run tauri:dev`
+   `$env:KALAM_LATENCY_DEBUG="1"; $env:KALAM_USE_WILLHOOK="1"; npm run dev`
 2. Use the dictation hotkey and check `~/.kalam/latency-trace.log`: compare **OS_key_down_0x5B** (or your main key) to **T0**. (Result: gap is similar to rdev, ~500 ms.)
 3. To use rdev again, omit `KALAM_USE_WILLHOOK` or set `KALAM_USE_WILLHOOK=0`.
 

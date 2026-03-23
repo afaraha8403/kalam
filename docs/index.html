@@ -735,7 +735,7 @@
 
           <!-- CTA row -->
           <div id="download-section" class="flex flex-col sm:flex-row gap-3 mb-5 flex-wrap">
-            <a id="download-primary" href="https://github.com/afaraha8403/kalam/releases/latest" class="btn-primary">
+            <a id="download-primary" href="download.html" class="btn-primary">
               <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
               <span id="download-primary-text">Download Latest Release</span>
             </a>
@@ -1305,15 +1305,16 @@ document.querySelectorAll('.md\\:hidden details .nav-link').forEach(function(lin
         var secondary = document.getElementById('download-secondary');
         if (!primary || !primaryText) return;
 
-        var fallbackUrl = 'https://github.com/' + REPO + '/releases/latest';
+        /* Primary CTA always goes to download.html; that page picks the right asset and lists all files. */
+        var downloadPageUrl = 'download.html';
         var fallbackLabel = 'Download Latest Release';
 
         detectOS().then(function(osInfo) {
           return fetch(RELEASES_URL, { headers: { 'Accept': 'application/vnd.github.v3+json' } })
             .then(function(r) { return r.json(); })
             .then(function(releases) {
+            primary.href = downloadPageUrl;
             if (!Array.isArray(releases) || releases.length === 0) {
-              primary.href = fallbackUrl;
               primaryText.textContent = fallbackLabel;
               secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">all releases</a> for other platforms.';
               return;
@@ -1323,13 +1324,11 @@ document.querySelectorAll('.md\\:hidden details .nav-link').forEach(function(lin
             var useRelease = stable || releases[0];
             var isStable = !!stable && useRelease === stable;
             var tag = useRelease.tag_name;
-            var releaseUrl = useRelease.html_url;
             var assets = useRelease.assets || [];
             var asset = pickAssetForOS(assets, osInfo);
-            var downloadUrl = asset ? asset.browser_download_url : releaseUrl;
             var osLabel = osInfo.os === 'windows' ? 'Windows' : osInfo.os === 'mac' ? 'macOS' : osInfo.os === 'linux' ? 'Linux' : '';
 
-            primary.href = downloadUrl;
+            primary.href = downloadPageUrl;
             if (osLabel && asset) {
               var archLabel = '';
               if (osInfo.os === 'mac' && osInfo.arch) archLabel = osInfo.arch === 'aarch64' ? ' (Apple Silicon)' : ' (Intel)';
@@ -1347,7 +1346,7 @@ document.querySelectorAll('.md\\:hidden details .nav-link').forEach(function(lin
             });
           });
         }).catch(function() {
-          primary.href = fallbackUrl;
+          primary.href = downloadPageUrl;
           primaryText.textContent = fallbackLabel;
           secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">all releases</a> for other platforms.';
         });

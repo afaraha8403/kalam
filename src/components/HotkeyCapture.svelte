@@ -1,16 +1,24 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { invoke } from '$lib/backend'
+  import {
+    formatHotkeyForDisplay,
+    modifierSortIndex,
+    superKeyLabel,
+  } from '$lib/platformHotkey'
 
   export let value = ''
   export let onChange: (hotkey: string) => void
+  /** From `get_platform` (windows | macos | linux). If empty, resolved once via invoke. */
+  export let platform = ''
 
   let isCapturing = false
   let currentKeys: Set<string> = new Set()
   let keysPressed: Set<string> = new Set() // Track all keys that were pressed
   let containerElement: HTMLDivElement
+  let fetchedOs = ''
 
-  // Map of key codes to display names
+  // Map of key codes to display names (Meta/OS use superKeyLabel at runtime)
   const keyDisplayMap: Record<string, string> = {
     'Control': 'Ctrl',
     'ControlLeft': 'Ctrl',
@@ -21,10 +29,6 @@
     'Alt': 'Alt',
     'AltLeft': 'Alt',
     'AltRight': 'Alt',
-    'Meta': 'Win',
-    'MetaLeft': 'Win',
-    'MetaRight': 'Win',
-    'OS': 'Win',
     'CapsLock': 'Caps',
     'Tab': 'Tab',
     'Escape': 'Esc',
@@ -46,9 +50,18 @@
     'F9': 'F9', 'F10': 'F10', 'F11': 'F11', 'F12': 'F12',
   }
 
-  const modifierOrder = ['Ctrl', 'Alt', 'Shift', 'Win']
+  $: os = platform || fetchedOs || 'windows'
 
   function getDisplayName(key: string, code: string): string {
+    if (
+      code === 'Meta' ||
+      code === 'MetaLeft' ||
+      code === 'MetaRight' ||
+      code === 'OS' ||
+      key === 'Meta'
+    ) {
+      return superKeyLabel(os)
+    }
     if (keyDisplayMap[code]) {
       return keyDisplayMap[code]
     }
@@ -62,22 +75,20 @@
   }
 
   function isModifier(key: string): boolean {
-    return ['Ctrl', 'Alt', 'Shift', 'Win'].includes(key)
+    return modifierSortIndex(key) < 4
   }
 
   function sortKeys(keys: string[]): string[] {
-    return keys.sort((a, b) => {
-      const aIndex = modifierOrder.indexOf(a)
-      const bIndex = modifierOrder.indexOf(b)
-      
-      if (aIndex !== -1 && bIndex !== -1) {
-        return aIndex - bIndex
-      }
-      if (aIndex !== -1) return -1
-      if (bIndex !== -1) return 1
-      return 0
+    return [...keys].sort((a, b) => {
+      const ai = modifierSortIndex(a)
+      const bi = modifierSortIndex(b)
+      if (ai !== bi) return ai - bi
+      return a.localeCompare(b)
     })
   }
+
+  /** Stored hotkey string with meta segments shown for this OS. */
+  $: displayValue = value ? formatHotkeyForDisplay(value, os) : ''
 
   function startCapture(e?: MouseEvent) {
     if (e) {
@@ -172,6 +183,15 @@
   }
 
   onMount(() => {
+    if (!platform) {
+      invoke('get_platform')
+        .then((p) => {
+          fetchedOs = typeof p === 'string' ? p : 'windows'
+        })
+        .catch(() => {
+          fetchedOs = 'windows'
+        })
+    }
     document.addEventListener('click', handleDocumentClick)
     document.addEventListener('keydown', handleKeyDown)
     document.addEventListener('keyup', handleKeyUp)
@@ -192,7 +212,7 @@
     tabindex={isCapturing ? 0 : -1}
     on:click={!isCapturing ? startCapture : null}
     on:keydown={handleCaptureAreaKeydown}
-    aria-label={value ? `Hotkey: ${value}. Click to change.` : 'Click to set hotkey'}
+    aria-label={value ? `Hotkey: ${displayValue}. Click to change.` : 'Click to set hotkey'}
   >
     {#if isCapturing}
       {#if keysPressed.size === 0}
@@ -216,9 +236,9 @@
     {:else}
       {#if value}
         <div class="keys-container">
-          {#each value.split('+') as key, index}
+          {#each displayValue.split('+') as key, index}
             <span class="key-pill" class:modifier={isModifier(key)}>{key}</span>
-            {#if index < value.split('+').length - 1}
+            {#if index < displayValue.split('+').length - 1}
               <span class="plus">+</span>
             {/if}
           {/each}

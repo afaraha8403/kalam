@@ -1,5 +1,6 @@
 <script lang="ts">
   import { sidebarDictationStore, displayHotkey } from '../lib/sidebarDictation'
+  import { superKeyLabel } from '../lib/platformHotkey'
   import Icon from '@iconify/svelte'
   import type { AppConfig } from '../types'
 
@@ -31,9 +32,7 @@
       ? displayHotkey($sidebarDictationStore.hotkey, $sidebarDictationStore.platform)
       : $sidebarDictationStore?.toggleDictationHotkey != null
         ? displayHotkey($sidebarDictationStore.toggleDictationHotkey, $sidebarDictationStore.platform)
-        : platform === 'windows'
-          ? 'Ctrl+Win'
-          : 'Ctrl+Super'
+        : `Ctrl+${superKeyLabel(platform)}`
   $: showLang =
     ($sidebarDictationStore?.languages?.length ?? 0) >= 2 &&
     $sidebarDictationStore?.languageToggleHotkey

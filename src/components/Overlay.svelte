@@ -4,6 +4,7 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
   import { listen } from '@tauri-apps/api/event'
   import type { AppConfig, WaveformStyle, ExpandDirection } from '../types'
+  import { formatHotkeyForDisplay } from '$lib/platformHotkey'
 
   // T6: earliest trace in overlay JS (latency debugging; only when KALAM_LATENCY_DEBUG=1)
   invoke('trace_latency', { event: 'T6', jsTimestamp: Date.now() * 1000 }).catch(() => {})
@@ -25,6 +26,10 @@
   let waveformStyle: WaveformStyle = 'Aurora'
   let expandDirection: ExpandDirection = 'Up'
   let hotkeyStr = ''
+  let overlayPlatform = 'windows'
+
+  $: hotkeyDisplayStr =
+    hotkeyStr.trim() !== '' ? formatHotkeyForDisplay(hotkeyStr, overlayPlatform) : ''
 
   function isValidPayload(p: unknown): p is OverlayEvent {
     if (!p || typeof p !== 'object') return false
@@ -369,21 +374,27 @@
     let retryHoldUntil: number | null = null
     let lastSeenProcessingAttempt = 1
 
-    // Load initial settings
-    invoke('get_settings').then((config) => {
-      const cfg = config as AppConfig
-      if (cfg.waveform_style) {
-        waveformStyle = cfg.waveform_style
-      }
-      if (cfg.overlay_expand_direction) {
-        expandDirection = cfg.overlay_expand_direction
-      }
-      if (cfg.hotkey) {
-        hotkeyStr = cfg.hotkey
-      } else if (cfg.toggle_dictation_hotkey) {
-        hotkeyStr = cfg.toggle_dictation_hotkey
-      }
-    }).catch(console.error)
+    // Load initial settings + OS so meta key matches StatusBar (Win / Cmd / Super).
+    Promise.all([
+      invoke('get_settings'),
+      invoke('get_platform').catch(() => 'windows'),
+    ])
+      .then(([config, os]) => {
+        overlayPlatform = typeof os === 'string' ? os : 'windows'
+        const cfg = config as AppConfig
+        if (cfg.waveform_style) {
+          waveformStyle = cfg.waveform_style
+        }
+        if (cfg.overlay_expand_direction) {
+          expandDirection = cfg.overlay_expand_direction
+        }
+        if (cfg.hotkey) {
+          hotkeyStr = cfg.hotkey
+        } else if (cfg.toggle_dictation_hotkey) {
+          hotkeyStr = cfg.toggle_dictation_hotkey
+        }
+      })
+      .catch(console.error)
 
     // Listen for settings updates
     listen<AppConfig>('settings_updated', (e) => {
@@ -526,7 +537,7 @@
     {#if state.kind === 'Collapsed'}
       <!-- idle: just the pill shape itself, but with hover text -->
       <div class="hover-hint">
-        <span class="label">Press <span class="hotkey-highlight">{hotkeyStr}</span> to dictate</span>
+        <span class="label">Press <span class="hotkey-highlight">{hotkeyDisplayStr}</span> to dictate</span>
       </div>
     {:else if state.kind === 'Listening'}
       <div class="content listening">

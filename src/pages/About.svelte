@@ -12,7 +12,11 @@
   let updateError = ''
   let updateChannel: 'stable' | 'beta' = 'stable'
   let updateInstalling = false
+  /** When true, we are only downloading for next launch (no immediate restart). */
+  let updateInstallingDeferred = false
   let updateDownloadPercent: number | null = null
+  /** Set after a successful "update on next start" download+install (no restart). */
+  let updateStagedMessage: string | null = null
 
   const GITHUB_REPO_URL = 'https://github.com/afaraha8403/kalam'
 
@@ -100,6 +104,7 @@ maintainers to request a commercial license.`
   }
 
   async function checkUpdates() {
+    updateStagedMessage = null
     updateChecking = true
     updateStatus = 'idle'
     updateVersion = ''
@@ -120,19 +125,31 @@ maintainers to request a commercial license.`
     }
   }
 
-  async function downloadAndInstall() {
+  /**
+   * @param restart - If true, restart immediately after install. If false, stage update for next launch.
+   */
+  async function downloadAndInstall(restart: boolean) {
     if (updateInstalling) return
     updateInstalling = true
+    updateInstallingDeferred = !restart
+    updateStagedMessage = null
     updateDownloadPercent = 0
     updateError = ''
     try {
-      await invoke('download_and_install_update')
-      // App restarts on success; we never reach here
+      await invoke('download_and_install_update', { restart })
+      // Immediate restart path: we never reach here
+      if (!restart) {
+        updateStagedMessage =
+          'Update downloaded and installed. It will be active the next time you start Kalam.'
+        // Keep user on a neutral state; message also shown under "Up to date" below.
+        updateStatus = 'up-to-date'
+      }
     } catch (e) {
       updateError = e instanceof Error ? e.message : String(e)
       updateStatus = 'error'
     } finally {
       updateInstalling = false
+      updateInstallingDeferred = false
       updateDownloadPercent = null
     }
   }
@@ -209,23 +226,43 @@ maintainers to request a commercial license.`
 
       {#if updateStatus === 'up-to-date'}
         <div class="status-msg success"><Icon icon="ph:check-circle-duotone" /> Up to date</div>
+        {#if updateStagedMessage}
+          <div class="status-msg success staged-hint"><Icon icon="ph:info-duotone" /> {updateStagedMessage}</div>
+        {/if}
       {:else if updateStatus === 'available'}
         <div class="status-msg available"><Icon icon="ph:sparkle-duotone" /> Update {updateVersion} available!</div>
-        <div class="update-install-actions">
+        <div class="update-install-actions update-install-actions--split">
           <button
             type="button"
             class="btn-install"
             disabled={updateInstalling}
-            on:click={downloadAndInstall}
+            on:click={() => downloadAndInstall(true)}
           >
-            {#if updateInstalling}
+            {#if updateInstalling && !updateInstallingDeferred}
               {#if updateDownloadPercent != null}
-                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading… {updateDownloadPercent}%
+                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Updating… {updateDownloadPercent}%
               {:else}
                 <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading &amp; installing…
               {/if}
             {:else}
-              <Icon icon="ph:download-simple-duotone" /> Download and install
+              <Icon icon="ph:arrow-clockwise-duotone" /> Update now
+            {/if}
+          </button>
+          <button
+            type="button"
+            class="btn-install-secondary"
+            disabled={updateInstalling}
+            on:click={() => downloadAndInstall(false)}
+            title="Download and install in the background; apply when you quit and open Kalam again"
+          >
+            {#if updateInstalling && updateInstallingDeferred}
+              {#if updateDownloadPercent != null}
+                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading… {updateDownloadPercent}%
+              {:else}
+                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Preparing…
+              {/if}
+            {:else}
+              <Icon icon="ph:moon-stars-duotone" /> Update on next start
             {/if}
           </button>
         </div>
@@ -546,6 +583,46 @@ maintainers to request a commercial license.`
 
   .update-install-actions {
     margin-top: 10px;
+  }
+
+  .update-install-actions--split {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .staged-hint {
+    margin-top: 8px;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .btn-install-secondary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--bg-input);
+    color: var(--navy-deep);
+    border: 1px solid var(--border-visible);
+    border-radius: var(--radius-md);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-install-secondary:hover:not(:disabled) {
+    background: var(--primary-alpha-light);
+    border-color: var(--primary-alpha);
+    color: var(--primary-dark);
+  }
+
+  .btn-install-secondary:disabled {
+    opacity: 0.9;
+    cursor: wait;
   }
 
   .btn-install {

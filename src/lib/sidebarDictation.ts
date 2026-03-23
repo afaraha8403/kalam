@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store'
+import { formatHotkeyForDisplay } from './platformHotkey'
 
 export interface SidebarDictationState {
   hotkey: string | null
@@ -30,7 +31,7 @@ function createStore() {
 
 export const sidebarDictationStore = createStore()
 
-/** Display hotkey for UI (e.g. Ctrl+Super → Ctrl+Win on Windows). */
+/** Display hotkey with platform-appropriate Meta label (Win / Cmd / Super). */
 export function displayHotkey(hotkey: string, platform: string): string {
-  return platform === 'windows' && hotkey === 'Ctrl+Super' ? 'Ctrl+Win' : hotkey
+  return formatHotkeyForDisplay(hotkey, platform)
 }

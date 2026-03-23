@@ -3,6 +3,7 @@
   import { onMount } from 'svelte'
   import { invoke, listenSafe } from '$lib/backend'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
+  import { formatHotkeyForDisplay, superKeyLabel } from '../lib/platformHotkey'
   import { LANGUAGE_OPTIONS, languageLabel } from '../lib/languages'
   import type { AppConfig } from '../types'
 
@@ -25,11 +26,11 @@
   let apiKey = ''
   let selectedProvider: 'groq' | 'openai' = 'groq'
   let selectedMode: 'Cloud' | 'Hybrid' | 'Local' = 'Hybrid'
-  let hotkey = 'Ctrl+Win'
+  let hotkey = ''
   let toggleHotkey = ''
   let addLanguageCode = ''
   let languages: string[] = ['en']
-  let platform: 'windows' | 'darwin' | 'linux' = 'windows'
+  let platform: 'windows' | 'macos' | 'linux' = 'windows'
   let demoTranscription = ''
   let demoTextarea: HTMLTextAreaElement
   let demoFocused = false
@@ -76,12 +77,12 @@
       }
       if (config.stt_config?.api_keys?.[selectedProvider]) apiKey = config.stt_config.api_keys[selectedProvider]
       if (config.hotkey) {
-        hotkey = platform === 'windows' && config.hotkey === 'Ctrl+Super' ? 'Ctrl+Win' : config.hotkey
+        hotkey = formatHotkeyForDisplay(config.hotkey, platform)
       } else {
-        hotkey = platform === 'windows' ? 'Ctrl+Win' : 'Ctrl+Super'
+        hotkey = `Ctrl+${superKeyLabel(platform)}`
       }
       if (config.toggle_dictation_hotkey) {
-        toggleHotkey = config.toggle_dictation_hotkey
+        toggleHotkey = formatHotkeyForDisplay(config.toggle_dictation_hotkey, platform)
       }
       if (config.languages?.length) languages = [...config.languages]
       if (config.user_email) userEmail = config.user_email
@@ -213,7 +214,7 @@
   async function loadPlatform() {
     try {
       const os = (await invoke('get_platform')) as string
-      if (os === 'darwin' || os === 'linux') platform = os
+      if (os === 'macos' || os === 'linux') platform = os
       else platform = 'windows'
     } catch {
       platform = 'windows'
@@ -436,7 +437,7 @@
                 <span>Captures your voice for transcription</span>
               </div>
               <button type="button" class="btn-outline-sm" on:click={() => requestPermission('microphone')}>
-                {platform === 'darwin' ? 'Allow' : 'Open Settings'}
+                {platform === 'macos' ? 'Allow' : 'Open Settings'}
               </button>
             </div>
             <div class="perm-row">
@@ -445,7 +446,7 @@
                 <strong>Accessibility</strong>
                 <span>Types transcribed text into apps</span>
               </div>
-              {#if platform === 'darwin'}
+              {#if platform === 'macos'}
                 <button type="button" class="btn-outline-sm" on:click={() => requestPermission('accessibility')}>Allow</button>
               {:else if platform === 'windows'}
                 <span class="perm-auto">Auto-enabled</span>
@@ -453,7 +454,7 @@
                 <button type="button" class="btn-outline-sm" on:click={() => openPermissionPage('accessibility')}>Open Settings</button>
               {/if}
             </div>
-            {#if platform === 'darwin'}
+            {#if platform === 'macos'}
             <div class="perm-row">
               <div class="perm-icon-wrap"><span class="perm-icon">⌨️</span></div>
               <div class="perm-info">
@@ -606,6 +607,7 @@
                 <span id="hotkey-hold-label" class="label-text">Hold to Dictate</span>
                 <HotkeyCapture
                   value={hotkey}
+                  platform={platform}
                   onChange={(h) => (hotkey = h)}
                 />
                 <p class="rec-desc">Press and hold to dictate, release to stop</p>
@@ -614,6 +616,7 @@
                 <span id="hotkey-toggle-label" class="label-text">Toggle Dictation</span>
                 <HotkeyCapture
                   value={toggleHotkey}
+                  platform={platform}
                   onChange={(h) => (toggleHotkey = h)}
                 />
                 <p class="rec-desc">Press once to start dictating, press again to stop</p>
@@ -660,7 +663,7 @@
 
           <div class="demo-box" class:unfocused={!demoFocused}>
             <div class="demo-prompt">
-              <kbd>{hotkey || toggleHotkey || 'Ctrl+Win'}</kbd>
+              <kbd>{hotkey || toggleHotkey || `Ctrl+${superKeyLabel(platform)}`}</kbd>
               <span>then say anything</span>
             </div>
             <textarea
@@ -673,7 +676,7 @@
             ></textarea>
             {#if !demoFocused}
               <button class="refocus-cue" on:click={() => demoTextarea?.focus()}>
-                Click here to focus — then press <kbd>{hotkey || 'Ctrl+Win'}</kbd> to dictate
+                Click here to focus — then press <kbd>{hotkey || `Ctrl+${superKeyLabel(platform)}`}</kbd> to dictate
               </button>
             {/if}
           </div>

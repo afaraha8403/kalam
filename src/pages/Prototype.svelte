@@ -4,6 +4,7 @@
   import { fade } from 'svelte/transition'
   import StatusBar from '../components/StatusBar.svelte'
   import Icon from '@iconify/svelte'
+  import { modifierSortIndex, superKeyLabel } from '../lib/platformHotkey'
   import type { AppConfig } from '../types'
 
   export let currentPage: string = 'home'
@@ -68,35 +69,32 @@
     event.preventDefault()
     event.stopPropagation()
 
+    const metaLabel = superKeyLabel(statusBarPlatform || 'windows')
     const keyMap: Record<string, string> = {
       'Control': 'Ctrl', 'ControlLeft': 'Ctrl', 'ControlRight': 'Ctrl',
       'Shift': 'Shift', 'ShiftLeft': 'Shift', 'ShiftRight': 'Shift',
       'Alt': 'Alt', 'AltLeft': 'Alt', 'AltRight': 'Alt',
-      'Meta': 'Win', 'MetaLeft': 'Win', 'MetaRight': 'Win',
+      'Meta': metaLabel, 'MetaLeft': metaLabel, 'MetaRight': metaLabel, 'OS': metaLabel,
       'Escape': 'Esc', 'Enter': 'Enter', 'Space': 'Space',
       'ArrowUp': '↑', 'ArrowDown': '↓', 'ArrowLeft': '←', 'ArrowRight': '→'
     }
 
     const key = keyMap[event.code] || keyMap[event.key] || event.key
-    const modifierOrder = ['Ctrl', 'Alt', 'Shift', 'Win']
 
     if (!tempHotkeyValue.includes(key)) {
       const keys = tempHotkeyValue ? tempHotkeyValue.split('+') : []
       keys.push(key)
-      // Sort modifiers first
       const sorted = keys.sort((a, b) => {
-        const aIdx = modifierOrder.indexOf(a)
-        const bIdx = modifierOrder.indexOf(b)
-        if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx
-        if (aIdx !== -1) return -1
-        if (bIdx !== -1) return 1
-        return 0
+        const ai = modifierSortIndex(a)
+        const bi = modifierSortIndex(b)
+        if (ai !== bi) return ai - bi
+        return a.localeCompare(b)
       })
       tempHotkeyValue = sorted.join('+')
     }
 
     // Auto-confirm on regular key press (non-modifier)
-    if (!modifierOrder.includes(key) && key !== 'Esc' && key !== 'Enter' && key !== 'Tab') {
+    if (modifierSortIndex(key) >= 4 && key !== 'Esc' && key !== 'Enter' && key !== 'Tab') {
       setTimeout(() => confirmHotkeyCapture(hotkeyId, tempHotkeyValue), 100)
     }
   }

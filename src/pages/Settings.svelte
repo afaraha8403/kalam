@@ -79,6 +79,8 @@
   let dictionaryEntries: DictionaryEntry[] = []
   let dictionaryNewTerm = ''
   let dictionaryLoading = false
+  /** `get_platform`: windows | macos | linux — for hotkey Meta label (Win / Cmd / Super). */
+  let appPlatform = ''
 
   // Collapsible sections state
   let collapsedSections: Record<string, boolean> = {
@@ -129,6 +131,7 @@
 
       config = settings
       audioDevices = devices
+      appPlatform = platform
       sidebarDictationStore.updateFromConfig(settings, platform)
 
       if (config) {
@@ -421,6 +424,7 @@
     try {
       await invoke('save_settings', { newConfig: config })
       const platform = (await invoke('get_platform')) as string
+      appPlatform = platform
       sidebarDictationStore.updateFromConfig(config, platform)
       if (config.privacy.telemetry_enabled) {
         initTelemetry(true)
@@ -922,7 +926,7 @@
                 <span class="setting-desc">Press and hold this hotkey to dictate, release to stop</span>
               </div>
               <div class="setting-control">
-                <HotkeyCapture value={config.hotkey ?? ''} onChange={setHotkey} />
+                <HotkeyCapture value={config.hotkey ?? ''} platform={appPlatform} onChange={setHotkey} />
               </div>
             </div>
             <div class="setting-row">
@@ -940,7 +944,7 @@
                 <span class="setting-desc">Press once to start, again to stop</span>
               </div>
               <div class="setting-control">
-                <HotkeyCapture value={config.toggle_dictation_hotkey ?? ''} onChange={setToggleHotkey} />
+                <HotkeyCapture value={config.toggle_dictation_hotkey ?? ''} platform={appPlatform} onChange={setToggleHotkey} />
               </div>
             </div>
           </div>
@@ -1301,7 +1305,7 @@
                 {#if (config?.languages?.length ?? 0) >= 2}
                   <div class="language-toggle-hotkey">
                     <span class="setting-desc">Language toggle hotkey</span>
-                    <HotkeyCapture value={config.language_toggle_hotkey ?? ''} onChange={setLanguageToggleHotkey} />
+                    <HotkeyCapture value={config.language_toggle_hotkey ?? ''} platform={appPlatform} onChange={setLanguageToggleHotkey} />
                   </div>
                 {/if}
               </div>
@@ -1422,7 +1426,7 @@
                   <span class="setting-desc">Press, then speak naturally</span>
                 </div>
                 <div class="setting-control">
-                  <HotkeyCapture value={config.command_config.hotkey ?? ''} onChange={setCommandHotkey} />
+                  <HotkeyCapture value={config.command_config.hotkey ?? ''} platform={appPlatform} onChange={setCommandHotkey} />
                 </div>
               </div>
 

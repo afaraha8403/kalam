@@ -228,13 +228,25 @@
         }
       })
       unlistenSettings = await listen<AppConfig>('settings_updated', (e) => {
-        if (e.payload) {
-          statusBarConfig = e.payload
-          if (e.payload.sidebar_collapsed != null) sidebarCollapsed = e.payload.sidebar_collapsed
-          if (e.payload.theme_preference != null) {
-            themePreference = normalizeThemePreference(e.payload.theme_preference)
-          }
+        if (!e.payload) return
+        statusBarConfig = e.payload
+        if (e.payload.sidebar_collapsed != null) sidebarCollapsed = e.payload.sidebar_collapsed
+        if (e.payload.theme_preference != null) {
+          themePreference = normalizeThemePreference(e.payload.theme_preference)
         }
+        // Keep dictation hotkey labels in sync with Settings (same source as initial load).
+        const syncSidebar = async () => {
+          let p = statusBarPlatform
+          if (!p) {
+            try {
+              p = (await invoke('get_platform')) as string
+            } catch {
+              p = 'windows'
+            }
+          }
+          sidebarDictationStore.updateFromConfig(e.payload!, p)
+        }
+        void syncSidebar()
       })
       unlistenTranscription = await listen<{ latency_ms?: number }>('transcription-saved', (e) => {
         if (e.payload?.latency_ms != null) lastLatencyMs = e.payload.latency_ms

@@ -949,8 +949,9 @@ pub async fn run_update_check(app: &tauri::AppHandle) -> anyhow::Result<()> {
     }
     let update = check_update_with_channel(app).await?;
     if let Some(u) = update {
+        // Install is from Settings → About (Update now / Update on next start), not tray-only restart.
         let msg = format!(
-            "Update {} available. Restart the app to install.",
+            "Update {} available. Open Settings → About to download and install.",
             u.version
         );
         app.state::<AppState>()
@@ -973,7 +974,7 @@ pub async fn run_update_check_user_initiated(app: &tauri::AppHandle) -> anyhow::
     };
     if let Some(u) = update {
         let msg = format!(
-            "Update {} available. Restart the app to install.",
+            "Update {} available. Open Settings → About to download and install.",
             u.version
         );
         nm.info(&msg).map_err(|e| anyhow::anyhow!("{:?}", e))?;
@@ -1009,10 +1010,12 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<Option<String>, Stri
     Ok(update.as_ref().map(|u| u.version.clone()))
 }
 
-/// Download and install the available update (uses channel from settings), then restart the app.
-/// Returns Ok(()) when install has started (app will restart). Err if no update or download/install failed.
+/// Download and install the available update (uses channel from settings).
+/// When `restart` is true, restarts the app immediately after install so the new version runs.
+/// When `restart` is false, finishes without restarting—the update applies on the next app launch.
+/// Returns Ok(()) on success. Err if no update or download/install failed.
 #[tauri::command]
-async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String> {
+async fn download_and_install_update(app: tauri::AppHandle, restart: bool) -> Result<(), String> {
     let update = check_update_with_channel(&app)
         .await
         .map_err(|e| format!("{:?}", e))?
@@ -1030,7 +1033,10 @@ async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String
         )
         .await
         .map_err(|e| format!("{:?}", e))?;
-    app.restart();
+    if restart {
+        app.restart();
+    }
+    Ok(())
 }
 
 /// Request a system permission using OS-native methods when available.
