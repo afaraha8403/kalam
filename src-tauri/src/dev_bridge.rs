@@ -103,6 +103,7 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
             serde_json::to_value(cfg).map_err(|e| e.to_string())
         }
         "get_platform" => Ok(serde_json::Value::String(platform())),
+        "get_os_release_info" => serde_json::to_value(crate::read_os_release_info()).map_err(|e| e.to_string()),
         "get_db_status" => {
             let ok = crate::db::open_db().is_ok();
             serde_json::to_value(serde_json::json!({ "ok": ok })).map_err(|e| e.to_string())
@@ -131,6 +132,10 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
                 .to_string();
             let entries = crate::history::search(&query).await.map_err(|e| e.to_string())?;
             serde_json::to_value(entries).map_err(|e| e.to_string())
+        }
+        "clear_history" => {
+            crate::history::clear().await.map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
         }
         "get_tasks_due_on" => {
             let day_start = arg_get(args, "dayStart")
@@ -227,6 +232,17 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
                 crate::db::get_note_labels(&conn, scope.as_deref()).map_err(|e| e.to_string())?;
             serde_json::to_value(labels).map_err(|e| e.to_string())
         }
+        "get_note_scope_counts" => {
+            let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+            let (active, archived, trash) =
+                crate::db::count_notes_by_scope(&conn).map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({ "active": active, "archived": archived, "trash": trash }))
+        }
+        "empty_task_trash" => {
+            let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+            let n = crate::db::empty_task_trash(&conn).map_err(|e| e.to_string())?;
+            serde_json::to_value(n).map_err(|e| e.to_string())
+        }
         "get_dictionary_entries" => {
             let conn = crate::db::open_db().map_err(|e| e.to_string())?;
             let entries = crate::db::get_dictionary_entries(&conn).map_err(|e| e.to_string())?;
@@ -240,6 +256,16 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
             let conn = crate::db::open_db().map_err(|e| e.to_string())?;
             let entry = crate::db::get_entry(&conn, &id).map_err(|e| e.to_string())?;
             serde_json::to_value(entry).map_err(|e| e.to_string())
+        }
+        "update_entry" => {
+            let entry_val = args
+                .get("entry")
+                .ok_or_else(|| "missing entry".to_string())?;
+            let entry: crate::models::Entry = serde_json::from_value(entry_val.clone())
+                .map_err(|e| format!("update_entry: {e}"))?;
+            let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+            let ok = crate::db::update_entry(&conn, &entry).map_err(|e| e.to_string())?;
+            serde_json::to_value(ok).map_err(|e| e.to_string())
         }
         _ => Err(format!("Dev bridge does not implement command: {}", cmd)),
     }

@@ -413,6 +413,7 @@
       unlistenSettings = fn
     })
 
+    // Main-window StatusBar mirrors dictation phase via Rust `overlay-state-broadcast` (see dictationState.ts).
     getCurrentWebviewWindow().listen<OverlayEvent>('overlay-state', (e) => {
       const jsTs = Date.now() * 1000
       invoke('trace_latency', { event: 'T7', jsTimestamp: jsTs }).catch(() => {})

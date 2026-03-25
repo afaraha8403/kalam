@@ -8,7 +8,6 @@ pub enum EntryType {
     History,
     Note,
     Task,
-    Reminder,
     Snippet,
 }
 
@@ -19,7 +18,6 @@ impl EntryType {
             EntryType::History => "history",
             EntryType::Note => "note",
             EntryType::Task => "task",
-            EntryType::Reminder => "reminder",
             EntryType::Snippet => "snippet",
         }
     }
@@ -28,7 +26,8 @@ impl EntryType {
         match s {
             "note" => EntryType::Note,
             "task" => EntryType::Task,
-            "reminder" => EntryType::Reminder,
+            // Legacy DB rows may still read as "reminder" until migration runs; treat as note.
+            "reminder" => EntryType::Note,
             "snippet" => EntryType::Snippet,
             _ => EntryType::History,
         }
@@ -64,6 +63,9 @@ pub struct Entry {
     pub deleted_at: Option<DateTime<Utc>>,
     /// Process name (e.g. notepad.exe) of the foreground app when dictation completed; dashboard only.
     pub target_app: Option<String>,
+    /// Friendly display name (e.g. "Notepad"); mirrors `applications.display_name` when resolved.
+    #[serde(default, alias = "targetAppName")]
+    pub target_app_name: Option<String>,
     /// Recorded audio length in milliseconds (dictation sessions).
     #[serde(default, alias = "durationMs")]
     pub duration_ms: Option<u32>,
@@ -83,4 +85,7 @@ pub struct Entry {
     /// STT provider id at capture time (e.g. groq, sensevoice); pairs with `stt_mode`.
     #[serde(default, alias = "sttProvider")]
     pub stt_provider: Option<String>,
+    /// Manual order within pinned / unpinned groups for active notes (lower first). Ignored for non-note types.
+    #[serde(default, alias = "noteOrder")]
+    pub note_order: i64,
 }

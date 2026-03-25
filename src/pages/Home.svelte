@@ -6,7 +6,7 @@
   import DashboardApex from '../components/DashboardApex.svelte'
   import { selectedTaskId } from '../lib/taskDetailStore'
   import { selectedNoteId } from '../lib/noteDetailStore'
-  import { selectedReminderId } from '../lib/reminderDetailStore'
+  import { noteDetailReturnTo, taskDetailReturnTo } from '../lib/detailReturnStore'
   import { selectedHistoryId } from '../lib/historyDetailStore'
   import { recognitionDisplay, sttChipKind } from '../lib/historySttChip'
   import type { HistoryEntry, DashboardStats, Entry } from '../types'
@@ -171,19 +171,19 @@
 
   /** Open the specific task in full-page task detail (same as Tasks list). */
   function openTask(task: Entry) {
+    taskDetailReturnTo.set(null)
     selectedTaskId.set(task.id)
     navigate('task-detail')
   }
 
-  /** Open the specific reminder/note/task in the right detail page (same as Reminders list). */
+  /** Open the specific note/task in the right detail page (same as Reminders list). */
   function openReminderEntry(entry: Entry) {
-    if (entry.entry_type === 'reminder') {
-      selectedReminderId.set(entry.id)
-      navigate('reminder-detail')
-    } else if (entry.entry_type === 'note') {
+    if (entry.entry_type === 'note') {
+      noteDetailReturnTo.set(null)
       selectedNoteId.set(entry.id)
       navigate('note-detail')
     } else if (entry.entry_type === 'task') {
+      taskDetailReturnTo.set(null)
       selectedTaskId.set(entry.id)
       navigate('task-detail')
     } else {

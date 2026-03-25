@@ -58,6 +58,12 @@ pub struct AppConfig {
     /// Opt-in to product notifications and updates. Default false (opt-out by default).
     #[serde(default)]
     pub notifications_opt_in: bool,
+    /// OS product name when the user completed the email onboarding step (from `get_os_release_info`).
+    #[serde(default)]
+    pub onboarding_os_name: Option<String>,
+    /// OS version string at the same moment (may be empty on some systems).
+    #[serde(default)]
+    pub onboarding_os_version: Option<String>,
     /// Command mode: dedicated hotkey to create note/task/reminder from voice; optional LLM parsing.
     #[serde(default)]
     pub command_config: CommandConfig,
@@ -205,6 +211,8 @@ impl Default for AppConfig {
             user_email: None,
             marketing_opt_in: false,
             notifications_opt_in: false,
+            onboarding_os_name: None,
+            onboarding_os_version: None,
             command_config: CommandConfig::default(),
             update_channel: UpdateChannel::Stable,
             sidebar_collapsed: false,

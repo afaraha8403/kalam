@@ -59,6 +59,8 @@ const BASE_ONBOARDING: Record<string, unknown> = {
   sidebar_collapsed: false,
   theme_preference: 'Auto',
   user_email: null,
+  onboarding_os_name: null,
+  onboarding_os_version: null,
   notifications_opt_in: true,
   marketing_opt_in: false,
   waveform_style: 'Aurora',
@@ -116,6 +118,8 @@ export function handleDevBridgeInvoke(body: { cmd?: string; args?: Record<string
     }
     case 'get_platform':
       return 'windows'
+    case 'get_os_release_info':
+      return { name: 'Windows', version: '10.0 (e2e mock)' }
     case 'get_audio_devices':
       return []
     case 'get_db_status':
@@ -136,6 +140,10 @@ export function handleDevBridgeInvoke(body: { cmd?: string; args?: Record<string
       }
     case 'get_history':
       return []
+    case 'search_history':
+      return []
+    case 'clear_history':
+      return null
     case 'get_tasks_due_on':
     case 'get_reminders_due_on':
       return []
@@ -161,6 +169,8 @@ export function handleDevBridgeInvoke(body: { cmd?: string; args?: Record<string
       return true
     case 'get_app_data_path':
       return 'C:\\temp\\kalam-e2e'
+    case 'get_note_scope_counts':
+      return { active: 0, archived: 0, trash: 0 }
     case 'get_dictionary_entries':
       return []
     case 'check_api_key':

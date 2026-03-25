@@ -5,6 +5,7 @@
   import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
   import { initTelemetry } from './lib/telemetry'
   import { sidebarDictationStore } from './lib/sidebarDictation'
+  import { applyOverlayBroadcast } from './lib/dictationState'
   import Settings from './pages/Settings.svelte'
   import Home from './pages/Home.svelte'
   import Snippets from './pages/Snippets.svelte'
@@ -18,7 +19,6 @@
   import Tasks from './components/views/Tasks.svelte'
   import TaskDetail from './components/views/TaskDetail.svelte'
   import Reminders from './components/views/Reminders.svelte'
-  import ReminderDetail from './components/views/ReminderDetail.svelte'
   import StatusBar from './components/StatusBar.svelte'
   import Prototype from './pages/Prototype.svelte'
   import Icon from '@iconify/svelte'
@@ -217,6 +217,7 @@
     let unlistenTrayNavigate: (() => void) | null = null
     let unlistenSettings: (() => void) | null = null
     let unlistenTranscription: (() => void) | null = null
+    let unlistenOverlayBroadcast: (() => void) | null = null
     let dbPollId: ReturnType<typeof setInterval> | null = null
     ;(async () => {
       unlistenReset = await listen('app_reset', () => {
@@ -231,6 +232,7 @@
         if (!e.payload) return
         statusBarConfig = e.payload
         if (e.payload.sidebar_collapsed != null) sidebarCollapsed = e.payload.sidebar_collapsed
+        if (e.payload.dictation_enabled != null) dictationEnabled = e.payload.dictation_enabled
         if (e.payload.theme_preference != null) {
           themePreference = normalizeThemePreference(e.payload.theme_preference)
         }
@@ -290,9 +292,18 @@
       if (unlistenTrayNavigate) unlistenTrayNavigate()
       if (unlistenSettings) unlistenSettings()
       if (unlistenTranscription) unlistenTranscription()
+      if (unlistenOverlayBroadcast) unlistenOverlayBroadcast()
       if (dbPollId != null) clearInterval(dbPollId)
     }
   })
+
+  async function refreshDbStatus() {
+    try {
+      dbStatus = (await invoke('get_db_status')) as { ok: boolean }
+    } catch {
+      dbStatus = { ok: false }
+    }
+  }
 
   function navigate(page: string) {
     currentPage = page
@@ -347,7 +358,10 @@
 {#if isOverlay}
   <Overlay />
 {:else if isFirstRun}
-  <Onboarding on:complete={handleOnboardingComplete} />
+  <!-- Same .kalam-sleek tokens as main shell so first-run UI matches Inter, surfaces, and light/dark. -->
+  <div class="kalam-sleek onboarding-shell" class:dark={darkMode} class:light={!darkMode}>
+    <Onboarding on:complete={handleOnboardingComplete} />
+  </div>
 {:else if showPrototype}
   <Prototype
     currentPage={currentPage}
@@ -358,6 +372,7 @@
     dbStatus={dbStatus}
     statusBarPlatform={statusBarPlatform}
     lastLatencyMs={lastLatencyMs}
+    onRetryDb={refreshDbStatus}
   />
 {:else}
   <div class="app-shell kalam-sleek" class:dark={darkMode} class:light={!darkMode}>
@@ -475,13 +490,18 @@
             <TaskDetail navigate={navigate} />
           {:else if currentPage === 'reminders'}
             <Reminders navigate={navigate} />
-          {:else if currentPage === 'reminder-detail'}
-            <ReminderDetail navigate={navigate} />
           {/if}
         </div>
       </main>
       </div>
-      <StatusBar config={statusBarConfig} dbStatus={dbStatus} platform={statusBarPlatform} lastLatencyMs={lastLatencyMs} />
+      <StatusBar
+        config={statusBarConfig}
+        dbStatus={dbStatus}
+        platform={statusBarPlatform}
+        lastLatencyMs={lastLatencyMs}
+        dictationEnabled={dictationEnabled}
+        onRetryDb={refreshDbStatus}
+      />
   </div>
 {/if}
 
@@ -511,6 +531,12 @@
   .app-shell {
     display: flex;
     flex-direction: column;
+    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .onboarding-shell {
     min-height: 100vh;
     height: 100vh;
     overflow: hidden;
@@ -624,7 +650,7 @@
     flex-direction: column;
     padding: var(--space-lg) var(--space-md);
     position: relative;
-    z-index: 1; /* above toggle so nav and bottom buttons always receive clicks */
+    z-index: 0;
   }
 
   .sidebar.collapsed .sidebar-content {
@@ -644,7 +670,8 @@
     top: 0;
     bottom: 0;
     width: 20px;
-    z-index: 0;
+    /* Above .sidebar-content: content is full-width and would otherwise capture all clicks on this strip. */
+    z-index: 2;
     border: none;
     background: transparent;
     color: var(--text-muted);
@@ -827,6 +854,7 @@
   .page-content {
     flex: 1;
     overflow-y: auto;
+    overflow-x: clip;
     /* Allow shrinking inside flex .main so wide chart SVGs don’t force horizontal overflow */
     min-width: 0;
     padding: var(--space-3xl) var(--space-2xl);
@@ -834,6 +862,13 @@
     margin: 0 auto;
     width: 100%;
     background: var(--bg);
+  }
+
+  /* ~min window width (845) minus sidebar: content column is narrow; stack toolbars and soften type scale. */
+  @media (max-width: 960px) {
+    .page-content {
+      padding: var(--space-xl) var(--space-lg);
+    }
   }
 
   @media (max-width: 768px) {
@@ -854,12 +889,123 @@
     }
   }
 
+  @media (max-width: 960px) {
+    :global(.kalam-sleek .page-content .page-title) {
+      font-size: 28px;
+      letter-spacing: -0.03em;
+    }
+    :global(.kalam-sleek .page-content .page-subtitle) {
+      font-size: 14px;
+    }
+    :global(.kalam-sleek .page-content .notes-header),
+    :global(.kalam-sleek .page-content .page-header) {
+      flex-direction: row;
+      align-items: flex-start;
+    }
+    :global(.kalam-sleek .page-content .notes-header > div:first-child),
+    :global(.kalam-sleek .page-content .page-header > div:first-child) {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    :global(.kalam-sleek .page-content .notes-header .btn-primary),
+    :global(.kalam-sleek .page-content .notes-header .btn-danger-outline),
+    :global(.kalam-sleek .page-content .page-header .btn-primary) {
+      flex-shrink: 0;
+      align-self: flex-start;
+    }
+    :global(.kalam-sleek .page-content .dash-columns) {
+      grid-template-columns: 1fr;
+    }
+    :global(.kalam-sleek .page-content .notes-toolbar-scope-dropdown) {
+      flex: 0 0 auto;
+      min-width: 48px;
+      max-width: 100%;
+    }
+    :global(.kalam-sleek .page-content .notes-sort-cycle),
+    :global(.kalam-sleek .page-content .notes-label-filter-dropdown) {
+      flex: 0 0 auto;
+    }
+    :global(.kalam-sleek .page-content .sleek-header) {
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: var(--space-md);
+    }
+    :global(.kalam-sleek .page-content .sleek-back) {
+      min-width: 0;
+    }
+    :global(.kalam-sleek .page-content .sleek-actions) {
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      row-gap: 8px;
+      max-width: 100%;
+    }
+    :global(.kalam-sleek .page-content .sleek-cancel) {
+      padding: 8px 14px;
+      font-size: 13px;
+    }
+    :global(.kalam-sleek .page-content .sleek-save) {
+      padding: 8px 14px;
+      font-size: 13px;
+    }
+    :global(.kalam-sleek .page-content .btn-primary),
+    :global(.kalam-sleek .page-content .btn-danger-outline) {
+      padding: 8px 14px;
+      font-size: 13px;
+    }
+    :global(.kalam-sleek .page-content .list-item) {
+      min-width: 0;
+    }
+    :global(.kalam-sleek .page-content .item-content) {
+      min-width: 0;
+    }
+    :global(.kalam-sleek .page-content .setting-row) {
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+    :global(.kalam-sleek .page-content .sleek-title) {
+      font-size: 26px;
+    }
+  }
+
+  /* Very narrow viewport only: stack list toolbar (search / actions). Default stays one row at app min width (~846). */
+  @media (max-width: 560px) {
+    :global(.kalam-sleek .page-content .notes-toolbar) {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    :global(.kalam-sleek .page-content .notes-toolbar .notes-search-bar) {
+      flex: none;
+      width: 100%;
+      max-width: none;
+    }
+    :global(.kalam-sleek .page-content .notes-toolbar-actions) {
+      flex: none;
+      width: 100%;
+      flex-wrap: nowrap;
+      align-items: stretch;
+      gap: var(--space-sm);
+      min-width: 0;
+    }
+    /* Sort-only strip: keep content-sized (scope is a sibling, not inside scroll). */
+    :global(.kalam-sleek .page-content .notes-toolbar-actions-scroll) {
+      flex: 0 0 auto;
+      justify-content: flex-end;
+    }
+  }
+
+  /* Narrow toolbar: icon-only scope trigger label via @container list-toolbar (max-width: 480px) below. */
+
   /* === Prototype-matching page content (so Home/History/etc. can use same classes) === */
   :global(.kalam-sleek .page-content .page),
   :global(.kalam-sleek .page-content .fade-in) {
     animation: fadeInPage 0.4s ease-out forwards;
     min-width: 0;
     max-width: 100%;
+  }
+  /* Container queries: tune layouts down to the window min width (~845px) minus sidebar. */
+  :global(.kalam-sleek .page-content .page.fade-in) {
+    container-type: inline-size;
+    container-name: sleek-page;
   }
   @keyframes fadeInPage {
     from { opacity: 0; transform: translateY(8px); }
@@ -973,6 +1119,33 @@
     cursor: not-allowed;
   }
   :global(.kalam-sleek .page-content .btn-primary :global(svg)) {
+    font-size: 18px;
+  }
+  /* Destructive outline — same footprint as .btn-primary (e.g. Empty trash in Notes header). */
+  :global(.kalam-sleek .page-content .btn-danger-outline) {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border: 1px solid color-mix(in srgb, #ff3b30 55%, var(--border));
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: #ff3b30;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: var(--font-sleek);
+    cursor: pointer;
+    transition: var(--transition-sleek);
+  }
+  :global(.kalam-sleek .page-content .btn-danger-outline:hover:not(:disabled)) {
+    background: color-mix(in srgb, #ff3b30 10%, transparent);
+    transform: translateY(-1px);
+  }
+  :global(.kalam-sleek .page-content .btn-danger-outline:disabled) {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  :global(.kalam-sleek .page-content .btn-danger-outline :global(svg)) {
     font-size: 18px;
   }
   :global(.kalam-sleek .page-content .history-list) {
@@ -1298,6 +1471,9 @@
     font-size: 48px;
     opacity: 0.5;
   }
+  :global(.kalam-sleek .page-content .empty-state :global(span.spin-icon)) {
+    animation: spinPage 0.8s linear infinite;
+  }
   :global(.kalam-sleek .page-content .btn-ghost) {
     padding: 8px 16px;
     background: var(--bg-elevated);
@@ -1363,9 +1539,6 @@
   :global(.kalam-sleek .page-content .settings-section.collapsed) {
     margin-bottom: var(--space-xs);
   }
-  :global(.kalam-sleek .page-content .settings-section.collapsed .section-content) {
-    display: none;
-  }
   :global(.kalam-sleek .page-content .settings-section .section-header) {
     display: flex;
     justify-content: space-between;
@@ -1387,9 +1560,6 @@
     font-weight: 600;
     color: var(--text);
     margin: 0;
-  }
-  :global(.kalam-sleek .page-content .settings-section.collapsed .section-header :global(svg)) {
-    transform: rotate(-90deg);
   }
   :global(.kalam-sleek .page-content .section-content) {
     padding: 0 var(--space-lg) var(--space-lg);
@@ -1425,6 +1595,710 @@
     align-items: center;
     gap: var(--space-sm);
   }
+  :global(.kalam-sleek .page-content .setting-control.full-width) {
+    flex-direction: column;
+    align-items: stretch;
+    min-width: 200px;
+  }
+  :global(.kalam-sleek .page-content .setting-label.full-width) {
+    flex: 1 1 100%;
+  }
+  :global(.kalam-sleek .page-content .settings-tab-content) {
+    animation: settingsTabFade 0.2s ease;
+  }
+  @keyframes settingsTabFade {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  :global(.kalam-sleek .page-content .setting-row.sub-setting) {
+    padding-left: var(--space-xl);
+    border-left: 2px solid var(--border);
+    margin-left: var(--space-md);
+  }
+  :global(.kalam-sleek .page-content .setting-row.checkbox-row) {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-xs);
+  }
+  :global(.kalam-sleek .page-content .setting-row.local-model-row),
+  :global(.kalam-sleek .page-content .setting-row.language-row) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  :global(.kalam-sleek .page-content .setting-row.row-group) {
+    flex-wrap: wrap;
+  }
+
+  /* Hotkey capture (prototype) */
+  :global(.kalam-sleek .page-content .hotkey-capture-area) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-width: 160px;
+    min-height: 40px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    gap: 8px;
+  }
+  :global(.kalam-sleek .page-content .hotkey-capture-area:hover) {
+    background: var(--bg-hover);
+    border-color: var(--text-muted);
+  }
+  :global(.kalam-sleek .page-content .hotkey-capture-area.capturing) {
+    border-color: var(--accent);
+    background: rgba(0, 122, 255, 0.05);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
+    cursor: default;
+  }
+  :global(.kalam-sleek.dark .page-content .hotkey-capture-area.capturing) {
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
+  }
+  :global(.kalam-sleek .page-content .hotkey-pills) {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    flex-wrap: wrap;
+    /* Clicks should start/change capture like the rest of the row (see .hotkey-placeholder). */
+    pointer-events: none;
+  }
+  :global(.kalam-sleek .page-content .hotkey-pill) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    min-width: 28px;
+    height: 24px;
+  }
+  :global(.kalam-sleek .page-content .hotkey-pill.modifier) {
+    background: rgba(0, 122, 255, 0.1);
+    border-color: rgba(0, 122, 255, 0.3);
+    color: var(--accent);
+  }
+  :global(.kalam-sleek.dark .page-content .hotkey-pill.modifier) {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.25);
+  }
+  :global(.kalam-sleek .page-content .hotkey-placeholder) {
+    color: var(--text-muted);
+    font-size: 13px;
+    flex: 1;
+    min-width: 0;
+    line-height: 1.35;
+    /* Let clicks reach the capture surface (text/SVG sometimes steal hits in WebView2). */
+    pointer-events: none;
+  }
+  :global(.kalam-sleek .page-content .hotkey-capture-area .hotkey-edit-icon) {
+    font-size: 14px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    pointer-events: none;
+  }
+  :global(.kalam-sleek .page-content .hotkey-clear),
+  :global(.kalam-sleek .page-content .hotkey-cancel) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 28px;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+    padding: 0;
+    margin-left: 4px;
+    flex-shrink: 0;
+    pointer-events: auto;
+    position: relative;
+    z-index: 1;
+  }
+  :global(.kalam-sleek .page-content .hotkey-clear:hover) {
+    background: rgba(255, 59, 48, 0.1);
+    color: #ff3b30;
+  }
+  :global(.kalam-sleek .page-content .hotkey-cancel:hover) {
+    background: rgba(0, 122, 255, 0.1);
+    color: var(--accent);
+  }
+
+  :global(.kalam-sleek .page-content .toggle-switch) {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 26px;
+    flex-shrink: 0;
+  }
+  :global(.kalam-sleek .page-content .toggle-switch input) {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  :global(.kalam-sleek .page-content .toggle-switch .slider) {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--border);
+    border-radius: var(--radius-full);
+    transition: var(--transition-sleek);
+  }
+  :global(.kalam-sleek .page-content .toggle-switch .slider::before) {
+    position: absolute;
+    content: '';
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: var(--transition-sleek);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+  :global(.kalam-sleek .page-content .toggle-switch input:checked + .slider) {
+    background: var(--accent);
+  }
+  :global(.kalam-sleek .page-content .toggle-switch input:checked + .slider::before) {
+    transform: translateX(18px);
+    background: var(--accent-fg);
+  }
+
+  :global(.kalam-sleek .page-content .segmented-control) {
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    background: var(--bg);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+  }
+  :global(.kalam-sleek .page-content .segmented-control button) {
+    padding: 6px 16px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition-sleek);
+  }
+  :global(.kalam-sleek .page-content .segmented-control button.active) {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  :global(.kalam-sleek .page-content select.form-select),
+  :global(.kalam-sleek .page-content .form-select) {
+    width: 100%;
+    max-width: 320px;
+    padding: 12px 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 15px;
+    font-family: var(--font-sleek, inherit);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  :global(.kalam-sleek .page-content .form-select:focus) {
+    outline: none;
+    border-color: var(--text-muted);
+    background: var(--bg);
+  }
+
+  :global(.kalam-sleek .page-content .stt-mode-cards) {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-md);
+    margin-bottom: var(--space-lg);
+  }
+  @media (max-width: 700px) {
+    :global(.kalam-sleek .page-content .stt-mode-cards) {
+      grid-template-columns: 1fr;
+    }
+  }
+  :global(.kalam-sleek .page-content .stt-mode-card) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-lg);
+    background: var(--bg);
+    border: 2px solid var(--border);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    transition: var(--transition-sleek);
+    text-align: center;
+  }
+  :global(.kalam-sleek .page-content .stt-mode-card:hover) {
+    border-color: var(--text-muted);
+    background: var(--bg-hover);
+  }
+  :global(.kalam-sleek .page-content .stt-mode-card.active) {
+    border-color: var(--accent);
+    background: rgba(0, 122, 255, 0.05);
+  }
+  :global(.kalam-sleek.dark .page-content .stt-mode-card.active) {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  :global(.kalam-sleek .page-content .mode-icon) {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 24px;
+  }
+  :global(.kalam-sleek .page-content .mode-info) {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  :global(.kalam-sleek .page-content .mode-name) {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  :global(.kalam-sleek .page-content .mode-desc) {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  :global(.kalam-sleek .page-content .api-key-section) {
+    padding-left: var(--space-xl);
+    border-left: 2px solid var(--border);
+    margin-left: var(--space-md);
+    margin-top: var(--space-md);
+  }
+  :global(.kalam-sleek .page-content .api-key-row) {
+    display: flex;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+    flex-wrap: wrap;
+  }
+  :global(.kalam-sleek .page-content .api-key-input) {
+    flex: 1;
+    min-width: 160px;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 14px;
+  }
+  :global(.kalam-sleek .page-content .validation-badge) {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: var(--radius-md);
+    background: rgba(255, 59, 48, 0.1);
+    color: #ff3b30;
+  }
+  :global(.kalam-sleek .page-content .validation-badge.valid) {
+    background: rgba(52, 199, 89, 0.1);
+    color: #34c759;
+  }
+  :global(.kalam-sleek .page-content .api-key-hint) {
+    font-size: 13px;
+    margin: var(--space-sm) 0 0 0;
+  }
+  :global(.kalam-sleek .page-content .api-key-hint a) {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  :global(.kalam-sleek .page-content .api-key-hint a:hover) {
+    text-decoration: underline;
+  }
+
+  :global(.kalam-sleek .page-content .local-models-section) {
+    padding-left: var(--space-xl);
+    border-left: 2px solid var(--border);
+    margin-left: var(--space-md);
+    margin-top: var(--space-md);
+  }
+  :global(.kalam-sleek .page-content .local-models-hint) {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-md) 0;
+  }
+
+  :global(.kalam-sleek .page-content .number-input) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  :global(.kalam-sleek .page-content .number-input input) {
+    width: 80px;
+    padding: 8px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 14px;
+    text-align: center;
+  }
+  :global(.kalam-sleek .page-content .number-input .unit) {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  :global(.kalam-sleek .page-content .privacy-info) {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-md);
+    padding: var(--space-lg);
+    background: rgba(0, 122, 255, 0.05);
+    border-radius: var(--radius-md);
+    margin-top: var(--space-md);
+  }
+  :global(.kalam-sleek.dark .page-content .privacy-info) {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  :global(.kalam-sleek .page-content .privacy-info :global(svg)) {
+    font-size: 24px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  :global(.kalam-sleek .page-content .privacy-info p) {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  :global(.kalam-sleek .page-content .log-actions) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    margin-top: var(--space-md);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--border-light);
+  }
+
+  :global(.kalam-sleek .page-content .settings-secondary-btn) {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition-sleek);
+  }
+  :global(.kalam-sleek .page-content .settings-secondary-btn:hover) {
+    background: var(--bg-hover);
+    border-color: var(--text-muted);
+  }
+  :global(.kalam-sleek .page-content .settings-secondary-btn.danger) {
+    color: #ff3b30;
+    border-color: rgba(255, 59, 48, 0.3);
+  }
+  :global(.kalam-sleek .page-content .settings-secondary-btn.danger:hover) {
+    background: rgba(255, 59, 48, 0.1);
+    border-color: rgba(255, 59, 48, 0.5);
+  }
+  :global(.kalam-sleek .page-content .settings-secondary-btn:disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  :global(.kalam-sleek .page-content .settings-section.danger) {
+    border-color: rgba(255, 59, 48, 0.3);
+  }
+  :global(.kalam-sleek .page-content .settings-section.danger .section-header h3) {
+    color: #ff3b30;
+  }
+  :global(.kalam-sleek .page-content .danger-item) {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-md) 0;
+    gap: var(--space-md);
+    border-bottom: 1px solid var(--border-light);
+  }
+  :global(.kalam-sleek .page-content .danger-item:last-child) {
+    border-bottom: none;
+  }
+  :global(.kalam-sleek .page-content .danger-info) {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  :global(.kalam-sleek .page-content .danger-title) {
+    font-size: 14px;
+    font-weight: 500;
+    color: #ff3b30;
+  }
+  :global(.kalam-sleek .page-content .danger-desc) {
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  :global(.kalam-sleek .page-content .danger-btn) {
+    padding: 8px 16px;
+    background: transparent;
+    border: 1px solid #ff3b30;
+    border-radius: var(--radius-md);
+    color: #ff3b30;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition-sleek);
+    flex-shrink: 0;
+  }
+  :global(.kalam-sleek .page-content .danger-btn:hover) {
+    background: rgba(255, 59, 48, 0.1);
+  }
+
+  /* About tab inside settings (prototype) */
+  :global(.kalam-sleek .page-content .about-content) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xl);
+    padding: var(--space-lg) 0;
+  }
+  :global(.kalam-sleek .page-content .about-top-section) {
+    background: var(--bg-elevated);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    padding: var(--space-lg) var(--space-xl);
+  }
+  :global(.kalam-sleek .page-content .about-top-content) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-xl);
+    flex-wrap: wrap;
+  }
+  :global(.kalam-sleek .page-content .about-top-content .version-label) {
+    font-size: 15px;
+    color: var(--text-secondary);
+  }
+  :global(.kalam-sleek .page-content .about-top-content .version-label strong) {
+    color: var(--accent);
+    font-weight: 600;
+    font-family: ui-monospace, monospace;
+  }
+  :global(.kalam-sleek .page-content .about-top-content .updates-block) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+  }
+  :global(.kalam-sleek .page-content .about-top-content .channel-select) {
+    min-width: 200px;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  :global(.kalam-sleek .page-content .about-top-content .btn-check) {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition-sleek);
+  }
+  :global(.kalam-sleek .page-content .about-top-content .btn-check:hover:not(:disabled)) {
+    background: var(--bg-hover);
+  }
+  :global(.kalam-sleek .page-content .about-grid.two-col) {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-lg);
+  }
+  @media (max-width: 700px) {
+    :global(.kalam-sleek .page-content .about-grid.two-col) {
+      grid-template-columns: 1fr;
+    }
+  }
+  :global(.kalam-sleek .page-content .about-content .about-card) {
+    background: var(--bg-elevated);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    padding: var(--space-xl);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+  :global(.kalam-sleek .page-content .about-content .about-card:hover) {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+  :global(.kalam-sleek .page-content .about-content .about-card.highlight) {
+    background: linear-gradient(to bottom right, var(--bg-elevated), rgba(0, 122, 255, 0.05));
+    border-color: rgba(0, 122, 255, 0.3);
+  }
+  :global(.kalam-sleek .page-content .about-content .about-card .card-icon) {
+    width: 40px;
+    height: 40px;
+    background: var(--bg);
+    color: var(--accent);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    margin-bottom: 4px;
+  }
+  :global(.kalam-sleek .page-content .about-content .about-card.highlight .card-icon) {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+  }
+  :global(.kalam-sleek .page-content .about-content .about-card h3) {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0;
+  }
+  :global(.kalam-sleek .page-content .about-content .byline),
+  :global(.kalam-sleek .page-content .about-content .card-text) {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 0;
+    flex-grow: 1;
+  }
+  :global(.kalam-sleek .page-content .about-content .byline a) {
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s;
+  }
+  :global(.kalam-sleek .page-content .about-content .byline a:hover) {
+    border-color: var(--accent);
+  }
+  :global(.kalam-sleek .page-content .about-content .action-group) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-top: auto;
+  }
+  :global(.kalam-sleek .page-content .about-content .action-link) {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    text-decoration: none;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    transition: all 0.2s ease;
+  }
+  :global(.kalam-sleek .page-content .about-content .action-link:hover) {
+    background: var(--bg-hover);
+  }
+  :global(.kalam-sleek .page-content .about-content .action-link.secondary) {
+    background: transparent;
+    color: var(--text-secondary);
+  }
+  :global(.kalam-sleek .page-content .about-content .btn-primary.about-btn-primary) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius-md);
+    text-decoration: none;
+    border: none;
+    cursor: pointer;
+    transition: var(--transition-sleek);
+  }
+  :global(.kalam-sleek .page-content .about-content .btn-primary.about-btn-primary:hover) {
+    opacity: 0.92;
+  }
+  :global(.kalam-sleek .page-content .about-content .license-section) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--bg-elevated);
+  }
+  :global(.kalam-sleek .page-content .about-content .license-section .accordion) {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: var(--space-lg);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  :global(.kalam-sleek .page-content .about-content .license-section .accordion:hover) {
+    background: var(--bg-hover);
+  }
+  :global(.kalam-sleek .page-content .about-content .license-section .accordion-title) {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  :global(.kalam-sleek .page-content .about-content .license-content) {
+    padding: 0 var(--space-lg) var(--space-lg);
+  }
+  :global(.kalam-sleek .page-content .about-content .license-text) {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    margin: 0;
+    max-height: 240px;
+    overflow: auto;
+  }
 
   /* === NOTES PAGE (prototype) === */
   :global(.kalam-sleek .page-content .notes-header) {
@@ -1433,6 +2307,19 @@
     align-items: flex-start;
     flex-wrap: wrap;
     gap: var(--space-md);
+  }
+  @container sleek-page (max-width: 520px) {
+    :global(.kalam-sleek .page-content .notes-header > div:first-child),
+    :global(.kalam-sleek .page-content .page-header > div:first-child) {
+      flex: 1 1 100%;
+      min-width: 0;
+    }
+    :global(.kalam-sleek .page-content .notes-header .btn-primary),
+    :global(.kalam-sleek .page-content .page-header .btn-primary) {
+      flex: 1 1 auto;
+      width: 100%;
+      justify-content: center;
+    }
   }
   :global(.kalam-sleek .page-content .notes-subnav) {
     display: flex;
@@ -1459,27 +2346,328 @@
     color: var(--text);
   }
 
-  /* Notes: secondary “silver” scope dropdown + sort (replaces tab row). */
+  /* Notes / Tasks / Reminders: shared toolbar; search + `.notes-toolbar-actions` (scope, sort, Tasks tag filter). */
   :global(.kalam-sleek .page-content .notes-toolbar) {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-md);
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: var(--space-sm);
     margin-bottom: var(--space-md);
+    container-type: inline-size;
+    container-name: list-toolbar;
+  }
+  /* Row: search grows; actions column is only as wide as tabs/sort/tag (scroll strip does not steal width). */
+  :global(.kalam-sleek .page-content .notes-toolbar-actions) {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    align-content: stretch;
+    gap: var(--space-sm);
+    flex: 0 0 auto;
+    min-width: 0;
+    justify-content: flex-end;
+    overflow: visible;
+  }
+  /* Right-align the action cluster when list chrome hides search (`.notes-toolbar` has only this child). */
+  :global(.kalam-sleek .page-content .notes-toolbar-actions:only-child) {
+    margin-left: auto;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-actions-scroll) {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: var(--space-sm);
+    flex: 0 1 auto;
+    min-width: 0;
+    justify-content: flex-end;
+    overflow-x: auto;
+    overflow-y: visible;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-actions .notes-toolbar-scope-dropdown) {
+    flex: 0 0 auto;
+    /* Keep scope from collapsing when a sibling (e.g. sort strip) uses large flex-basis. */
+    min-width: 48px;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar .notes-search-bar) {
+    flex: 1 1 0;
+    min-width: 0;
+    margin-bottom: 0;
+    align-self: stretch;
+    display: flex;
+    align-items: stretch;
+  }
+  /* Only when the toolbar itself is very narrow: stack search + actions (not at ~600px content width). */
+  @container list-toolbar (max-width: 520px) {
+    :global(.kalam-sleek .page-content .notes-toolbar) {
+      flex-wrap: wrap;
+    }
+    :global(.kalam-sleek .page-content .notes-toolbar .notes-search-bar) {
+      flex: 1 1 100%;
+      max-width: 100%;
+    }
+    :global(.kalam-sleek .page-content .notes-toolbar-actions) {
+      flex: 1 1 100%;
+      max-width: 100%;
+      justify-content: flex-end;
+      flex-wrap: nowrap;
+      min-width: 0;
+      row-gap: var(--space-sm);
+    }
+    /* Sort-only strip: must not use `flex-basis: 100%` — scope is a *sibling* now; 100% was for when scope lived inside scroll. */
+    :global(.kalam-sleek .page-content .notes-toolbar-actions-scroll) {
+      flex: 0 0 auto;
+      max-width: 100%;
+      justify-content: flex-end;
+    }
+    :global(.kalam-sleek .page-content .notes-toolbar-actions .notes-toolbar-scope-dropdown) {
+      flex: 0 0 auto;
+      min-width: 48px;
+      width: auto;
+    }
+  }
+  @container list-toolbar (max-width: 480px) {
+    /* Icon-only scope trigger (title still on button). */
+    :global(.kalam-sleek .page-content .notes-toolbar-scope-trigger .notes-toolbar-scope-trigger-label) {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    :global(.kalam-sleek .page-content .notes-toolbar .notes-search-bar input) {
+      padding: 10px 12px 10px 40px;
+      font-size: 13px;
+    }
+    :global(.kalam-sleek .page-content .notes-toolbar .notes-search-bar .notes-search-bar-icon) {
+      left: 12px;
+    }
+    :global(.kalam-sleek .page-content .notes-toolbar .notes-search-bar > span:not(.notes-search-bar-icon)) {
+      left: 12px;
+    }
+  }
+  /* Notes & Tasks: cycle sort mode (icon button; same four orders as former select). */
+  :global(.kalam-sleek .page-content .notes-sort-cycle) {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    min-width: 48px;
+    align-self: stretch;
+    min-height: 48px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition-sleek);
+  }
+  :global(.kalam-sleek .page-content .notes-sort-cycle:hover) {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+  :global(.kalam-sleek .page-content .notes-sort-cycle:focus-visible) {
+    outline: none;
+    border-color: var(--border);
+  }
+  :global(.kalam-sleek .page-content .notes-sort-cycle :global(svg)) {
+    font-size: 22px;
+    width: 1em;
+    height: 1em;
+    display: block;
+  }
+  /* Notes: label filter — same 48px control as sort; popover aligns to the right under the button. */
+  :global(.kalam-sleek .page-content .notes-label-filter-dropdown) {
+    position: relative;
+    flex-shrink: 0;
+    align-self: stretch;
+  }
+  /* Notes / Tasks: one scope control (icon + label) opens popover matching label-filter shell. */
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-dropdown) {
+    position: relative;
+    flex-shrink: 0;
+    align-self: stretch;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-trigger) {
+    position: relative;
+    width: auto !important;
+    min-width: 48px;
+    padding: 0 12px !important;
+    gap: 8px;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-trigger .notes-toolbar-scope-trigger-label) {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    max-width: 92px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  :global(.kalam-sleek .page-content .notes-scope-menu.notes-label-filter-popover.notes-toolbar-scope-popover) {
+    min-width: 240px;
+    max-width: min(320px, 94vw);
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-popover .notes-label-filter-popover-head) {
+    border-bottom: 1px solid var(--border-light);
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-popover .notes-label-filter-popover-meta) {
+    margin-bottom: 0;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-menu-scroll) {
+    min-height: 0 !important;
+    padding: 4px 6px 8px;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-option-icon) {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-option-icon :global(svg)) {
+    font-size: 18px;
+    width: 1em;
+    height: 1em;
+    display: block;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-popover .notes-scope-option) {
+    gap: 10px;
+    justify-content: flex-start;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-popover .notes-scope-option-label) {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: left;
+  }
+  :global(.kalam-sleek .page-content .notes-toolbar-scope-popover .notes-scope-option-count) {
+    margin-left: auto;
+    flex-shrink: 0;
+    padding-left: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-toggle) {
+    position: relative;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-toggle.has-filter) {
+    border-color: var(--border);
+    color: var(--text);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-count) {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    min-width: 17px;
+    height: 17px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--accent, #0a84ff);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 17px;
+    text-align: center;
+    pointer-events: none;
+    box-sizing: border-box;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-search) {
+    position: relative;
+    flex-shrink: 0;
+    margin-bottom: 6px;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-search-icon) {
+    position: absolute;
+    left: 10px;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    color: var(--text-muted);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-search-icon :global(svg)) {
+    font-size: 16px;
+    width: 1em;
+    height: 1em;
+    display: block;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-search input) {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 8px 10px 8px 34px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--font-sleek);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-search input:focus) {
+    outline: none;
+    border-color: var(--accent, #0a84ff);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-search input::placeholder) {
+    color: var(--text-muted);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-clear-all) {
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin: 0 0 6px 2px;
+    padding: 4px 6px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--accent, #0a84ff);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--font-sleek);
+    cursor: pointer;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-clear-all:hover) {
+    text-decoration: underline;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-menu-scroll) {
+    flex: 1 1 auto;
+    min-height: 112px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    margin: 0;
+    padding: 6px 6px 8px;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-no-match) {
+    padding: 16px 10px;
+    font-size: 13px;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-family: var(--font-sleek);
+    text-align: center;
   }
   :global(.kalam-sleek .page-content .notes-scope-dropdown) {
     position: relative;
+    flex-shrink: 0;
   }
+  /* Match .notes-search-bar input: elevated surface, md radius, no visible border until focus. */
   :global(.kalam-sleek .page-content .notes-scope-trigger) {
     display: inline-flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     min-width: 168px;
-    padding: 8px 14px;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--text-muted) 10%, var(--bg-elevated));
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
+    background: var(--bg-elevated);
     color: var(--text-secondary);
     font-size: 14px;
     font-weight: 500;
@@ -1488,8 +2676,12 @@
     transition: var(--transition-sleek);
   }
   :global(.kalam-sleek .page-content .notes-scope-trigger:hover) {
-    background: color-mix(in srgb, var(--text-muted) 16%, var(--bg-elevated));
+    background: var(--bg-hover);
     color: var(--text);
+  }
+  :global(.kalam-sleek .page-content .notes-scope-trigger:focus-visible) {
+    outline: none;
+    border-color: var(--border);
   }
   :global(.kalam-sleek .page-content .notes-scope-caret) {
     display: flex;
@@ -1520,6 +2712,76 @@
     flex-direction: column;
     gap: 2px;
   }
+  /* Label filter: same family as `.notes-scope-menu` — elevated shell, inset list reads like the segmented control. */
+  :global(.kalam-sleek .page-content .notes-scope-menu.notes-label-filter-popover) {
+    left: auto;
+    right: 0;
+    z-index: 50;
+    min-width: 272px;
+    max-width: min(340px, 94vw);
+    max-height: min(400px, 78vh);
+    min-height: 0;
+    padding: 0;
+    gap: 0;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-popover-head) {
+    padding: 10px 10px 10px;
+    flex-shrink: 0;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border-light);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-popover-meta) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: 8px;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-popover-heading) {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    font-family: var(--font-sleek);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-popover-head .notes-label-filter-search) {
+    margin-bottom: 0;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-popover-head .notes-label-filter-clear-all) {
+    margin: 0;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-popover-head .notes-label-filter-clear-all:hover) {
+    color: var(--text);
+    background: var(--bg-hover);
+    text-decoration: none;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-popover-head .notes-label-filter-search input) {
+    background: var(--bg-input);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-popover-head .notes-label-filter-search input:focus) {
+    border-color: var(--border);
+    box-shadow: 0 0 0 3px var(--primary-alpha-subtle);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-popover-body) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    overflow: hidden;
+  }
   :global(.kalam-sleek .page-content .notes-scope-option) {
     display: flex;
     align-items: center;
@@ -1543,12 +2805,42 @@
   :global(.kalam-sleek .page-content .notes-scope-option.active) {
     background: var(--bg-hover);
     color: var(--text);
-    font-weight: 600;
+    font-weight: 500;
+  }
+  /* Notes: scrollable label list inside popover (search + clear sit above). */
+  :global(.kalam-sleek .page-content .notes-label-filter-menu) {
+    min-width: 0;
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-row) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 8px;
+    margin: 0;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font-sleek);
+    color: var(--text);
+    transition: var(--transition-sleek);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-row:hover) {
+    background: var(--bg-hover);
+  }
+  :global(.kalam-sleek .page-content .notes-label-filter-row input) {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
   }
   :global(.kalam-sleek .page-content .notes-sort-select) {
-    padding: 8px 32px 8px 14px;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border);
+    flex-shrink: 0;
+    padding: 12px 32px 12px 14px;
+    border-radius: var(--radius-md);
+    border: 1px solid transparent;
     color: var(--text-secondary);
     font-size: 14px;
     font-weight: 500;
@@ -1556,12 +2848,12 @@
     cursor: pointer;
     transition: var(--transition-sleek);
     appearance: none;
-    background: color-mix(in srgb, var(--text-muted) 10%, var(--bg-elevated))
+    background: var(--bg-elevated)
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 256 256' fill='%236e6e73'%3E%3Cpath d='M216.49 104.49l-80 80a12 12 0 0 1-17 0l-80-80a12 12 0 0 1 17-17L128 159l71.51-71.52a12 12 0 0 1 17.17 17Z'/%3E%3C/svg%3E")
       no-repeat right 12px center;
   }
   :global(.kalam-sleek .page-content .notes-sort-select:hover) {
-    background: color-mix(in srgb, var(--text-muted) 16%, var(--bg-elevated))
+    background: var(--bg-hover)
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 256 256' fill='%236e6e73'%3E%3Cpath d='M216.49 104.49l-80 80a12 12 0 0 1-17 0l-80-80a12 12 0 0 1 17-17L128 159l71.51-71.52a12 12 0 0 1 17.17 17Z'/%3E%3C/svg%3E")
       no-repeat right 12px center;
     color: var(--text);
@@ -1569,7 +2861,6 @@
   :global(.kalam-sleek .page-content .notes-sort-select:focus) {
     outline: none;
     border-color: var(--border);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
   }
 
   :global(.kalam-sleek .page-content .notes-search-bar) {
@@ -1594,8 +2885,28 @@
     height: 1em;
     display: block;
   }
+  /* Prototype: Iconify root as direct child (no .notes-search-bar-icon), same geometry as Prototype.svelte .notes-search-bar :global(svg). */
+  :global(.kalam-sleek .page-content .notes-search-bar > span:not(.notes-search-bar-icon)) {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    color: var(--text-muted);
+  }
+  :global(.kalam-sleek .page-content .notes-search-bar > span:not(.notes-search-bar-icon) :global(svg)) {
+    font-size: 18px;
+    width: 1em;
+    height: 1em;
+    display: block;
+  }
   :global(.kalam-sleek .page-content .notes-search-bar input) {
     width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
     padding: 12px 14px 12px 44px;
     background: var(--bg-elevated);
     border: 1px solid transparent;
@@ -1613,6 +2924,21 @@
     flex-wrap: wrap;
     gap: 8px;
     margin-bottom: var(--space-lg);
+  }
+  /* Sibling of .notes-toolbar; uses sleek-page container (same width as the page column). */
+  @container sleek-page (max-width: 480px) {
+    :global(.kalam-sleek .page-content .notes-label-filters) {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 6px;
+      margin-bottom: var(--space-md);
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+    }
+    :global(.kalam-sleek .page-content .notes-label-filters .label-chip) {
+      flex-shrink: 0;
+    }
   }
   :global(.kalam-sleek .page-content .label-chip) {
     padding: 6px 12px;
@@ -1656,14 +2982,17 @@
     letter-spacing: 0.05em;
     margin: 0 0 var(--space-lg) 0;
   }
+  /* Auto-fill grid: card width grows with the window (up to max) instead of 3 skinny columns + giant 1:1 tiles when narrow. */
   :global(.kalam-sleek .page-content .notes-masonry) {
-    column-count: 3;
-    column-gap: var(--space-lg);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 252px), 1fr));
+    gap: var(--space-lg);
+    align-items: start;
   }
   /* Note cards: same token model as prototype — readable text on custom colors, shared footer border. */
   :global(.kalam-sleek .page-content .note-card) {
-    break-inside: avoid;
-    margin-bottom: var(--space-lg);
+    width: min(100%, 400px);
+    justify-self: center;
     background: var(--bg-elevated);
     border-radius: var(--radius-lg);
     position: relative;
@@ -1674,7 +3003,6 @@
     flex-direction: column;
     overflow: hidden;
     cursor: pointer;
-    aspect-ratio: 1 / 1;
     height: auto;
     --note-fg: var(--text);
     --note-fg-secondary: var(--text-secondary);
@@ -1693,11 +3021,63 @@
     transform: translateY(-2px);
     box-shadow: var(--shadow);
   }
+  /* Pointer reorder: floating note that follows the cursor.
+     Position is set via inline styles (fixed + left/top) in the component.
+     Hit-testing must see through the lifted card to the drop target below. */
   :global(.kalam-sleek .page-content .note-card.dragging) {
-    opacity: 0.8;
-    transform: scale(1.02) rotate(2deg);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-    z-index: 10;
+    opacity: 0.92;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.04);
+    pointer-events: none;
+    transition: none;
+  }
+  :global(.kalam-sleek .page-content .note-card.note-card--reorder .note-inner) {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* Wrapper for each card in the masonry to allow spacer + card together */
+  :global(.kalam-sleek .page-content .note-card-wrapper) {
+    break-inside: avoid;
+    margin-bottom: 16px;
+  }
+  :global(.kalam-sleek .page-content .note-card-wrapper .note-card) {
+    margin-bottom: 0;
+  }
+  /* Drop spacer - shows where the dragged card will land */
+  :global(.kalam-sleek .page-content .note-drop-spacer) {
+    width: 100%;
+    height: 8px;
+    margin: 4px 0;
+    background: var(--accent-primary, #3b82f6);
+    border-radius: 4px;
+    opacity: 0.6;
+    animation: note-drop-spacer-pulse 0.8s ease-in-out infinite;
+    grid-column: 1 / -1;
+  }
+  @keyframes note-drop-spacer-pulse {
+    0%, 100% { opacity: 0.4; transform: scaleX(0.95); }
+    50% { opacity: 0.8; transform: scaleX(1); }
+  }
+  :global(.kalam-sleek .page-content .notes-masonry--reorder) {
+    min-height: 3rem;
+  }
+  :global(.kalam-sleek .page-content .notes-masonry--empty-pinned),
+  :global(.kalam-sleek .page-content .notes-masonry--empty-others) {
+    min-height: 4.5rem;
+    align-content: start;
+  }
+  :global(.kalam-sleek .page-content .notes-pin-drop-hint),
+  :global(.kalam-sleek .page-content .notes-unpin-drop-hint) {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 3.5rem;
+    padding: var(--space-md);
+    border: 1px dashed var(--border-visible);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    background: var(--bg-input);
   }
   :global(.kalam-sleek .page-content .note-card.pinned::before) {
     content: '';
@@ -1728,13 +3108,25 @@
     color: var(--note-fg);
     overflow: hidden;
     display: -webkit-box;
-    -webkit-line-clamp: 4;
+    -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     word-break: break-word;
   }
   :global(.kalam-sleek .page-content .note-card .note-title.note-title-placeholder) {
     color: var(--note-fg-muted);
     font-weight: 500;
+  }
+  :global(.kalam-sleek .page-content .note-card .note-preview) {
+    font-size: 12px;
+    line-height: 1.45;
+    font-weight: 400;
+    margin: 0;
+    color: var(--note-fg-secondary);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-break: break-word;
   }
   :global(.kalam-sleek .page-content .note-card-meta) {
     margin-top: auto;
@@ -1781,7 +3173,10 @@
   }
   :global(.kalam-sleek .page-content .note-actions) {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
+    justify-content: flex-end;
+    max-width: 100%;
   }
   :global(.kalam-sleek .page-content .note-action-btn) {
     width: 21px;
@@ -1795,6 +3190,24 @@
     cursor: pointer;
     color: var(--note-fg-muted);
     transition: var(--transition-sleek);
+  }
+  /* Archive / trash scopes: readable labels next to icons on note cards. */
+  :global(.kalam-sleek .page-content .note-action-btn.note-action-btn--labeled) {
+    width: auto;
+    min-height: 21px;
+    height: auto;
+    padding: 4px 7px;
+    gap: 5px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-sleek);
+    line-height: 1.2;
+  }
+  :global(.kalam-sleek .page-content .note-action-btn.note-action-btn--labeled :global(svg)) {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
   }
   :global(.kalam-sleek .page-content .note-action-btn :global(svg)) {
     width: 14px;
@@ -1960,6 +3373,12 @@
     color: var(--text-muted);
     opacity: 0.6;
   }
+  @media (max-width: 960px) {
+    :global(.kalam-sleek .page-content .sleek-title) {
+      font-size: 26px;
+      padding: 12px 14px;
+    }
+  }
   :global(.kalam-sleek .page-content .sleek-labels) {
     display: flex;
     flex-wrap: wrap;
@@ -2099,7 +3518,8 @@
     border: 1px solid var(--border-light);
     background: var(--bg);
     color: var(--text);
-    font-size: 13px;
+    /* Match sleek row fields: subtask-input, add-subtask-input, sleek-label-input (14px). */
+    font-size: 14px;
     font-family: var(--font);
     outline: none;
     cursor: pointer;
@@ -2176,6 +3596,36 @@
   :global(.kalam-sleek .page-content .sleek-tool-btn :global(svg)) {
     font-size: 24px;
   }
+  :global(.kalam-sleek .page-content .sleek-tool-btn.complete-toggle) {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    width: auto;
+    height: auto;
+    border-radius: var(--radius-full);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  :global(.kalam-sleek .page-content .sleek-tool-btn.complete-toggle span) {
+    font-size: 13px;
+  }
+  :global(.kalam-sleek .page-content .sleek-tool-btn.complete-toggle.completed) {
+    color: #34C759;
+    background: rgba(52, 199, 89, 0.1);
+  }
+  :global(.kalam-sleek .page-content .sleek-tool-btn.complete-toggle.completed:hover) {
+    background: rgba(52, 199, 89, 0.15);
+  }
+  :global(.kalam-sleek .page-content .sleek-tool-btn.complete-toggle.compact) {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+  }
+  :global(.kalam-sleek .page-content .sleek-tool-btn.complete-toggle.compact :global(svg)) {
+    font-size: 20px;
+  }
+  /* Complete control removed from here, styled locally in TaskDetail */
   :global(.kalam-sleek .page-content .task-desc) {
     min-height: 120px;
     margin-bottom: var(--space-xl);
@@ -2204,6 +3654,13 @@
   :global(.kalam-sleek .page-content .due-date-input-row:focus-within) {
     border-color: var(--text-muted);
     background: var(--bg);
+  }
+  /* Svelty field: no white inset; surface matches the row so :focus-within fade applies as one unit */
+  :global(.kalam-sleek .page-content .due-date-input-row .sleek-datetime-input) {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    transition: color 0.2s ease;
   }
   :global(.kalam-sleek .page-content .due-date-input-row :global(svg)) {
     color: var(--text-muted);
@@ -2237,12 +3694,39 @@
   :global(.kalam-sleek .page-content .subtask-row.completed .subtask-input) {
     text-decoration: line-through;
   }
+  /* Drag grip chip on elevated rows (tasks list + subtasks): border + bg so the handle reads clearly. */
+  :global(.kalam-sleek .page-content .task-row .drag-handle),
   :global(.kalam-sleek .page-content .subtask-row .drag-handle) {
-    opacity: 0.5;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-light);
+    background: var(--bg);
+    color: var(--text-muted);
+    cursor: grab;
+    font-size: 16px;
+    opacity: 0.65;
+    transition: var(--transition);
   }
-  :global(.kalam-sleek .page-content .subtask-row .drag-handle:disabled) {
-    cursor: default;
-    opacity: 0.4;
+  :global(.kalam-sleek .page-content .task-row:hover .drag-handle),
+  :global(.kalam-sleek .page-content .subtask-row:hover .drag-handle) {
+    opacity: 0.9;
+    border-color: var(--border);
+    color: var(--text-secondary);
+  }
+  :global(.kalam-sleek .page-content .task-row .drag-handle:hover),
+  :global(.kalam-sleek .page-content .subtask-row .drag-handle:hover) {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+  :global(.kalam-sleek .page-content .task-row .drag-handle:active),
+  :global(.kalam-sleek .page-content .subtask-row .drag-handle:active) {
+    cursor: grabbing;
   }
   :global(.kalam-sleek .page-content .subtask-input) {
     flex: 1;
@@ -2285,33 +3769,141 @@
   :global(.kalam-sleek .page-content .add-subtask-input::placeholder) {
     color: var(--text-muted);
   }
-  :global(.kalam-sleek .page-content .task-priority-selector.compact) {
-    display: flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--bg-elevated);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
+  /* Compact priority: same footprint as old segmented control; menu is custom-styled (not native select). */
+  :global(.kalam-sleek .page-content .task-priority-popover) {
+    position: relative;
+    flex-shrink: 0;
   }
-  :global(.kalam-sleek .page-content .task-priority-selector.compact .priority-btn) {
-    padding: 4px 8px;
-    font-size: 11px;
-    min-width: 28px;
-    height: 28px;
-    display: flex;
+  :global(.kalam-sleek .page-content .task-priority-trigger) {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    border-radius: var(--radius-sm);
+    gap: 6px;
+    height: 36px;
+    min-width: 118px;
+    max-width: 132px;
+    padding: 0 10px;
+    margin: 0;
     border: 1px solid var(--border);
+    border-radius: var(--radius-md);
     background: var(--bg-elevated);
     color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: border-color 0.2s ease, background 0.2s ease;
   }
-  :global(.kalam-sleek .page-content .priority-btn.selected) {
-    background: var(--text);
-    color: var(--bg);
-    border-color: var(--text);
+  :global(.kalam-sleek .page-content .task-priority-trigger:hover) {
+    border-color: var(--text-muted);
+    background: var(--bg);
+  }
+  :global(.kalam-sleek .page-content .task-priority-trigger:focus-visible) {
+    outline: 2px solid var(--text-muted);
+    outline-offset: 2px;
+  }
+  :global(.kalam-sleek .page-content .task-priority-trigger-flag) {
+    display: flex;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  :global(.kalam-sleek .page-content .task-priority-trigger-flag.p0 :global(svg)) {
+    color: var(--text-muted);
+  }
+  :global(.kalam-sleek .page-content .task-priority-trigger-flag.p1 :global(svg)) {
+    color: #34c759;
+  }
+  :global(.kalam-sleek .page-content .task-priority-trigger-flag.p2 :global(svg)) {
+    color: #ff9500;
+  }
+  :global(.kalam-sleek .page-content .task-priority-trigger-flag.p3 :global(svg)) {
+    color: #ff3b30;
+  }
+  :global(.kalam-sleek .page-content .task-priority-trigger-text) {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  :global(.kalam-sleek .page-content .task-priority-trigger-caret) {
+    display: flex;
+    font-size: 14px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+  }
+  :global(.kalam-sleek .page-content .task-priority-trigger[aria-expanded='true'] .task-priority-trigger-caret) {
+    transform: rotate(180deg);
+  }
+  :global(.kalam-sleek .page-content .task-priority-menu) {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 40;
+    min-width: 220px;
+    margin: 0;
+    padding: 6px;
+    list-style: none;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+  }
+  :global(.kalam-sleek.dark .page-content .task-priority-menu) {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  }
+  :global(.kalam-sleek .page-content .task-priority-option) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 12px;
+    margin: 0;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  :global(.kalam-sleek .page-content .task-priority-option:hover) {
+    background: var(--bg-hover);
+  }
+  :global(.kalam-sleek .page-content .task-priority-option.selected) {
+    background: var(--bg);
+    font-weight: 600;
+  }
+  :global(.kalam-sleek .page-content .task-priority-option-flag) {
+    display: flex;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  :global(.kalam-sleek .page-content .task-priority-option-flag.p0 :global(svg)) {
+    color: var(--text-muted);
+  }
+  :global(.kalam-sleek .page-content .task-priority-option-flag.p1 :global(svg)) {
+    color: #34c759;
+  }
+  :global(.kalam-sleek .page-content .task-priority-option-flag.p2 :global(svg)) {
+    color: #ff9500;
+  }
+  :global(.kalam-sleek .page-content .task-priority-option-flag.p3 :global(svg)) {
+    color: #ff3b30;
+  }
+  :global(.kalam-sleek .page-content .task-priority-option-label) {
+    flex: 1;
+    min-width: 0;
+  }
+  :global(.kalam-sleek .page-content .task-priority-option-check) {
+    display: flex;
+    font-size: 18px;
+    flex-shrink: 0;
+    color: var(--text-muted);
   }
   :global(.kalam-sleek .page-content .sleek-editor-page .checkbox.small) {
     width: 20px;
@@ -2332,8 +3924,13 @@
     border-color: var(--text);
   }
 
-  /* Tasks list — from prototype */
+  /* Tasks list — from prototype; section gap matches `.notes-lists-container` (Pinned / Others). */
   :global(.kalam-sleek .page-content .task-list-large) {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xl);
+  }
+  :global(.kalam-sleek .page-content .task-list-large .task-list-section-rows) {
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -2349,14 +3946,42 @@
     cursor: pointer;
     border: 1px solid transparent;
   }
+  /* Keep pointer (click) cursor — whole row drags without a handle; grab/grabbing would imply a different affordance. */
+  :global(.kalam-sleek .page-content .task-row.task-row--reorder) {
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  :global(.kalam-sleek .page-content .task-row.task-row--reorder .checkbox),
+  :global(.kalam-sleek .page-content .task-row.task-row--reorder .task-row-actions) {
+    cursor: pointer;
+    user-select: none;
+  }
   :global(.kalam-sleek .page-content .task-row:hover) {
     background: var(--bg-hover);
     border-color: var(--border-light);
   }
+  :global(.kalam-sleek .page-content .task-list-large .task-row-wrapper) {
+    width: 100%;
+  }
+  :global(.kalam-sleek .page-content .task-drop-spacer) {
+    width: 100%;
+    height: 6px;
+    margin: 2px 0;
+    background: var(--accent-primary, #3b82f6);
+    border-radius: 3px;
+    opacity: 0.6;
+    animation: note-drop-spacer-pulse 0.8s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  :global(.kalam-sleek .page-content .task-row.task-row--reorder.dragging) {
+    cursor: pointer;
+  }
   :global(.kalam-sleek .page-content .task-row.dragging) {
-    opacity: 0.5;
-    transform: scale(0.98);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    opacity: 0.92;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.04);
+    pointer-events: none;
+    transition: none;
   }
   :global(.kalam-sleek .page-content .task-row.completed) {
     opacity: 0.6;
@@ -2364,22 +3989,6 @@
   :global(.kalam-sleek .page-content .task-row.completed .task-title) {
     text-decoration: line-through;
     color: var(--text-secondary);
-  }
-  :global(.kalam-sleek .page-content .task-row .drag-handle) {
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    cursor: grab;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 4px;
-    border-radius: var(--radius-sm);
-    opacity: 0;
-    transition: var(--transition);
-  }
-  :global(.kalam-sleek .page-content .task-row:hover .drag-handle) {
-    opacity: 1;
   }
   :global(.kalam-sleek .page-content .drag-handle:hover) {
     background: var(--bg);
@@ -2454,6 +4063,56 @@
     border: 1px solid var(--border);
     color: var(--text-secondary);
   }
+  :global(.kalam-sleek .page-content .task-row-actions) {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+  :global(.kalam-sleek .page-content .task-row--trash .task-row-actions) {
+    margin-left: auto;
+  }
+  /* Narrow page: keep one row per task — wrapping pushed `.task-row-actions` to a full-width line and doubled row height. */
+  @container sleek-page (max-width: 720px) {
+    :global(.kalam-sleek .page-content .task-row) {
+      flex-wrap: nowrap;
+      align-items: center;
+    }
+    :global(.kalam-sleek .page-content .task-info) {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    :global(.kalam-sleek .page-content .task-row .task-title) {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    :global(.kalam-sleek .page-content .task-meta) {
+      flex-wrap: nowrap;
+      min-width: 0;
+      overflow: hidden;
+    }
+    :global(.kalam-sleek .page-content .task-tags) {
+      flex: 0 1 auto;
+      min-width: 0;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+  }
+  @container sleek-page (max-width: 640px) {
+    :global(.kalam-sleek .page-content .sleek-header) {
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: var(--space-md);
+    }
+    :global(.kalam-sleek .page-content .sleek-actions) {
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      width: 100%;
+      max-width: 100%;
+    }
+  }
   :global(.kalam-sleek .page-content .priority-indicator) {
     width: 8px;
     height: 8px;
@@ -2512,16 +4171,17 @@
     font-size: 15px;
     font-weight: 500;
   }
+  /* Match History row `.chip` (e.g. chip-stt): radius, type scale, weight */
   :global(.kalam-sleek .page-content .reminder-source-badge) {
     font-size: 11px;
-    padding: 2px 8px;
-    border-radius: var(--radius-full);
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 6px;
     background: var(--bg);
     border: 1px solid var(--border);
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    font-weight: 600;
   }
   :global(.kalam-sleek .page-content .reminder-source-badge.note) {
     background: #fef08a;
@@ -2682,14 +4342,4 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
 
-  @media (max-width: 900px) {
-    :global(.kalam-sleek .page-content .notes-masonry) {
-      column-count: 2;
-    }
-  }
-  @media (max-width: 560px) {
-    :global(.kalam-sleek .page-content .notes-masonry) {
-      column-count: 1;
-    }
-  }
 </style>

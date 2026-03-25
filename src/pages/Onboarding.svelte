@@ -3,9 +3,10 @@
   import { onMount } from 'svelte'
   import { invoke, listenSafe } from '$lib/backend'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
+  import Icon from '@iconify/svelte'
   import { formatHotkeyForDisplay, superKeyLabel } from '../lib/platformHotkey'
   import { LANGUAGE_OPTIONS, languageLabel } from '../lib/languages'
-  import type { AppConfig } from '../types'
+  import type { AppConfig, AudioDevice } from '../types'
 
   const dispatch = createEventDispatcher<{ complete: void }>()
 
@@ -37,30 +38,38 @@
   let unlistenDictation: (() => void) | null = null
   let skipInProgress = false
   let skipError = ''
+  let audioDevices: AudioDevice[] = []
+  /** '' = system default (same as Settings → Audio Input). */
+  let audioDeviceSelection = ''
+  /** Permission cards + details; collapsed by default to shorten the Access step. */
+  let permCardsOpen = false
+  /** True while refresh re-lists devices (click feedback + prevent double-fires). */
+  let micRefreshBusy = false
+  /** True from Record click until `test_microphone_start` succeeds (UI feedback during async start). */
+  let micRecordStarting = false
 
+  /** Short nav labels — match the order of steps below. */
   const stepLabels = [
     'Welcome',
-    'Account',
-    'Permissions',
-    'Mode',
-    'Controls',
-    'Ready',
+    'Email',
+    'Access',
+    'Engine',
+    'Shortcuts',
+    'Try it',
   ]
 
-  onMount(() => {
-    const setup = async () => {
-      const unlisten = await listenSafe<string>('dictation-result', (e) => {
-        if (typeof e.payload === 'string') {
-          demoTranscription = e.payload
-        }
-      })
-      unlistenDictation = unlisten
-    }
-    setup()
-    return () => {
-      unlistenDictation?.()
-    }
-  })
+  /** Single place for demo / refocus copy so hold vs toggle stays consistent. */
+  $: primaryHotkeyDemo = hotkey || toggleHotkey || `Ctrl+${superKeyLabel(platform)}`
+
+  /** Short line next to the demo shortcut for the “Try it” step. */
+  $: hotkeyDemoCaption =
+    hotkey && toggleHotkey
+      ? 'Hold or toggle — then speak'
+      : hotkey
+        ? 'Hold while speaking — then release'
+        : toggleHotkey
+          ? 'Press once to start, again to stop — then speak'
+          : 'Hold while speaking — then release'
 
   function isEmailValid(email: string) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((email || '').trim())
@@ -87,12 +96,70 @@
       if (config.languages?.length) languages = [...config.languages]
       if (config.user_email) userEmail = config.user_email
       if (config.notifications_opt_in != null) notificationsOptIn = config.notifications_opt_in
+      const ad = config.audio_device
+      // '' = explicit “System default” row; 'default' / 'device_N' = real ids from list_devices (never duplicate option values).
+      if (ad == null || ad === '') {
+        audioDeviceSelection = ''
+      } else {
+        audioDeviceSelection = ad
+      }
+      lastSavedDevice = ad == null || ad === '' ? null : ad
+      deviceInitComplete = true
     } catch (e) {
       console.error('Onboarding load config failed:', e)
     }
   }
 
-  async function saveOnboardingState() {
+  async function loadAudioDevices() {
+    try {
+      audioDevices = (await invoke('get_audio_devices')) as AudioDevice[]
+    } catch (e) {
+      console.error('[Onboarding] list audio devices failed:', e)
+      audioDevices = []
+    }
+  }
+
+  async function handleRefreshMicList() {
+    if (micRefreshBusy) return
+    micRefreshBusy = true
+    try {
+      await loadAudioDevices()
+    } finally {
+      micRefreshBusy = false
+    }
+  }
+
+  /** Debounced save for audio device changes (mirrors Settings behavior). */
+  let deviceSaveTimeout: ReturnType<typeof setTimeout> | null = null
+  let lastSavedDevice: string | null = null
+  let deviceInitComplete = false
+  async function saveAudioDevice() {
+    if (deviceSaveTimeout) clearTimeout(deviceSaveTimeout)
+    deviceSaveTimeout = setTimeout(async () => {
+      try {
+        // Skip saves until initial config load is done
+        if (!deviceInitComplete) return
+        const t = audioDeviceSelection.trim()
+        const deviceToSave = t === '' ? null : t
+        if (lastSavedDevice === deviceToSave) return
+        const config = (await invoke('get_settings')) as AppConfig
+        config.audio_device = deviceToSave
+        await invoke('save_settings', { newConfig: config })
+        lastSavedDevice = deviceToSave
+      } catch (e) {
+        console.error('[Onboarding] save audio device failed:', e)
+      }
+    }, 150)
+  }
+
+  // Reactive save trigger: fires AFTER bind:value updates the variable
+  $: if (audioDeviceSelection !== undefined && !micRefreshBusy && deviceInitComplete) {
+    saveAudioDevice()
+  }
+
+  type SaveOnboardingOpts = { captureOsForEmailStep?: boolean }
+
+  async function saveOnboardingState(opts?: SaveOnboardingOpts) {
     try {
       const config = (await invoke('get_settings')) as AppConfig
       config.stt_config.provider = selectedProvider
@@ -105,6 +172,23 @@
       config.user_email = userEmail.trim() || null
       config.marketing_opt_in = false
       config.notifications_opt_in = notificationsOptIn
+      const mic = audioDeviceSelection.trim()
+      config.audio_device = mic === '' ? null : mic
+      // Snapshot OS when leaving the email step (Continue)—for support / diagnostics alongside `user_email`.
+      if (opts?.captureOsForEmailStep) {
+        try {
+          const rel = (await invoke('get_os_release_info')) as { name: string; version: string }
+          const n = (rel.name ?? '').trim()
+          const v = (rel.version ?? '').trim()
+          config.onboarding_os_name = n || null
+          config.onboarding_os_version = v || null
+        } catch (e) {
+          console.error('Onboarding: get_os_release_info failed:', e)
+          config.onboarding_os_name =
+            platform === 'macos' ? 'macOS' : platform === 'linux' ? 'Linux' : 'Windows'
+          config.onboarding_os_version = null
+        }
+      }
       await invoke('save_settings', { newConfig: config })
     } catch (e) {
       console.error('Onboarding save state failed:', e)
@@ -114,7 +198,7 @@
   async function nextStep() {
     if (step === 2) {
       if (!termsAgreed || !isEmailValid(userEmail)) return
-      await saveOnboardingState()
+      await saveOnboardingState({ captureOsForEmailStep: true })
     }
     if (step === 5) await saveOnboardingState()
     if (step < totalSteps) step++
@@ -140,16 +224,18 @@
   }
 
   async function startRecording() {
+    if (micRecordStarting || testingMic) return
     noAudioRecorded = false
     hasRecording = false
     recordedSamples = []
     recordedSampleRate = 0
-    testingMic = true
     micLevel = 0
+    micRecordStarting = true
     try {
       audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
       await audioCtx.resume()
       await invoke('test_microphone_start')
+      testingMic = true
       levelPollId = setInterval(async () => {
         try {
           micLevel = (await invoke('test_microphone_level')) as number
@@ -164,6 +250,8 @@
         clearInterval(levelPollId)
         levelPollId = null
       }
+    } finally {
+      micRecordStarting = false
     }
   }
 
@@ -229,8 +317,35 @@
     invoke('request_system_permission', { permission }).catch((e) => console.error(e))
   }
 
+  /**
+   * Explicit paste handler for the API key field.
+   * WebView2 on Windows can silently swallow the default paste action on certain inputs;
+   * using clipboardData (synchronous, no permission prompt) ensures the value arrives.
+   */
+  function onApiKeyPaste(e: ClipboardEvent) {
+    const text = e.clipboardData?.getData('text/plain')
+    if (text) {
+      e.preventDefault()
+      apiKey = text.trim()
+    }
+  }
+
   onMount(() => {
-    loadPlatform().then(() => loadConfig())
+    const setup = async () => {
+      const unlisten = await listenSafe<string>('dictation-result', (e) => {
+        if (typeof e.payload === 'string') {
+          demoTranscription = e.payload
+        }
+      })
+      unlistenDictation = unlisten
+    }
+    void setup()
+    void loadPlatform()
+      .then(() => loadConfig())
+      .then(() => loadAudioDevices())
+    return () => {
+      unlistenDictation?.()
+    }
   })
 
   async function finish() {
@@ -247,6 +362,8 @@
       config.user_email = userEmail.trim() || null
       config.marketing_opt_in = false
       config.notifications_opt_in = notificationsOptIn
+      const mic = audioDeviceSelection.trim()
+      config.audio_device = mic === '' ? null : mic
       await invoke('save_settings', { newConfig: config })
       dispatch('complete')
     } catch (e) {
@@ -320,7 +437,7 @@
           disabled={skipInProgress}
           on:click={handleSkipClick}
         >
-          {skipInProgress ? 'Skipping...' : 'Skip setup'}
+          {skipInProgress ? 'Skipping…' : 'Use defaults & skip'}
         </button>
         {#if skipError}
           <p class="skip-error" role="alert">{skipError}</p>
@@ -350,39 +467,42 @@
   <!-- Right content area -->
   <div class="content-area">
     <div class="content-scroll">
-
+      {#key step}
+      <div class="step-shell">
       {#if step === 1}
         <div class="step step-welcome">
+          <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
           <h1>Welcome to Kalam</h1>
-          <p class="subtitle">Voice-to-text that's fast, private, and works everywhere.</p>
+          <p class="subtitle">Dictate into any app with a global shortcut—fast when you’re online, still usable offline with the right setup.</p>
+          <p class="step-meta">Most people finish setup in under two minutes. You can change almost everything later in Settings.</p>
 
           <div class="features-grid">
             <div class="feat">
-              <span class="feat-icon">⚡</span>
+              <span class="feat-icon" aria-hidden="true"><Icon icon="ph:lightning" /></span>
               <div>
-                <strong>Lightning Fast</strong>
-                <span>Speak 4x faster than typing</span>
+                <strong>Low-friction flow</strong>
+                <span>Hold a shortcut to talk, release to insert text—no copy-paste dance.</span>
               </div>
             </div>
             <div class="feat">
-              <span class="feat-icon">🔒</span>
+              <span class="feat-icon" aria-hidden="true"><Icon icon="ph:lock-key" /></span>
               <div>
-                <strong>Private</strong>
-                <span>Runs locally on your machine</span>
+                <strong>You stay in control</strong>
+                <span>Choose cloud, hybrid, or local so audio and data follow your comfort level.</span>
               </div>
             </div>
             <div class="feat">
-              <span class="feat-icon">🎯</span>
+              <span class="feat-icon" aria-hidden="true"><Icon icon="ph:cursor-click" /></span>
               <div>
-                <strong>Universal</strong>
-                <span>Dictate into any app or text field</span>
+                <strong>Works system-wide</strong>
+                <span>Type into browsers, docs, chat—wherever the cursor is.</span>
               </div>
             </div>
             <div class="feat">
-              <span class="feat-icon">🌐</span>
+              <span class="feat-icon" aria-hidden="true"><Icon icon="ph:globe-hemisphere-west" /></span>
               <div>
-                <strong>99+ Languages</strong>
-                <span>Auto-punctuation built in</span>
+                <strong>Many languages</strong>
+                <span>Multilingual lists and auto-punctuation help polished output.</span>
               </div>
             </div>
           </div>
@@ -390,116 +510,266 @@
 
       {:else if step === 2}
         <div class="step step-account">
-          <h1>Create your account</h1>
-          <p class="subtitle">So we can reach you for support and important updates.</p>
+          <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
+          <h1>Email &amp; terms</h1>
+          <p class="subtitle">We need a valid email for support and account-related notices. Optional emails are only sent if you opt in below.</p>
 
           <div class="form-card">
             <div class="field">
-              <label for="onboarding-email">Email <span class="req">*</span></label>
+              <label for="onboarding-email">Email address <span class="req">*</span></label>
               <input
                 id="onboarding-email"
                 type="email"
                 placeholder="you@example.com"
+                autocomplete="email"
                 bind:value={userEmail}
               />
               {#if userEmail && !isEmailValid(userEmail)}
-                <p class="field-error">Enter a valid email address.</p>
+                <p class="field-error">Use a valid email (we’ll use it only as described).</p>
               {/if}
-              <p class="privacy-note">Your email stays private and is never shared with third parties.</p>
+              <p class="privacy-note">We don’t sell your email. Third-party marketing lists aren’t part of this step.</p>
             </div>
             <div class="checkboxes">
               <label class="check-row">
                 <input type="checkbox" bind:checked={termsAgreed} />
-                <span>I agree to the <a href="https://kalam.stream/terms.html" target="_blank" rel="noopener noreferrer">Terms and Conditions</a> and <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a></span>
+                <span>I’ve read and agree to the <a href="https://kalam.stream/terms.html" target="_blank" rel="noopener noreferrer">Terms</a> and <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</span>
               </label>
               <label class="check-row">
                 <input type="checkbox" bind:checked={notificationsOptIn} />
-                <span>Send me product updates</span>
+                <span>Email me product updates and tips (optional).</span>
               </label>
             </div>
+            <p class="step-footnote">Continue is enabled when your email is valid and terms are accepted.</p>
           </div>
         </div>
 
       {:else if step === 3}
         <div class="step step-permissions">
-          <h1>Permissions</h1>
-          <p class="subtitle">Kalam needs mic access to hear you, and accessibility to type for you.</p>
+          <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
+          <h1>Access &amp; microphone</h1>
+          <p class="subtitle">Grant what your OS asks for, then confirm the mic picks you up. Without these, Kalam can’t hear you or type into other apps.</p>
 
-          <div class="perm-trust">
-            <p>Kalam runs on your device. We use the <strong>microphone</strong> only for your voice to transcribe—we don't store raw audio. <strong>Accessibility</strong> lets us type the transcribed text into other apps. On macOS, the system may also ask for <strong>Input Monitoring</strong> (keyboard): we use it only to detect your dictation hotkey in any app; we do not record or send your keystrokes.</p>
-          </div>
-
-          <div class="perm-list">
-            <div class="perm-row">
-              <div class="perm-icon-wrap"><span class="perm-icon">🎤</span></div>
-              <div class="perm-info">
-                <strong>Microphone</strong>
-                <span>Captures your voice for transcription</span>
-              </div>
-              <button type="button" class="btn-outline-sm" on:click={() => requestPermission('microphone')}>
-                {platform === 'macos' ? 'Allow' : 'Open Settings'}
+          <div class="perm-panel">
+            <h2 class="section-heading">Allow on this device</h2>
+            <ol class="perm-steps-hint" aria-label="Suggested order">
+              <li>Microphone first</li>
+              <li>Then accessibility (if prompted)</li>
+              <li>Finally run the quick mic check below</li>
+            </ol>
+            <div class="perm-accordion">
+              <button
+                type="button"
+                class="perm-accordion-trigger"
+                id="onboarding-perm-accordion-btn"
+                aria-expanded={permCardsOpen}
+                aria-controls="onboarding-perm-cards-region"
+                on:click={() => (permCardsOpen = !permCardsOpen)}
+              >
+                <span class="perm-accordion-text">
+                  <span class="perm-accordion-title">System permissions &amp; details</span>
+                  <span class="perm-accordion-sub">
+                    {permCardsOpen ? 'Hide' : 'Show'} microphone, accessibility{#if platform === 'macos'}, Input Monitoring{/if}, and privacy notes
+                  </span>
+                </span>
+                <span class="perm-accordion-chevron" aria-hidden="true">
+                  <Icon icon={permCardsOpen ? 'ph:caret-up' : 'ph:caret-down'} />
+                </span>
               </button>
-            </div>
-            <div class="perm-row">
-              <div class="perm-icon-wrap"><span class="perm-icon">⌨️</span></div>
-              <div class="perm-info">
-                <strong>Accessibility</strong>
-                <span>Types transcribed text into apps</span>
-              </div>
+              {#if permCardsOpen}
+                <div
+                  class="perm-accordion-panel"
+                  id="onboarding-perm-cards-region"
+                  role="region"
+                  aria-labelledby="onboarding-perm-accordion-btn"
+                >
+                  <div class="perm-cards">
+              <article class="perm-card">
+                <div class="perm-card-row">
+                  <div class="perm-icon-wrap"><Icon icon="ph:microphone" aria-hidden="true" /></div>
+                  <div class="perm-info">
+                    <strong>Microphone</strong>
+                    <span>Hear you while you dictate</span>
+                  </div>
+                  <button type="button" class="btn-outline-sm" on:click={() => requestPermission('microphone')}>
+                    {platform === 'macos' ? 'Allow in System Settings' : 'Open system settings'}
+                  </button>
+                </div>
+                <p class="perm-card-detail">
+                  Audio goes to the speech engine you configure (cloud and/or local). This onboarding flow does not keep raw recordings.
+                </p>
+              </article>
+              <article class="perm-card">
+                <div class="perm-card-row">
+                  <div class="perm-icon-wrap"><Icon icon="ph:keyboard" aria-hidden="true" /></div>
+                  <div class="perm-info">
+                    <strong>Accessibility</strong>
+                    <span>Insert text into the focused app</span>
+                  </div>
+                  {#if platform === 'macos'}
+                    <button type="button" class="btn-outline-sm" on:click={() => requestPermission('accessibility')}>Allow in System Settings</button>
+                  {:else if platform === 'windows'}
+                    <span class="perm-auto">Usually automatic on Windows</span>
+                  {:else}
+                    <button type="button" class="btn-outline-sm" on:click={() => openPermissionPage('accessibility')}>Open system settings</button>
+                  {/if}
+                </div>
+                <p class="perm-card-detail">
+                  Lets Kalam insert transcribed text into the app that has focus—similar to pasting, without switching windows.
+                </p>
+              </article>
               {#if platform === 'macos'}
-                <button type="button" class="btn-outline-sm" on:click={() => requestPermission('accessibility')}>Allow</button>
-              {:else if platform === 'windows'}
-                <span class="perm-auto">Auto-enabled</span>
-              {:else}
-                <button type="button" class="btn-outline-sm" on:click={() => openPermissionPage('accessibility')}>Open Settings</button>
+                <article class="perm-card">
+                  <div class="perm-card-row perm-row-hint-only">
+                    <div class="perm-icon-wrap"><Icon icon="ph:key-return" aria-hidden="true" /></div>
+                    <div class="perm-info">
+                      <strong>Input Monitoring</strong>
+                      <span>Global dictation shortcut in every app</span>
+                    </div>
+                  </div>
+                  <p class="perm-card-detail">
+                    macOS may prompt the first time you use the shortcut in another app—approve it so it’s detected everywhere. Kalam does not log keystroke content or send it anywhere.
+                  </p>
+                </article>
+              {/if}
+                  </div>
+                </div>
               {/if}
             </div>
-            {#if platform === 'macos'}
-            <div class="perm-row">
-              <div class="perm-icon-wrap"><span class="perm-icon">⌨️</span></div>
-              <div class="perm-info">
-                <strong>Input Monitoring</strong>
-                <span>Lets your dictation hotkey work in any app. We only detect the hotkey—we don't record keystrokes.</span>
-              </div>
-              <span class="perm-hint">You'll be prompted when you first use the hotkey</span>
-            </div>
-            {/if}
           </div>
 
           <div class="mic-test">
-            <h3 class="mic-test-title">Test your microphone</h3>
+            <div class="mic-test-header">
+              <h3 class="mic-test-title">Microphone check</h3>
+              <button
+                type="button"
+                class="mic-info-btn"
+                title="Same list as Settings → Audio. Record a short clip, then play it back to confirm levels."
+                aria-label="Details: same microphone list as Settings under Audio. Record a short clip, then use Play back to confirm levels."
+              >
+                <Icon icon="ph:info" />
+              </button>
+            </div>
+            <div class="mic-device-row">
+              <div class="mic-device-controls">
+                <select
+                  id="onboarding-mic-device"
+                  class="mic-device-select"
+                  aria-label="Microphone input. Same list as Settings; saves immediately for this test and dictation after setup."
+                  bind:value={audioDeviceSelection}
+                >
+                  {#if audioDevices.length === 0}
+                    <option value="">No devices found</option>
+                  {:else}
+                    <option value="">System default</option>
+                    {#each audioDevices as device}
+                      <option value={device.id}>
+                        {device.is_default ? 'Default — ' + device.name : device.name}
+                      </option>
+                    {/each}
+                  {/if}
+                </select>
+                <button
+                  type="button"
+                  class="mic-refresh-btn"
+                  class:mic-refresh-btn--busy={micRefreshBusy}
+                  title="Refresh device list"
+                  aria-label="Refresh microphone list"
+                  aria-busy={micRefreshBusy}
+                  disabled={micRefreshBusy}
+                  on:click={() => handleRefreshMicList()}
+                >
+                  <Icon icon="ph:arrow-clockwise" />
+                </button>
+              </div>
+            </div>
+            {#if audioDevices.length === 0}
+              <p class="mic-device-warning" role="status">
+                <span>No input devices found.</span>
+                <button
+                  type="button"
+                  class="mic-info-btn"
+                  title="Try Refresh. You can set the mic later in Settings → Audio &amp; Dictation."
+                  aria-label="Details: try Refresh to scan again. You can set the microphone later under Settings, Audio and Dictation."
+                >
+                  <Icon icon="ph:info" />
+                </button>
+              </p>
+            {/if}
             <div class="mic-test-body">
               <div class="mic-controls">
                 {#if testingMic}
                   <button class="mic-action-btn recording" on:click={stopRecording}>
-                    <div class="stop-sq"></div>
+                    <span class="mic-action-icon" aria-hidden="true"><Icon icon="ph:stop-fill" /></span>
                     <span>Stop</span>
                   </button>
                   <div class="mic-level-bar">
                     <div class="mic-level-fill" style="width: {Math.min(micLevel * 100, 100)}%"></div>
                   </div>
                 {:else}
-                  <button class="mic-action-btn" on:click={startRecording}>
-                    <span class="mic-action-icon">🎤</span>
-                    <span>Record</span>
+                  <button
+                    type="button"
+                    class="mic-action-btn"
+                    class:mic-action-btn--starting={micRecordStarting}
+                    disabled={micRecordStarting}
+                    aria-busy={micRecordStarting}
+                    on:click={startRecording}
+                  >
+                    <span class="mic-action-icon" aria-hidden="true">
+                      <Icon icon={micRecordStarting ? 'ph:circle-notch' : 'ph:microphone'} />
+                    </span>
+                    <span>{micRecordStarting ? 'Starting…' : 'Record sample'}</span>
                   </button>
                   {#if hasRecording}
                     <button class="mic-action-btn play" class:playing={isPlaying} on:click={playRecording} disabled={isPlaying}>
-                      <span class="mic-action-icon">{isPlaying ? '🔊' : '▶️'}</span>
-                      <span>{isPlaying ? 'Playing...' : 'Play back'}</span>
+                      <span class="mic-action-icon" aria-hidden="true">
+                        <Icon icon={isPlaying ? 'ph:speaker-high-fill' : 'ph:play-fill'} />
+                      </span>
+                      <span>{isPlaying ? 'Playing…' : 'Play back'}</span>
                     </button>
                   {/if}
                 {/if}
               </div>
               <p class="mic-status">
                 {#if testingMic}
-                  Speak now — tap <strong>Stop</strong> when done.
+                  <span>Recording—tap <strong>Stop</strong> when done.</span>
+                  <button
+                    type="button"
+                    class="mic-info-btn"
+                    title="Speak at a normal volume so the level meter can confirm the mic is working."
+                    aria-label="Details: speak at a normal volume so the level meter can confirm the microphone is working."
+                  >
+                    <Icon icon="ph:info" />
+                  </button>
                 {:else if noAudioRecorded}
-                  <span class="error-text">No audio detected. Check your mic is unmuted.</span>
+                  <span class="error-text">No audio captured.</span>
+                  <button
+                    type="button"
+                    class="mic-info-btn mic-info-btn--error-context"
+                    title="Check the mic isn’t muted, try another input above, or open system privacy settings for the microphone."
+                    aria-label="Details: check the microphone is not muted, try another input device, or open system privacy settings for microphone access."
+                  >
+                    <Icon icon="ph:info" />
+                  </button>
                 {:else if hasRecording}
-                  Recording captured. Tap <strong>Play back</strong> to listen.
+                  <span>Tap <strong>Play back</strong> to verify.</span>
+                  <button
+                    type="button"
+                    class="mic-info-btn"
+                    title="If you hear yourself clearly, you’re set. Use Play back again any time."
+                    aria-label="Details: if you hear yourself clearly, you are all set. You can use Play back again any time."
+                  >
+                    <Icon icon="ph:info" />
+                  </button>
                 {:else}
-                  Tap <strong>Record</strong>, say a few words, then stop to hear playback.
+                  <span>Record a sample, then play it back.</span>
+                  <button
+                    type="button"
+                    class="mic-info-btn"
+                    title="Tap Record sample, speak briefly, then Stop. Use Play back to listen."
+                    aria-label="Details: tap Record sample, speak briefly, then Stop. Use Play back to listen to the recording."
+                  >
+                    <Icon icon="ph:info" />
+                  </button>
                 {/if}
               </p>
             </div>
@@ -508,59 +778,73 @@
 
       {:else if step === 4}
         <div class="step step-mode">
-          <h1>Transcription mode</h1>
-          <p class="subtitle">You can change this anytime in Settings.</p>
+          <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
+          <h1>Speech engine</h1>
+          <p class="subtitle">Choose how your voice becomes text. Change anytime in Settings.</p>
 
-          <div class="mode-pills">
+          <div class="stt-tabs" role="tablist" aria-label="Speech processing mode">
             <button
-              class="mode-pill" class:active={selectedMode === 'Cloud'}
+              type="button"
+              role="tab"
+              class="stt-tab"
+              class:active={selectedMode === 'Cloud'}
+              aria-selected={selectedMode === 'Cloud'}
               on:click={() => (selectedMode = 'Cloud')}
             >
-              <span class="mp-icon">☁️</span> Cloud
+              <span class="stt-tab-icon" aria-hidden="true"><Icon icon="ph:cloud" /></span>
+              <span class="stt-tab-label">Cloud</span>
             </button>
             <button
-              class="mode-pill recommended" class:active={selectedMode === 'Hybrid'}
+              type="button"
+              role="tab"
+              class="stt-tab recommended"
+              class:active={selectedMode === 'Hybrid'}
+              aria-selected={selectedMode === 'Hybrid'}
               on:click={() => (selectedMode = 'Hybrid')}
             >
-              <span class="mp-icon">🔄</span> Hybrid
-              <span class="rec-dot"></span>
+              <span class="stt-tab-icon" aria-hidden="true"><Icon icon="ph:arrows-clockwise" /></span>
+              <span class="stt-tab-label">Hybrid</span>
+              <span class="stt-rec-badge" aria-hidden="true">Recommended</span>
             </button>
             <button
-              class="mode-pill" class:active={selectedMode === 'Local'}
+              type="button"
+              role="tab"
+              class="stt-tab"
+              class:active={selectedMode === 'Local'}
+              aria-selected={selectedMode === 'Local'}
               on:click={() => (selectedMode = 'Local')}
             >
-              <span class="mp-icon">💻</span> Local
+              <span class="stt-tab-icon" aria-hidden="true"><Icon icon="ph:laptop" /></span>
+              <span class="stt-tab-label">Local</span>
             </button>
           </div>
 
           <div class="mode-detail">
             {#if selectedMode === 'Cloud'}
-              <div class="mode-desc">
-                <div class="mode-stats">
-                  <span class="stat">~300ms latency</span>
-                  <span class="stat">99 languages</span>
-                  <span class="stat">Requires internet</span>
-                </div>
-                <p>Fastest transcription using a cloud provider.</p>
+              <div class="mode-chips">
+                <span class="mode-chip fast">Fastest transcription</span>
+                <span class="mode-chip">Many languages</span>
+                <span class="mode-chip needs-key">Requires API key</span>
               </div>
+              <p class="mode-blurb">Audio is sent to the provider you choose. Paste your key now or add it later in Settings.</p>
             {:else if selectedMode === 'Hybrid'}
-              <div class="mode-desc">
-                <div class="mode-stats">
-                  <span class="stat rec">Recommended</span>
-                  <span class="stat">Cloud + local fallback</span>
-                  <span class="stat">Auto-switches</span>
-                </div>
-                <p>Uses cloud when online, falls back to local when offline. You can configure the local model later in Settings.</p>
+              <div class="mode-chips">
+                <span class="mode-chip rec">Best default</span>
+                <span class="mode-chip fast">Cloud online</span>
+                <span class="mode-chip offline">Local offline</span>
+              </div>
+              <p class="mode-blurb">Fast when you are connected, keeps working when you are not.</p>
+              <div class="mode-info-box">
+                <span class="mode-info-icon" aria-hidden="true"><Icon icon="ph:info" /></span>
+                <span class="mode-info-text">You can set up your local model from <strong>Settings → Audio &amp; Dictation</strong> after you finish onboarding.</span>
               </div>
             {:else}
-              <div class="mode-desc">
-                <div class="mode-stats">
-                  <span class="stat">100% offline</span>
-                  <span class="stat">50+ languages</span>
-                  <span class="stat">No data leaves your machine</span>
-                </div>
-                <p class="local-hint">You can configure the local model and download it from <strong>Settings</strong> after setup.</p>
+              <div class="mode-chips">
+                <span class="mode-chip">Fully offline</span>
+                <span class="mode-chip privacy">No cloud upload</span>
+                <span class="mode-chip disk">Uses disk and CPU</span>
               </div>
+              <p class="mode-blurb">Download a model from Settings after onboarding. Dictation will be limited until you do.</p>
             {/if}
 
             {#if selectedMode === 'Cloud' || selectedMode === 'Hybrid'}
@@ -569,26 +853,32 @@
                   <span class="provider-label">Cloud provider</span>
                   <div class="provider-pills">
                     <button
+                      type="button"
                       class="prov-pill" class:active={selectedProvider === 'groq'}
                       on:click={() => (selectedProvider = 'groq')}
                     >Groq</button>
                     <button
+                      type="button"
                       class="prov-pill" class:active={selectedProvider === 'openai'}
                       on:click={() => (selectedProvider = 'openai')}
                     >OpenAI</button>
                   </div>
                 </div>
+                <p class="provider-explainer">Paste your key now or add it later in Settings.</p>
                 <div class="api-key-row">
                   <input
                     type="text"
-                    placeholder="{selectedProvider === 'openai' ? 'OpenAI' : 'Groq'} API key"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder={selectedProvider === 'openai' ? 'OpenAI API key' : 'Groq API key'}
                     bind:value={apiKey}
+                    on:paste={onApiKeyPaste}
                   />
                   <a
                     href={selectedProvider === 'openai' ? 'https://platform.openai.com/api-keys' : 'https://console.groq.com'}
                     target="_blank"
                     rel="noopener noreferrer"
-                  >Get key →</a>
+                  >Get a key</a>
                 </div>
               </div>
             {/if}
@@ -597,51 +887,67 @@
 
       {:else if step === 5}
         <div class="step step-controls">
-          <h1>Controls</h1>
-          <p class="subtitle">Set your hotkey and languages.</p>
+          <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
+          <h1>Shortcuts &amp; languages</h1>
+          <p class="subtitle">Set how you start dictation, then tell Kalam which languages you speak. Everything here can be edited in Settings.</p>
 
           <div class="controls-grid">
             <section class="ctrl-section">
               <h3>Dictation Hotkeys</h3>
-              <div class="form-group" role="group" aria-labelledby="hotkey-hold-label">
-                <span id="hotkey-hold-label" class="label-text">Hold to Dictate</span>
-                <HotkeyCapture
-                  value={hotkey}
-                  platform={platform}
-                  onChange={(h) => (hotkey = h)}
-                />
-                <p class="rec-desc">Press and hold to dictate, release to stop</p>
-              </div>
-              <div class="form-group" style="margin-top: 1rem;" role="group" aria-labelledby="hotkey-toggle-label">
-                <span id="hotkey-toggle-label" class="label-text">Toggle Dictation</span>
-                <HotkeyCapture
-                  value={toggleHotkey}
-                  platform={platform}
-                  onChange={(h) => (toggleHotkey = h)}
-                />
-                <p class="rec-desc">Press once to start dictating, press again to stop</p>
+              <p class="ctrl-section-lead">Click a field, press the keys you want, then release to save. At least one shortcut should feel natural—you’ll use it constantly.</p>
+              <!-- `page-content` ancestor enables App.svelte global styles for `.hotkey-capture-area` (same as Settings). -->
+              <div class="page-content onboarding-hotkeys-block">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Hold to Dictate</span>
+                    <span class="setting-desc">Press and hold to start dictating</span>
+                  </div>
+                  <div class="setting-control">
+                    <HotkeyCapture
+                      value={hotkey}
+                      platform={platform}
+                      onChange={(h) => (hotkey = h)}
+                    />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Toggle Dictation</span>
+                    <span class="setting-desc">Press to start/stop dictating</span>
+                  </div>
+                  <div class="setting-control">
+                    <HotkeyCapture
+                      value={toggleHotkey}
+                      platform={platform}
+                      onChange={(h) => (toggleHotkey = h)}
+                    />
+                  </div>
+                </div>
               </div>
             </section>
 
             <section class="ctrl-section">
-              <h3>Languages</h3>
+              <h3>Languages you dictate in</h3>
+              <p class="ctrl-section-lead">The first language is the default. Add more if you dictate in several languages—order matters for how Kalam prioritizes recognition.</p>
               <div class="lang-tags">
                 {#each languages as code, i}
                   <span class="lang-tag">
                     {#if i === 0}<span class="tag-default">Default</span>{/if}
                     {languageLabel(code)}
                     {#if languages.length > 1}
-                      <button type="button" class="tag-remove" on:click={() => removeLanguage(i)}>×</button>
+                      <button type="button" class="tag-remove" aria-label="Remove {languageLabel(code)}" on:click={() => removeLanguage(i)}>×</button>
                     {/if}
                   </span>
                 {/each}
               </div>
+              <label class="visually-hidden" for="onboarding-lang-add">Add a language</label>
               <select
+                id="onboarding-lang-add"
                 class="lang-add"
                 bind:value={addLanguageCode}
                 on:change={() => addLanguage(addLanguageCode)}
               >
-                <option value="">+ Add language</option>
+                <option value="">Add another language…</option>
                 {#each LANGUAGE_OPTIONS as opt}
                   <option value={opt.code} disabled={languages.includes(opt.code)}>{opt.label}</option>
                 {/each}
@@ -652,36 +958,57 @@
 
       {:else if step === 6}
         <div class="step step-ready">
+          <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
           <div class="ready-visual">
             <div class="ready-ring r1"></div>
             <div class="ready-ring r2"></div>
             <div class="ready-ring r3"></div>
-            <div class="ready-check">✓</div>
+            <div class="ready-check" aria-hidden="true"><Icon icon="ph:check-bold" /></div>
           </div>
-          <h1>You're all set</h1>
-          <p class="subtitle">Try dictating right now — press your dictation hotkey and speak.</p>
+          <h1>Try dictation once</h1>
+          <p class="subtitle">Sanity-check your shortcut and engine: focus the box, dictate a short phrase, and confirm text appears. You can refine models and keys later in Settings.</p>
+
+          <ol class="ready-steps">
+            <li>Click inside the text area (or use the focus button under it).</li>
+            <li>
+              {#if hotkey && toggleHotkey}
+                Press <kbd class="ready-kbd-inline">{hotkey}</kbd><span class="ready-or"> or </span><kbd class="ready-kbd-inline">{toggleHotkey}</kbd>—whichever you set up.
+              {:else}
+                Press <kbd class="ready-kbd-inline">{primaryHotkeyDemo}</kbd>.
+              {/if}
+            </li>
+            <li>Speak a few words, then release the keys or toggle off. Transcription should show up here when the backend responds.</li>
+          </ol>
 
           <div class="demo-box" class:unfocused={!demoFocused}>
             <div class="demo-prompt">
-              <kbd>{hotkey || toggleHotkey || `Ctrl+${superKeyLabel(platform)}`}</kbd>
-              <span>then say anything</span>
+              <kbd>{primaryHotkeyDemo}</kbd>
+              <span>{hotkeyDemoCaption}</span>
             </div>
+            <!-- bind:value so Svelte keeps the field in sync when dictation events update demoTranscription (value= alone does not update after mount in Svelte 4). -->
             <textarea
               bind:this={demoTextarea}
-              placeholder="Your transcription will appear here..."
+              bind:value={demoTranscription}
+              placeholder="Transcription appears here after you dictate…"
               readonly
-              value={demoTranscription}
               on:focus={() => (demoFocused = true)}
               on:blur={() => (demoFocused = false)}
             ></textarea>
             {#if !demoFocused}
-              <button class="refocus-cue" on:click={() => demoTextarea?.focus()}>
-                Click here to focus — then press <kbd>{hotkey || `Ctrl+${superKeyLabel(platform)}`}</kbd> to dictate
+              <button type="button" class="refocus-cue" on:click={() => demoTextarea?.focus()}>
+                {#if hotkey && toggleHotkey}
+                  Click to focus, then <kbd>{hotkey}</kbd> or <kbd>{toggleHotkey}</kbd>
+                {:else}
+                  Click to focus, then <kbd>{primaryHotkeyDemo}</kbd>
+                {/if}
               </button>
             {/if}
           </div>
+          <p class="step-footnote step-footnote-center">When you’re happy, tap <strong>Enter Kalam</strong> to open the app. You can revisit any of this in Settings.</p>
         </div>
       {/if}
+      </div>
+      {/key}
 
       <div class="actions">
         {#if step > 1}
@@ -693,9 +1020,9 @@
             class="btn-next"
             disabled={step === 2 && (!termsAgreed || !isEmailValid(userEmail))}
             on:click={nextStep}
-          >Next</button>
+          >Continue</button>
         {:else}
-          <button class="btn-next btn-finish" on:click={finish}>Get Started</button>
+          <button class="btn-next btn-finish" on:click={finish}>Enter Kalam</button>
         {/if}
       </div>
 
@@ -707,7 +1034,7 @@
             disabled={skipInProgress}
             on:click={handleSkipClick}
           >
-            {skipInProgress ? 'Skipping...' : 'Skip setup'}
+            {skipInProgress ? 'Skipping…' : 'Use defaults & skip'}
           </button>
           {#if skipError}
             <p class="skip-error" role="alert">{skipError}</p>
@@ -720,19 +1047,21 @@
 </div>
 
 <style>
-  /* ── Layout ── */
+  /* Inherits .kalam-sleek from App.svelte wrapper — use same tokens as main shell (Inter, --accent, surfaces). */
   .onboarding {
     position: fixed;
     inset: 0;
-    background: var(--bg-app);
+    font-family: var(--font-sleek, 'Inter', system-ui, sans-serif);
+    background: var(--bg);
+    color: var(--text);
     display: flex;
   }
 
-  /* ── Left stepper ── */
+  /* ── Left stepper (match main sidebar: 240px elevated strip + nav-like steps) ── */
   .stepper {
-    width: 220px;
+    width: 240px;
     flex-shrink: 0;
-    background: var(--bg-card);
+    background: var(--bg-elevated);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
@@ -747,17 +1076,20 @@
     padding: 0 4px;
   }
 
+  /* Match App.svelte `.logo-img` (28 × 1.2 × 1.15) */
   .stepper-logo {
-    height: 36px;
-    width: 36px;
+    width: calc(28px * 1.2 * 1.15);
+    height: calc(28px * 1.2 * 1.15);
     flex-shrink: 0;
+    object-fit: contain;
+    display: block;
   }
 
   .stepper-title {
-    font-family: 'Syne', sans-serif;
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--navy-deep);
+    font-family: var(--font-sleek, 'Inter', system-ui, sans-serif);
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
     letter-spacing: -0.03em;
     margin: 0;
   }
@@ -786,8 +1118,8 @@
     border: none;
     border-radius: var(--radius-md);
     cursor: pointer;
-    transition: all 0.2s ease;
-    color: var(--text-muted);
+    transition: var(--transition-sleek, 200ms ease);
+    color: var(--text-secondary);
     font-size: 14px;
     font-weight: 500;
     text-align: left;
@@ -799,13 +1131,15 @@
   }
 
   .stepper-btn:not(:disabled):hover {
-    background: var(--bg-input);
+    background: var(--bg-hover);
+    color: var(--text);
   }
 
   .stepper-item.active .stepper-btn {
-    color: var(--navy-deep);
+    color: var(--text);
     font-weight: 600;
-    background: var(--primary-alpha);
+    background: var(--bg-card);
+    box-shadow: var(--shadow);
   }
 
   .stepper-item.complete .stepper-btn {
@@ -822,22 +1156,22 @@
     font-size: 12px;
     font-weight: 700;
     flex-shrink: 0;
-    transition: all 0.25s ease;
+    transition: var(--transition-sleek, 200ms ease);
     background: var(--bg-input);
     color: var(--text-muted);
-    border: 2px solid var(--border);
+    border: 1px solid var(--border);
   }
 
   .stepper-item.active .stepper-indicator {
-    background: var(--primary);
-    color: white;
-    border-color: var(--primary);
-    box-shadow: 0 2px 8px var(--primary-alpha);
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+    box-shadow: var(--shadow);
   }
 
   .stepper-item.complete .stepper-indicator {
     background: var(--success);
-    color: white;
+    color: #fff;
     border-color: var(--success);
   }
 
@@ -878,32 +1212,287 @@
     overflow: hidden;
   }
 
+  /* Match App.svelte `.page-content`: same padding and centered column width. */
   .content-scroll {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 48px 56px;
+    padding: var(--space-3xl, 64px) var(--space-2xl, 48px);
     display: flex;
     flex-direction: column;
+    background: var(--bg);
+    max-width: 900px;
+    margin: 0 auto;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .step {
-    flex: 1;
     max-width: 600px;
     width: 100%;
     margin: 0 auto;
   }
 
-  h1 {
+  /* Subtle step transition (respects reduced motion). */
+  .step-shell {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    animation: step-enter 320ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+
+  @keyframes step-enter {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .step-shell {
+      animation: none;
+    }
+
+    .mic-refresh-btn--busy :global(svg),
+    .mic-action-btn--starting .mic-action-icon :global(svg) {
+      animation: none;
+    }
+  }
+
+  .step-eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 0 0 10px;
+  }
+
+  .onboarding h1 {
+    font-family: var(--font-sleek, 'Inter', system-ui, sans-serif);
     font-size: 28px;
     margin-bottom: 8px;
-    color: var(--navy-deep);
+    color: var(--text);
+    letter-spacing: -0.02em;
   }
 
   .subtitle {
     font-size: 15px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    line-height: 1.55;
+  }
+
+  .step-meta {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin: -4px 0 28px;
+  }
+
+  .step-footnote {
+    font-size: 13px;
     color: var(--text-muted);
-    margin-bottom: 32px;
+    line-height: 1.45;
+    margin-top: 16px;
+  }
+
+  .step-footnote-center {
+    text-align: center;
+    max-width: 440px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  h2.section-heading {
+    font-family: var(--font-sleek, 'Inter', system-ui, sans-serif);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 28px 0 12px;
+    line-height: 1.3;
+  }
+
+  .step-permissions .perm-panel > .section-heading {
+    margin-top: 8px;
+  }
+
+  .perm-steps-hint {
+    margin: 0 0 14px;
+    padding-left: 1.35rem;
+    font-size: 13px;
+    color: var(--text-secondary);
     line-height: 1.5;
+  }
+
+  .perm-row-hint-only {
+    align-items: flex-start;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .mic-device-row {
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .mic-device-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .mic-refresh-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: var(--transition-sleek, 200ms ease);
+  }
+
+  .mic-refresh-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+    border-color: var(--border-light);
+  }
+
+  .mic-refresh-btn :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
+
+  @keyframes mic-icon-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .mic-refresh-btn--busy {
+    cursor: wait;
+    opacity: 0.92;
+  }
+
+  .mic-refresh-btn--busy :global(svg) {
+    animation: mic-icon-spin 0.55s linear infinite;
+  }
+
+  .mic-action-btn--starting {
+    cursor: wait;
+    opacity: 0.95;
+  }
+
+  .mic-action-btn--starting .mic-action-icon :global(svg) {
+    animation: mic-icon-spin 0.7s linear infinite;
+  }
+
+  .mic-device-select {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+    font-family: var(--font-sleek, inherit);
+    cursor: pointer;
+    transition: var(--transition-sleek, 200ms ease);
+  }
+
+  .mic-device-select:focus {
+    outline: none;
+    border-color: var(--text-muted);
+  }
+
+  .mic-device-warning {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    margin: 0 0 14px;
+  }
+
+
+  .provider-explainer {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    margin: 0 0 12px;
+  }
+
+  .ctrl-section-lead {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    margin: -6px 0 16px;
+  }
+
+  .ready-steps {
+    margin: 0 0 22px;
+    padding-left: 1.35rem;
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    max-width: 520px;
+  }
+
+  .ready-steps li {
+    margin-bottom: 10px;
+  }
+
+  .ready-steps kbd,
+  .ready-kbd-inline {
+    padding: 2px 8px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sleek, 'Inter', ui-monospace, monospace);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .ready-or {
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+
+  .step-ready .step-eyebrow {
+    margin-bottom: 16px;
   }
 
   /* ── Step 1: Welcome ── */
@@ -918,42 +1507,57 @@
     align-items: flex-start;
     gap: 14px;
     padding: 18px;
-    background: var(--bg-card);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    transition: border-color 0.2s;
+    transition: var(--transition-sleek, 200ms ease);
   }
 
   .feat:hover {
-    border-color: var(--primary);
+    border-color: var(--border-light);
+    background: var(--bg-hover);
   }
 
   .feat-icon {
-    font-size: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
     margin-top: 1px;
+    color: var(--text);
+  }
+
+  .feat-icon :global(svg) {
+    width: 22px;
+    height: 22px;
   }
 
   .feat strong {
     display: block;
     font-size: 14px;
     font-weight: 600;
-    color: var(--navy-deep);
+    color: var(--text);
     margin-bottom: 2px;
   }
 
   .feat span {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     line-height: 1.4;
   }
 
   /* ── Step 2: Account ── */
   .form-card {
-    background: var(--bg-card);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 28px;
+  }
+
+  .form-card .step-footnote {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
   }
 
   .field {
@@ -965,7 +1569,7 @@
     font-size: 13px;
     font-weight: 600;
     margin-bottom: 6px;
-    color: var(--text-primary);
+    color: var(--text);
   }
 
   .req {
@@ -975,17 +1579,18 @@
   .field input[type="email"] {
     width: 100%;
     padding: 11px 14px;
-    background: var(--bg-input);
-    border: 2px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
     font-size: 14px;
-    transition: border-color 0.2s;
+    font-family: var(--font-sleek, inherit);
+    transition: var(--transition-sleek, 200ms ease);
   }
 
   .field input[type="email"]:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--text-muted);
   }
 
   .field-error {
@@ -1008,7 +1613,7 @@
     gap: 10px;
     cursor: pointer;
     font-size: 14px;
-    color: var(--text-primary);
+    color: var(--text);
     user-select: none;
   }
 
@@ -1021,63 +1626,123 @@
   }
 
   .check-row a {
-    color: var(--primary);
+    color: var(--text);
     text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   .privacy-note {
     font-size: 12px;
-    color: var(--primary-dark);
+    color: var(--text-secondary);
     margin: 8px 0 0;
     font-weight: 500;
   }
 
-  /* ── Step 3: Permissions ── */
-  .perm-trust {
-    margin-bottom: 20px;
-    padding: 14px 18px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-  }
-
-  .perm-trust p {
-    margin: 0;
-    font-size: 13px;
-    color: var(--text-muted);
-    line-height: 1.5;
-  }
-
-  .perm-trust strong {
-    color: var(--navy-deep);
-  }
-
-  .perm-list {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
+  /* ── Step 3: Permissions (single panel: order hint + accordion for cards) ── */
+  .perm-panel {
     margin-bottom: 24px;
   }
 
-  .perm-row {
+  .perm-accordion {
+    margin-top: 2px;
+  }
+
+  .perm-accordion-trigger {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    text-align: left;
+    padding: 14px 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font: inherit;
+    color: var(--text);
+    transition: var(--transition-sleek, 200ms ease);
+  }
+
+  .perm-accordion-trigger:hover {
+    border-color: var(--border-light);
+    background: var(--bg-hover);
+  }
+
+  .perm-accordion-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .perm-accordion-title {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+
+  .perm-accordion-sub {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+    line-height: 1.45;
+  }
+
+  .perm-accordion-chevron {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+  }
+
+  .perm-accordion-chevron :global(svg) {
+    width: 20px;
+    height: 20px;
+  }
+
+  .perm-accordion-panel {
+    margin-top: 10px;
+  }
+
+  .perm-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .perm-card {
+    padding: 16px 20px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    transition: var(--transition-sleek, 200ms ease);
+  }
+
+  .perm-card:hover {
+    border-color: var(--border-light);
+    background: var(--bg-hover);
+  }
+
+  .perm-card-row {
     display: flex;
     align-items: center;
     gap: 16px;
-    padding: 16px 20px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    transition: border-color 0.2s;
   }
 
-  .perm-row:hover {
-    border-color: var(--border-visible);
+  .perm-card-detail {
+    margin: 14px 0 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.5;
   }
 
   .perm-icon-wrap {
     width: 42px;
     height: 42px;
-    background: var(--primary-alpha);
+    background: var(--bg-input);
     border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
@@ -1085,8 +1750,10 @@
     flex-shrink: 0;
   }
 
-  .perm-icon {
-    font-size: 20px;
+  .perm-icon-wrap :global(svg) {
+    width: 22px;
+    height: 22px;
+    color: var(--text);
   }
 
   .perm-info {
@@ -1098,12 +1765,12 @@
     display: block;
     font-size: 14px;
     font-weight: 600;
-    color: var(--navy-deep);
+    color: var(--text);
   }
 
   .perm-info span {
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
   }
 
   .perm-auto {
@@ -1123,32 +1790,78 @@
     padding: 7px 14px;
     font-size: 13px;
     font-weight: 600;
-    background: none;
-    border: 1px solid var(--primary);
-    border-radius: var(--radius-sm);
-    color: var(--primary);
+    font-family: var(--font-sleek, inherit);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    color: var(--text);
     cursor: pointer;
     white-space: nowrap;
-    transition: all 0.15s;
+    transition: var(--transition-sleek, 200ms ease);
   }
 
   .btn-outline-sm:hover {
-    background: var(--primary);
-    color: white;
+    background: var(--bg-hover);
+    border-color: var(--border-light);
   }
 
   .mic-test {
     padding: 20px;
-    background: var(--bg-card);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
+  }
+
+  .mic-test-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
   }
 
   .mic-test-title {
     font-size: 14px;
     font-weight: 700;
-    color: var(--navy-deep);
-    margin-bottom: 14px;
+    color: var(--text);
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+
+  /* Details live in title + aria-label; keeps the block visually quiet. */
+  .mic-info-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    margin: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: var(--transition-sleek, 200ms ease);
+  }
+
+  .mic-info-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+  }
+
+  .mic-info-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .mic-info-btn :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
+
+  .mic-info-btn--error-context:hover {
+    color: var(--error);
   }
 
   .mic-test-body {
@@ -1168,31 +1881,41 @@
     align-items: center;
     gap: 8px;
     padding: 10px 20px;
-    border: 2px solid var(--primary);
-    border-radius: var(--radius-sm);
-    background: var(--primary-alpha);
-    color: var(--primary-dark);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--bg);
+    color: var(--text);
     font-size: 14px;
     font-weight: 600;
+    font-family: var(--font-sleek, inherit);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: var(--transition-sleek, 200ms ease);
   }
 
   .mic-action-btn:hover {
-    background: var(--primary);
-    color: white;
+    background: var(--bg-hover);
+    border-color: var(--border-light);
+  }
+
+  .mic-action-btn:disabled {
+    cursor: wait;
+  }
+
+  .mic-action-btn:disabled:hover {
+    background: var(--bg);
+    border-color: var(--border);
   }
 
   .mic-action-btn.recording {
     border-color: var(--error);
-    background: rgba(239, 68, 68, 0.1);
+    background: color-mix(in srgb, var(--error) 12%, var(--bg-elevated));
     color: var(--error);
     animation: pulse-rec 1.5s ease-in-out infinite;
   }
 
   .mic-action-btn.recording:hover {
     background: var(--error);
-    color: white;
+    color: #fff;
   }
 
   @keyframes pulse-rec {
@@ -1202,13 +1925,13 @@
 
   .mic-action-btn.play {
     border-color: var(--success);
-    background: rgba(16, 185, 129, 0.1);
+    background: color-mix(in srgb, var(--success) 12%, var(--bg-elevated));
     color: var(--success);
   }
 
   .mic-action-btn.play:hover {
     background: var(--success);
-    color: white;
+    color: #fff;
   }
 
   .mic-action-btn.playing {
@@ -1217,14 +1940,14 @@
   }
 
   .mic-action-icon {
-    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
-  .stop-sq {
-    width: 14px;
-    height: 14px;
-    background: currentColor;
-    border-radius: 3px;
+  .mic-action-icon :global(svg) {
+    width: 18px;
+    height: 18px;
   }
 
   .mic-level-bar {
@@ -1243,15 +1966,19 @@
   }
 
   .mic-status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
     font-size: 13px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
     line-height: 1.5;
     margin: 0;
   }
 
   .mic-status strong {
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--text);
   }
 
   .error-text {
@@ -1259,80 +1986,93 @@
   }
 
   /* ── Step 4: Mode ── */
-  .mode-pills {
+  .stt-tabs {
     display: flex;
-    gap: 8px;
+    min-height: 48px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-md);
+    padding: 3px;
+    gap: 2px;
     margin-bottom: 20px;
   }
 
-  .mode-pill {
-    flex: 1;
-    display: flex;
+  .stt-tab {
+    flex: 1 1 0;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 14px 12px;
-    background: var(--bg-card);
-    border: 2px solid var(--border);
-    border-radius: var(--radius-md);
-    font-size: 14px;
-    font-weight: 600;
+    gap: 6px;
+    min-width: 0;
+    padding: 9px 10px;
+    border: none;
+    border-radius: calc(var(--radius-md) - 2px);
+    background: transparent;
     color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--font-sleek, inherit);
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: var(--transition-sleek, 200ms ease);
+    white-space: nowrap;
     position: relative;
   }
 
-  .mode-pill:hover {
-    border-color: var(--border-visible);
-    background: var(--bg-input);
+  .stt-tab:hover {
+    color: var(--text);
+    background: var(--bg-hover);
   }
 
-  .mode-pill.active {
-    border-color: var(--primary);
-    background: var(--primary-alpha);
-    color: var(--primary-dark);
-    box-shadow: 0 2px 8px var(--primary-alpha);
+  .stt-tab.active {
+    background: var(--bg-hover);
+    color: var(--text);
+    font-weight: 600;
   }
 
-  .mp-icon {
-    font-size: 18px;
+  .stt-tab-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
 
-  .rec-dot {
+  .stt-tab-icon :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
+
+  .stt-rec-badge {
     position: absolute;
-    top: -4px;
-    right: -4px;
-    width: 10px;
-    height: 10px;
-    background: var(--primary);
-    border: 2px solid var(--bg-app);
-    border-radius: 50%;
+    top: -6px;
+    right: 4px;
+    padding: 2px 6px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-radius: var(--radius-pill);
+    white-space: nowrap;
   }
 
   .mode-detail {
-    background: var(--bg-card);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 24px;
   }
 
-  .mode-desc p {
-    font-size: 14px;
-    color: var(--text-secondary);
-    margin: 0;
-    line-height: 1.5;
-  }
-
-  .mode-stats {
+  .mode-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
   }
 
-  .stat {
-    display: inline-block;
+  .mode-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     padding: 4px 10px;
     background: var(--bg-input);
     border-radius: var(--radius-pill);
@@ -1341,9 +2081,98 @@
     color: var(--text-secondary);
   }
 
-  .stat.rec {
+  .mode-chip.rec {
     background: var(--primary-alpha);
-    color: var(--primary-dark);
+    color: var(--text);
+  }
+
+  .mode-chip.fast::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: var(--success);
+    border-radius: 50%;
+  }
+
+  .mode-chip.offline::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: var(--text-muted);
+    border-radius: 50%;
+  }
+
+  .mode-chip.privacy::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+  }
+
+  .mode-chip.disk::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: var(--warning);
+    border-radius: 50%;
+  }
+
+  .mode-chip.needs-key::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: var(--info);
+    border-radius: 50%;
+  }
+
+  .mode-blurb {
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin: 0 0 14px;
+    line-height: 1.5;
+  }
+
+  .mode-info-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    margin-top: 4px;
+  }
+
+  .mode-info-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    color: var(--accent);
+  }
+
+  .mode-info-icon :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
+
+  .mode-info-text {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .mode-info-text strong {
+    color: var(--text);
+    font-weight: 600;
   }
 
   .api-key-row {
@@ -1358,21 +2187,22 @@
   .api-key-row input {
     flex: 1;
     padding: 10px 14px;
-    background: var(--bg-input);
-    border: 2px solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
     font-size: 14px;
-    transition: border-color 0.2s;
+    font-family: var(--font-sleek, inherit);
+    transition: var(--transition-sleek, 200ms ease);
   }
 
   .api-key-row input:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--text-muted);
   }
 
   .api-key-row a {
-    color: var(--primary);
+    color: var(--text);
     font-size: 13px;
     font-weight: 600;
     text-decoration: none;
@@ -1402,7 +2232,7 @@
   .provider-label {
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--text);
   }
 
   .provider-pills {
@@ -1420,19 +2250,20 @@
     border-radius: calc(var(--radius-sm) - 2px);
     font-size: 13px;
     font-weight: 600;
+    font-family: var(--font-sleek, inherit);
     color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: var(--transition-sleek, 200ms ease);
   }
 
   .prov-pill:hover:not(.active) {
-    color: var(--text-primary);
+    color: var(--text);
   }
 
   .prov-pill.active {
     background: var(--bg-card);
-    color: var(--navy-deep);
-    box-shadow: var(--shadow-sm);
+    color: var(--text);
+    box-shadow: var(--shadow);
   }
 
   .local-hint {
@@ -1442,7 +2273,7 @@
   }
 
   .local-hint strong {
-    color: var(--primary-dark);
+    color: var(--text);
     font-weight: 600;
   }
 
@@ -1454,7 +2285,7 @@
   }
 
   .ctrl-section {
-    background: var(--bg-card);
+    background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: 24px;
@@ -1463,58 +2294,71 @@
   .ctrl-section h3 {
     font-size: 14px;
     font-weight: 700;
-    color: var(--navy-deep);
+    color: var(--text);
     margin-bottom: 14px;
     letter-spacing: 0;
   }
 
-  .rec-mode {
-    display: flex;
-    gap: 10px;
-    margin-top: 16px;
+  /* Match Settings → General → Dictation Hotkeys row layout (Settings scopes these classes to its page only). */
+  .onboarding-hotkeys-block {
+    padding: 0;
+    margin: 0;
+    max-width: none;
+    width: 100%;
+    background: transparent;
+    flex: unset;
+    overflow: visible;
   }
 
-  .rec-mode label {
-    flex: 1;
+  .onboarding-hotkeys-block .setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-md) 0;
+    gap: var(--space-lg);
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .onboarding-hotkeys-block .setting-row:last-child {
+    border-bottom: none;
+  }
+
+  .onboarding-hotkeys-block .setting-label {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    padding: 12px;
-    background: var(--bg-input);
-    border: 2px solid transparent;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
   }
 
-  .rec-mode label.selected {
-    border-color: var(--primary);
-    background: var(--primary-alpha);
-  }
-
-  .rec-mode input[type="radio"] {
-    display: none;
-  }
-
-  .rec-label {
+  .onboarding-hotkeys-block .setting-name {
     font-size: 14px;
-    font-weight: 600;
-    color: var(--navy-deep);
+    font-weight: 500;
+    color: var(--text);
   }
 
-  .form-group .label-text {
-    display: block;
+  .onboarding-hotkeys-block .setting-desc {
     font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 6px;
-    color: var(--text-primary);
+    color: var(--text-secondary);
   }
 
-  .rec-desc {
-    font-size: 12px;
-    color: var(--text-muted);
+  .onboarding-hotkeys-block .setting-control {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 768px) {
+    .onboarding-hotkeys-block .setting-row {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: var(--space-sm);
+    }
+
+    .onboarding-hotkeys-block .setting-control {
+      width: 100%;
+    }
   }
 
   .lang-tags {
@@ -1530,18 +2374,18 @@
     gap: 6px;
     padding: 6px 12px;
     background: var(--bg-input);
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-full);
     font-size: 13px;
     font-weight: 500;
-    color: var(--text-primary);
+    color: var(--text);
   }
 
   .tag-default {
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
-    background: var(--primary);
-    color: white;
+    background: var(--accent);
+    color: var(--accent-fg);
     padding: 2px 6px;
     border-radius: 4px;
     letter-spacing: 0.03em;
@@ -1564,26 +2408,21 @@
 
   .lang-add {
     width: 100%;
-    appearance: none;
-    -webkit-appearance: none;
     padding: 10px 14px;
-    background: var(--bg-input);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    background-size: 16px;
-    border: 2px solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
     font-size: 14px;
     font-weight: 500;
+    font-family: var(--font-sleek, inherit);
     cursor: pointer;
-    transition: border-color 0.2s;
+    transition: var(--transition-sleek, 200ms ease);
   }
 
   .lang-add:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--text-muted);
   }
 
   /* ── Step 6: Ready ── */
@@ -1604,7 +2443,7 @@
   .ready-ring {
     position: absolute;
     border-radius: 50%;
-    border: 2px solid var(--primary);
+    border: 2px solid var(--accent);
   }
 
   .ready-ring.r1 {
@@ -1637,12 +2476,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 36px;
-    font-weight: 700;
-    color: var(--primary);
+    color: var(--accent);
     background: var(--primary-alpha);
     border-radius: 50%;
     animation: check-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+
+  .ready-check :global(svg) {
+    width: 40px;
+    height: 40px;
   }
 
   @keyframes check-pop {
@@ -1666,36 +2508,36 @@
   .demo-prompt kbd {
     padding: 6px 14px;
     background: var(--bg-input);
-    border: 1px solid var(--border-visible);
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    font-family: 'Google Sans', ui-monospace, monospace;
+    font-family: var(--font-sleek, 'Inter', ui-monospace, monospace);
     font-size: 14px;
     font-weight: 700;
-    color: var(--navy-deep);
-    box-shadow: 0 2px 0 var(--border);
+    color: var(--text);
   }
 
   .demo-prompt span {
     font-size: 14px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
   }
 
   .demo-box textarea {
     width: 100%;
     height: 90px;
     padding: 14px;
-    background: var(--bg-card);
-    border: 2px solid var(--border);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--text);
     font-size: 14px;
+    font-family: var(--font-sleek, inherit);
     resize: none;
-    transition: border-color 0.2s;
+    transition: var(--transition-sleek, 200ms ease);
   }
 
   .demo-box textarea:focus {
     outline: none;
-    border-color: var(--primary);
+    border-color: var(--text-muted);
   }
 
   .demo-box.unfocused {
@@ -1730,12 +2572,12 @@
   .refocus-cue kbd {
     padding: 2px 8px;
     background: var(--bg-input);
-    border: 1px solid var(--border-visible);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    font-family: 'Google Sans', ui-monospace, monospace;
+    font-family: var(--font-sleek, 'Inter', ui-monospace, monospace);
     font-size: 12px;
     font-weight: 700;
-    color: var(--navy-deep);
+    color: var(--text);
   }
 
   /* ── Actions ── */
@@ -1754,22 +2596,24 @@
 
   .btn-next {
     padding: 11px 28px;
-    background: var(--primary);
+    background: var(--accent);
     border: none;
-    border-radius: var(--radius-sm);
-    color: white;
+    border-radius: var(--radius-full);
+    color: var(--accent-fg);
     font-size: 14px;
     font-weight: 600;
+    font-family: var(--font-sleek, inherit);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: var(--transition-sleek, 200ms ease);
   }
 
-  .btn-next:hover {
-    background: var(--primary-dark);
+  .btn-next:hover:not(:disabled) {
+    opacity: 0.92;
+    transform: translateY(-1px);
   }
 
   .btn-next:disabled {
-    opacity: 0.4;
+    opacity: 0.5;
     cursor: not-allowed;
   }
 
@@ -1781,18 +2625,19 @@
   .btn-back {
     padding: 11px 24px;
     background: none;
-    border: 1px solid var(--border-visible);
-    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
     color: var(--text-secondary);
     font-size: 14px;
     font-weight: 500;
+    font-family: var(--font-sleek, inherit);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: var(--transition-sleek, 200ms ease);
   }
 
   .btn-back:hover {
-    background: var(--bg-input);
-    color: var(--navy-deep);
+    background: var(--bg-hover);
+    color: var(--text);
   }
 
   /* ── Skip ── */
@@ -1842,7 +2687,7 @@
       align-items: center;
       gap: 12px;
       padding: 14px 20px;
-      background: var(--bg-card);
+      background: var(--bg-elevated);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
@@ -1868,7 +2713,7 @@
     }
 
     .dot.active {
-      background: var(--primary);
+      background: var(--accent);
       transform: scale(1.3);
     }
 
@@ -1887,7 +2732,7 @@
       padding: 24px 20px;
     }
 
-    h1 {
+    .onboarding h1 {
       font-size: 22px;
     }
 
@@ -1909,10 +2754,13 @@
       padding: 20px;
     }
 
-    .perm-row {
+    .perm-card {
+      padding: 14px 16px;
+    }
+
+    .perm-card-row {
       flex-wrap: wrap;
       gap: 12px;
-      padding: 14px 16px;
     }
 
     .perm-info {
@@ -1937,11 +2785,6 @@
 
     .ctrl-section {
       padding: 18px;
-    }
-
-    .rec-mode {
-      flex-direction: column;
-      gap: 8px;
     }
 
     .demo-box {

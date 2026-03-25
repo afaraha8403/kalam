@@ -8,33 +8,43 @@
   export let navigate: (page: string) => void = () => {}
 
   let existingTrigger: string | null = null
-  let draft: { trigger: string; expansion: string } = { trigger: '', expansion: '' }
+  /**
+   * Top-level fields (not `draft.x`) so `bind:value` reliably invalidates Save disabled state in Svelte 4.
+   */
+  let trigger = ''
+  let expansion = ''
   let loading = true
   let saving = false
+  let saveError: string | null = null
 
   onMount(() => {
-    return selectedSnippetTrigger.subscribe((trigger) => {
-      existingTrigger = trigger
-      loadDraft(trigger)
+    return selectedSnippetTrigger.subscribe((t) => {
+      existingTrigger = t
+      loadDraft(t)
     })
   })
 
-  async function loadDraft(trigger: string | null) {
+  async function loadDraft(t: string | null) {
+    saveError = null
     loading = true
-    if (trigger) {
+    if (t) {
       try {
         const list = await invoke<Snippet[]>('get_snippets')
-        const found = list.find((s) => s.trigger === trigger)
+        const found = list.find((s: Snippet) => s.trigger === t)
         if (found) {
-          draft = { trigger: found.trigger, expansion: found.expansion }
+          trigger = found.trigger
+          expansion = found.expansion
         } else {
-          draft = { trigger: '', expansion: '' }
+          trigger = ''
+          expansion = ''
         }
       } catch {
-        draft = { trigger: '', expansion: '' }
+        trigger = ''
+        expansion = ''
       }
     } else {
-      draft = { trigger: '', expansion: '' }
+      trigger = ''
+      expansion = ''
     }
     loading = false
   }
@@ -45,18 +55,23 @@
   }
 
   async function save() {
-    const trigger = draft.trigger.trim()
-    const expansion = draft.expansion.trim()
-    if (!trigger || !expansion) return
+    saveError = null
+    const tr = trigger.trim()
+    const ex = expansion.trim()
+    if (!tr || !ex) {
+      saveError = 'Trigger and expansion are both required.'
+      return
+    }
     saving = true
     try {
-      if (existingTrigger && existingTrigger !== trigger) {
+      if (existingTrigger && existingTrigger !== tr) {
         await invoke('remove_snippet', { trigger: existingTrigger })
       }
-      await invoke('add_snippet', { trigger, expansion })
+      await invoke('add_snippet', { trigger: tr, expansion: ex })
       back()
     } catch (e) {
       console.error(e)
+      saveError = e instanceof Error ? e.message : 'Save failed.'
     } finally {
       saving = false
     }
@@ -64,48 +79,97 @@
 
   async function deleteSnippet() {
     if (!existingTrigger) return
+    if (!confirm('Delete this snippet?')) return
+    saveError = null
     try {
       await invoke('remove_snippet', { trigger: existingTrigger })
       back()
     } catch (e) {
       console.error(e)
+      saveError = e instanceof Error ? e.message : 'Delete failed.'
     }
   }
 </script>
 
-<div class="page fade-in sleek-editor-page">
-  <header class="sleek-header">
-    <button type="button" class="sleek-back" on:click={back}>
-      <Icon icon="ph:caret-left" /> Snippets
-    </button>
-    <div class="sleek-actions">
-      {#if existingTrigger}
-        <button type="button" class="sleek-icon-btn danger" on:click={deleteSnippet} title="Delete">
-          <Icon icon="ph:trash" />
+{#if loading}
+  <div class="page fade-in state-container">
+    <Icon icon="ph:spinner-gap-duotone" />
+    <p>Loading…</p>
+  </div>
+{:else}
+  <div class="page fade-in sleek-editor-page">
+    <header class="sleek-header">
+      <button type="button" class="sleek-back" on:click={back}>
+        <Icon icon="ph:caret-left" /> Snippets
+      </button>
+      <div class="sleek-actions">
+        {#if existingTrigger}
+          <button type="button" class="sleek-icon-btn danger" on:click={deleteSnippet} title="Delete">
+            <Icon icon="ph:trash" />
+          </button>
+        {/if}
+        <button type="button" class="sleek-cancel" on:click={back}>Cancel</button>
+        <button
+          type="button"
+          class="sleek-save"
+          on:click={save}
+          disabled={!trigger?.trim() || !expansion?.trim() || saving}
+        >
+          Save
         </button>
-      {/if}
-      <button type="button" class="sleek-cancel" on:click={back}>Cancel</button>
-      <button type="button" class="sleek-save" on:click={save} disabled={!draft.trigger?.trim() || !draft.expansion?.trim() || saving}>Save</button>
-    </div>
-  </header>
+      </div>
+    </header>
 
-  <div class="sleek-body">
-    <div class="snippet-form-row">
-      <label class="form-label" for="snippet-trigger">Trigger (prefix with /)</label>
-      <div class="trigger-input-wrapper">
-        <span class="trigger-prefix">/</span>
-        <input id="snippet-trigger" type="text" class="sleek-title trigger-input" bind:value={draft.trigger} placeholder="e.g., sig" />
+    {#if saveError}
+      <p class="snippet-detail-save-error" role="alert">{saveError}</p>
+    {/if}
+
+    <div class="sleek-body">
+      <div class="snippet-form-row">
+        <label class="form-label" for="snippet-trigger">Trigger</label>
+        <input
+          id="snippet-trigger"
+          type="text"
+          class="sleek-title snippet-trigger-field"
+          bind:value={trigger}
+          placeholder="e.g. @@email or my signature phrase"
+        />
+        <p class="snippet-field-hint">Must match the transcript exactly (what speech-to-text writes).</p>
+      </div>
+
+      <div class="snippet-form-row">
+        <label class="form-label" for="snippet-expansion">Expansion</label>
+        <textarea
+          id="snippet-expansion"
+          class="sleek-content snippet-expansion"
+          bind:value={expansion}
+          placeholder="Text that replaces the trigger before it is pasted into the app…"
+        ></textarea>
       </div>
     </div>
-
-    <div class="snippet-form-row">
-      <label class="form-label" for="snippet-expansion">Expansion</label>
-      <textarea
-        id="snippet-expansion"
-        class="sleek-content snippet-expansion"
-        bind:value={draft.expansion}
-        placeholder="Text that will be inserted when you type the trigger..."
-      ></textarea>
-    </div>
   </div>
-</div>
+{/if}
+
+<style>
+  .snippet-trigger-field {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .snippet-field-hint {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-muted);
+  }
+
+  .snippet-detail-save-error {
+    margin: 0 var(--space-lg, 16px) var(--space-sm, 8px);
+    padding: var(--space-sm, 8px) var(--space-md, 12px);
+    border-radius: var(--radius-md, 8px);
+    background: color-mix(in srgb, var(--danger, #dc2626) 12%, transparent);
+    color: var(--text, inherit);
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+</style>

@@ -1,4 +1,4 @@
-//! Data models for entries (notes, tasks, reminders, history) and app logs.
+//! Data models for entries (notes, tasks, history; reminder times live on notes/tasks) and app logs.
 
 mod entry;
 mod log;

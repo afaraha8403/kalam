@@ -1,13 +1,14 @@
 use crate::db;
 use crate::models::Entry;
 use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct GetEntriesByTypeArgs {
     #[serde(rename = "entryType")]
     pub entry_type: String,
-    /// For notes: "active" | "archived" | "trash". Ignored for other types.
+    /// For notes and tasks: "active" | "archived" | "trash". Ignored for other types.
     pub scope: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
@@ -157,10 +158,35 @@ pub fn get_note_labels(scope: Option<String>) -> Result<Vec<String>, String> {
     db::get_note_labels(&conn, scope.as_deref()).map_err(|e| e.to_string())
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteScopeCounts {
+    pub active: i64,
+    pub archived: i64,
+    pub trash: i64,
+}
+
+#[tauri::command]
+pub fn get_note_scope_counts() -> Result<NoteScopeCounts, String> {
+    let conn = db::open_db().map_err(|e| e.to_string())?;
+    let (active, archived, trash) = db::count_notes_by_scope(&conn).map_err(|e| e.to_string())?;
+    Ok(NoteScopeCounts {
+        active,
+        archived,
+        trash,
+    })
+}
+
 #[tauri::command]
 pub fn empty_trash() -> Result<i64, String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
     db::empty_trash(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn empty_task_trash() -> Result<i64, String> {
+    let conn = db::open_db().map_err(|e| e.to_string())?;
+    db::empty_task_trash(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -237,6 +263,7 @@ fn snippet_entry(trigger: String, expansion: String) -> Entry {
         archived_at: None,
         deleted_at: None,
         target_app: None,
+        target_app_name: None,
         duration_ms: None,
         word_count: None,
         stt_latency_ms: None,
@@ -244,6 +271,7 @@ fn snippet_entry(trigger: String, expansion: String) -> Entry {
         dictation_language: None,
         session_mode: None,
         stt_provider: None,
+        note_order: 0,
     }
 }
 

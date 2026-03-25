@@ -58,6 +58,9 @@ export interface AppConfig {
   marketing_opt_in?: boolean
   /** Opt-in to product notifications and updates. Default false. */
   notifications_opt_in?: boolean
+  /** Filled when the user completes the email step; from the OS (support / diagnostics). */
+  onboarding_os_name?: string | null
+  onboarding_os_version?: string | null
   waveform_style?: WaveformStyle
   overlay_position?: OverlayPosition
   overlay_offset_x?: number
@@ -134,6 +137,8 @@ export interface HistoryEntry {
   duration_ms: number | null
   /** Foreground app process name when captured (e.g. notepad.exe). */
   target_app?: string | null
+  /** Friendly app title when resolved (e.g. "Notepad"). */
+  target_app_name?: string | null
   /** Effective STT path when captured (omitted on legacy rows). */
   stt_mode?: 'Cloud' | 'Local' | 'Hybrid' | 'Auto' | string | null
   /** Stored at save time; omit on legacy rows. */
@@ -192,8 +197,8 @@ export interface DictionaryEntry {
   created_at: string
 }
 
-// Unified entry (notes, tasks, reminders, history) for SQLite + vector DB
-export type EntryType = 'history' | 'note' | 'task' | 'reminder'
+// Unified entry (notes, tasks, history) for SQLite + vector DB. Reminders are `reminder_at` on notes/tasks.
+export type EntryType = 'history' | 'note' | 'task'
 
 export interface Subtask {
   title: string
@@ -221,6 +226,7 @@ export interface Entry {
   archived_at: string | null
   deleted_at: string | null
   target_app?: string | null
+  target_app_name?: string | null
   duration_ms?: number | null
   word_count?: number | null
   stt_latency_ms?: number | null
@@ -228,6 +234,8 @@ export interface Entry {
   dictation_language?: string | null
   session_mode?: string | null
   stt_provider?: string | null
+  /** Manual order: pinned / unpinned groups for notes; Tasks list order for `entry_type === 'task'`. */
+  note_order?: number
 }
 
 export interface AppLogRow {

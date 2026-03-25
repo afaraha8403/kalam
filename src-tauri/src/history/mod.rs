@@ -119,11 +119,20 @@ pub struct HistorySaveMeta {
 pub async fn save_transcription(
     text: &str,
     target_app: Option<String>,
+    target_exe_path: Option<String>,
     duration_ms: Option<u32>,
     meta: HistorySaveMeta,
 ) -> anyhow::Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = Utc::now();
+    let conn = db::open_db()?;
+    let target_app_name = match target_app.as_deref() {
+        Some(p) if !p.trim().is_empty() => {
+            let (name, _) = db::get_or_resolve_application(&conn, p, target_exe_path.as_deref())?;
+            Some(name)
+        }
+        _ => None,
+    };
     let entry = Entry {
         id: id.clone(),
         entry_type: "history".to_string(),
@@ -145,6 +154,7 @@ pub async fn save_transcription(
         archived_at: None,
         deleted_at: None,
         target_app,
+        target_app_name,
         duration_ms,
         word_count: Some(meta.word_count),
         stt_latency_ms: Some(meta.stt_latency_ms),
@@ -159,8 +169,8 @@ pub async fn save_transcription(
                 Some(s.to_string())
             }
         },
+        note_order: 0,
     };
-    let conn = db::open_db()?;
     db::insert_entry(&conn, &entry)?;
     db::insert_embedding_stub(&conn, &id)?;
     trim_history_if_needed(&conn)?;
@@ -408,6 +418,7 @@ pub fn migrate_legacy_to_unified() -> anyhow::Result<()> {
             archived_at: None,
             deleted_at: None,
             target_app: None,
+            target_app_name: None,
             duration_ms: None,
             word_count: None,
             stt_latency_ms: None,
@@ -415,6 +426,7 @@ pub fn migrate_legacy_to_unified() -> anyhow::Result<()> {
             dictation_language: None,
             session_mode: None,
             stt_provider: None,
+            note_order: 0,
         };
         db::insert_entry(&unified, &entry)?;
         db::insert_embedding_stub(&unified, &id)?;

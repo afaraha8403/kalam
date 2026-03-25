@@ -68,6 +68,7 @@ aes-gcm = "0.10"
 rand = "0.8"
 active-win-pos-rs = "0.9"
 sysinfo = "0.31"
+base64 = "0.22"
 
 # Overlay window handle (for ShowWindow without focus)
 raw-window-handle = "0.6"
@@ -76,6 +77,8 @@ raw-window-handle = "0.6"
 [target.'cfg(windows)'.dependencies]
 # Optional: KALAM_USE_WILLHOOK=1 uses willhook for hotkeys on Windows. See .doc/latency-profiling-windows.md.
 willhook = "0.6"
+win32-version-info = "0.3"
+systemicons = "0.9"
 windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_UI_Input_KeyboardAndMouse",
@@ -88,9 +91,14 @@ windows-sys = { version = "0.52", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"
 core-foundation-sys = "0.8"
+plist = "1.7"
+systemicons = "0.9"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libappindicator = "0.9"
+freedesktop-desktop-entry = "0.7"
+freedesktop-icon-lookup = "0.1"
+systemicons = "0.9"
 
 [features]
 default = ["custom-protocol"]

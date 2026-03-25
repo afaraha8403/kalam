@@ -13,6 +13,48 @@
   let loading = true
   let error: string | null = null
   let searchQuery = ''
+  /** True after a successful non-search load with at least one row — keeps "Clear all" visible while search returns no matches. */
+  let historyExists = false
+  let clearing = false
+  /** In-app confirm (native `window.confirm` is unreliable in Tauri / WebView2). */
+  let clearConfirmOpen = false
+  let clearConfirmError: string | null = null
+
+  function openClearConfirm() {
+    clearConfirmError = null
+    clearConfirmOpen = true
+  }
+
+  function closeClearConfirm() {
+    if (clearing) return
+    clearConfirmOpen = false
+    clearConfirmError = null
+  }
+
+  function onClearDialogKeydown(e: KeyboardEvent) {
+    if (!clearConfirmOpen || clearing) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      closeClearConfirm()
+    }
+  }
+
+  /** Timeline order within each day (matches Notes / Tasks sort control pattern). */
+  type HistorySortMode = 'newest' | 'oldest'
+  let historySortMode: HistorySortMode = 'newest'
+  const HISTORY_SORT_LABELS: Record<HistorySortMode, string> = {
+    newest: 'Newest first',
+    oldest: 'Oldest first'
+  }
+  const HISTORY_SORT_ICONS: Record<HistorySortMode, string> = {
+    newest: 'ph:arrow-down',
+    oldest: 'ph:arrow-up'
+  }
+  function cycleHistorySort() {
+    historySortMode = historySortMode === 'newest' ? 'oldest' : 'newest'
+  }
+  $: historySortLabel = HISTORY_SORT_LABELS[historySortMode]
+  $: historySortIcon = HISTORY_SORT_ICONS[historySortMode]
 
   async function load() {
     loading = true
@@ -22,6 +64,7 @@
         entries = (await invoke('search_history', { query: searchQuery })) as HistoryEntry[]
       } else {
         entries = (await invoke('get_history', { limit: 100, offset: 0 })) as HistoryEntry[]
+        historyExists = entries.length > 0
       }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
@@ -29,6 +72,28 @@
       loading = false
     }
   }
+
+  async function runClearHistory() {
+    clearing = true
+    clearConfirmError = null
+    error = null
+    try {
+      await invoke('clear_history')
+      historyExists = false
+      selectedHistoryId.set(null)
+      clearConfirmOpen = false
+      await load()
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      clearConfirmError = msg
+      error = msg
+    } finally {
+      clearing = false
+    }
+  }
+
+  $: showClearAll =
+    !loading && (entries.length > 0 || (searchQuery.trim() !== '' && historyExists))
 
   onMount(() => {
     load()
@@ -123,8 +188,14 @@
     }
   }
 
+  $: sortedHistoryEntries = [...entries].sort((a, b) => {
+    const ta = new Date(a.created_at).getTime()
+    const tb = new Date(b.created_at).getTime()
+    return historySortMode === 'newest' ? tb - ta : ta - tb
+  })
+
   /** Group entries by day (Today, Yesterday, or date) — prototype structure. */
-  $: groupedHistory = entries.reduce((acc, entry) => {
+  $: groupedHistory = sortedHistoryEntries.reduce((acc, entry) => {
     const date = new Date(entry.created_at)
     const today = new Date()
     const yesterday = new Date(today)
@@ -147,22 +218,54 @@
   }, {} as Record<string, { entries: HistoryEntry[]; sub: string }>)
 </script>
 
+<svelte:window on:keydown={onClearDialogKeydown} />
+
 <!-- Prototype structure: page, page-header, search-bar, timeline, day-group, entry-row -->
 <div class="page fade-in">
-  <header class="page-header">
-    <h1 class="page-title">History</h1>
+  <header class="page-header notes-header">
+    <div>
+      <h1 class="page-title">History</h1>
+    </div>
+    {#if showClearAll}
+      <button
+        type="button"
+        class="btn-danger-outline"
+        disabled={clearing}
+        title="Delete every dictation from history"
+        aria-label="Clear all history"
+        on:click={openClearConfirm}
+      >
+        <Icon icon="ph:trash" />
+        Clear all
+      </button>
+    {/if}
   </header>
 
-  <div class="search-bar">
-    <span class="search-bar-icon" aria-hidden="true">
-      <Icon icon="ph:magnifying-glass" />
-    </span>
-    <input
-      type="text"
-      bind:value={searchQuery}
-      on:input={handleSearch}
-      placeholder="Search your dictations..."
-    />
+  <div class="notes-toolbar">
+    <div class="notes-search-bar">
+      <span class="notes-search-bar-icon" aria-hidden="true">
+        <Icon icon="ph:magnifying-glass" />
+      </span>
+      <input
+        type="text"
+        bind:value={searchQuery}
+        on:input={handleSearch}
+        placeholder="Search your dictations..."
+      />
+    </div>
+    <div class="notes-toolbar-actions">
+      <div class="notes-toolbar-actions-scroll">
+        <button
+          type="button"
+          class="notes-sort-cycle"
+          title={historySortLabel}
+          aria-label="Sort: {historySortLabel}. Click to change sort order."
+          on:click={cycleHistorySort}
+        >
+          <span aria-hidden="true"><Icon icon={historySortIcon} /></span>
+        </button>
+      </div>
+    </div>
   </div>
 
   {#if loading && entries.length === 0}
@@ -238,4 +341,130 @@
       {/each}
     </div>
   {/if}
+
+  {#if clearConfirmOpen}
+    <div class="history-clear-root" aria-live="polite">
+      <button
+        type="button"
+        class="history-clear-backdrop"
+        aria-label="Cancel and close"
+        disabled={clearing}
+        on:click={closeClearConfirm}
+      />
+      <div
+        class="history-clear-panel"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="history-clear-title"
+        aria-describedby="history-clear-desc"
+        on:click|stopPropagation
+      >
+        <h2 id="history-clear-title" class="history-clear-title">Clear all history?</h2>
+        <p id="history-clear-desc" class="history-clear-desc">
+          This removes every dictation from history. You cannot undo this.
+        </p>
+        {#if clearConfirmError}
+          <p class="history-clear-error" role="alert">{clearConfirmError}</p>
+        {/if}
+        <div class="history-clear-actions">
+          <button type="button" class="btn-ghost" disabled={clearing} on:click={closeClearConfirm}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn-danger-outline"
+            disabled={clearing}
+            on:click={runClearHistory}
+          >
+            {#if clearing}
+              <span class="history-clear-spin" aria-hidden="true">
+                <Icon icon="ph:spinner-gap-duotone" />
+              </span>
+              Clearing…
+            {:else}
+              <Icon icon="ph:trash" />
+              Clear all
+            {/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
+
+<style>
+  .history-clear-root {
+    position: fixed;
+    inset: 0;
+    z-index: 4000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-md, 1rem);
+    pointer-events: none;
+  }
+  .history-clear-root > * {
+    pointer-events: auto;
+  }
+  .history-clear-backdrop {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+    cursor: pointer;
+    background: rgba(7, 16, 41, 0.45);
+  }
+  .history-clear-backdrop:disabled {
+    cursor: not-allowed;
+    opacity: 0.85;
+  }
+  .history-clear-panel {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 22rem;
+    padding: var(--space-lg, 1.25rem);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+  }
+  .history-clear-title {
+    margin: 0 0 0.5rem;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .history-clear-desc {
+    margin: 0 0 1rem;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+  }
+  .history-clear-error {
+    margin: 0 0 1rem;
+    font-size: 0.875rem;
+    color: var(--error);
+  }
+  .history-clear-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+  }
+  .history-clear-spin {
+    display: inline-flex;
+    vertical-align: middle;
+    margin-right: 0.35rem;
+    animation: history-clear-spin 0.85s linear infinite;
+  }
+  .history-clear-spin :global(svg) {
+    display: block;
+  }
+  @keyframes history-clear-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+</style>

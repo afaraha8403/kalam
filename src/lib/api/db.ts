@@ -10,6 +10,8 @@ function normalizeUnifiedEntry(raw: Entry | null): Entry | null {
   if (o.stt_mode == null && typeof o.sttMode === 'string') o.stt_mode = o.sttMode
   if (o.stt_provider == null && typeof o.sttProvider === 'string') o.stt_provider = o.sttProvider
   if (o.duration_ms == null && typeof o.durationMs === 'number') o.duration_ms = o.durationMs
+  if (o.target_app_name == null && typeof o.targetAppName === 'string') o.target_app_name = o.targetAppName
+  if (o.note_order == null && typeof o.noteOrder === 'number') o.note_order = o.noteOrder
   return raw
 }
 
@@ -18,9 +20,10 @@ export async function createEntry(entry: Entry): Promise<void> {
 }
 
 export async function getEntriesByType(
-  entryType: 'history' | 'note' | 'task' | 'reminder',
+  entryType: 'history' | 'note' | 'task',
   limit?: number,
   offset?: number,
+  /** Notes and tasks: active (default), archived, or trash. */
   scope?: 'active' | 'archived' | 'trash'
 ): Promise<Entry[]> {
   return invoke<Entry[]>('get_entries_by_type', {
@@ -61,7 +64,7 @@ export async function searchNotes(params: {
   })
 }
 
-/** Entries that have a reminder: reminders + notes with reminder_at (not trashed). For Reminders view. */
+/** Entries for the Reminders view: reminders with a time, notes with reminder_at (not trashed), open tasks with reminder_at or due_date. */
 export async function getEntriesWithReminder(limit?: number, offset?: number): Promise<Entry[]> {
   return invoke<Entry[]>('get_entries_with_reminder', {
     args: {
@@ -76,9 +79,23 @@ export async function getNoteLabels(scope?: 'active' | 'archived' | 'trash' | 'a
   return invoke<string[]>('get_note_labels', { scope: scope ?? undefined })
 }
 
+/** Total note counts per list scope (active / archived / trash), for UI like the scope menu. */
+export async function getNoteScopeCounts(): Promise<{
+  active: number
+  archived: number
+  trash: number
+}> {
+  return invoke('get_note_scope_counts')
+}
+
 /** Permanently delete all trashed notes. Returns count deleted. */
 export async function emptyTrash(): Promise<number> {
   return invoke<number>('empty_trash')
+}
+
+/** Permanently delete all trashed tasks. Returns count deleted. */
+export async function emptyTaskTrash(): Promise<number> {
+  return invoke<number>('empty_task_trash')
 }
 
 /** Hard delete one entry (e.g. "Delete permanently" from Trash). For "move to trash" use updateEntry with deleted_at set. */
@@ -134,6 +151,7 @@ export function newEntry(
     archived_at: string | null
     deleted_at: string | null
     target_app?: string | null
+    target_app_name?: string | null
     duration_ms?: number | null
     word_count?: number | null
     stt_latency_ms?: number | null
@@ -141,6 +159,7 @@ export function newEntry(
     dictation_language?: string | null
     session_mode?: string | null
     stt_provider?: string | null
+    note_order?: number
   }> = {}
 ): Entry {
   const now = new Date().toISOString()
@@ -165,12 +184,14 @@ export function newEntry(
     archived_at: opts.archived_at ?? null,
     deleted_at: opts.deleted_at ?? null,
     target_app: opts.target_app ?? undefined,
+    target_app_name: opts.target_app_name ?? undefined,
     duration_ms: opts.duration_ms ?? undefined,
     word_count: opts.word_count ?? undefined,
     stt_latency_ms: opts.stt_latency_ms ?? undefined,
     stt_mode: opts.stt_mode ?? undefined,
     dictation_language: opts.dictation_language ?? undefined,
     session_mode: opts.session_mode ?? undefined,
-    stt_provider: opts.stt_provider ?? undefined
+    stt_provider: opts.stt_provider ?? undefined,
+    note_order: opts.note_order ?? 0
   }
 }

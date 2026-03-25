@@ -5,7 +5,7 @@
   import { initTelemetry, optOut } from '../lib/telemetry'
   import { sidebarDictationStore } from '../lib/sidebarDictation'
   import { LANGUAGE_OPTIONS, languageLabel, isLanguageSupportedByProvider } from '../lib/languages'
-  import type { AppConfig, AudioDevice, DictionaryEntry } from '../types'
+  import type { AppConfig, AudioDevice, DictionaryEntry, ThemePreference } from '../types'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
   import About from './About.svelte'
 
@@ -67,9 +67,50 @@
     { id: 'dictionary', label: 'Dictionary', icon: 'ph:book-open' },
     { id: 'command', label: 'Command Mode', icon: 'ph:terminal' },
     { id: 'privacy', label: 'Privacy', icon: 'ph:shield' },
-    { id: 'advanced', label: 'Advanced', icon: 'ph:gear-fine' },
+    { id: 'advanced', label: 'Advanced', icon: 'ph:wrench' },
     { id: 'about', label: 'About', icon: 'ph:info' },
   ]
+
+  /** Prototype: collapsed = section header only; names aligned with Prototype.svelte. */
+  let collapsedSections: Record<string, boolean> = {
+    general_hotkeys: false,
+    general_startup: true,
+    general_appearance: false,
+    dictation_audio: false,
+    dictation_mode: false,
+    dictation_formatting: true,
+    dictionary: false,
+    command: false,
+    privacy_data: false,
+    advanced_logs: false,
+    advanced_danger: false,
+  }
+
+  function recordingModeSegment(): 'Hold' | 'Toggle' | 'Both' {
+    if (config?.recording_mode === 'Hold') return 'Hold'
+    if (config?.recording_mode === 'Toggle') return 'Toggle'
+    return 'Both'
+  }
+
+  function setRecordingMode(m: 'Hold' | 'Toggle' | 'Both') {
+    if (!config) return
+    config.recording_mode = m === 'Both' ? null : m
+    scheduleSave()
+  }
+
+  /** Same three states as the sidebar theme control (Auto / Dark / Light). */
+  function themeSegment(): ThemePreference {
+    const t = config?.theme_preference
+    if (t === 'Light' || t === 'Dark' || t === 'Auto') return t
+    return 'Auto'
+  }
+
+  function setThemePreferenceSetting(next: ThemePreference) {
+    if (!config) return
+    // Top-level reassignment so `class:active={themeSegment() === …}` invalidates (nested writes don't).
+    config = { ...config, theme_preference: next }
+    scheduleSave()
+  }
 
   let commandApiKeyInput = ''
   let llmModels: string[] = []
@@ -81,21 +122,6 @@
   let dictionaryLoading = false
   /** `get_platform`: windows | macos | linux — for hotkey Meta label (Win / Cmd / Super). */
   let appPlatform = ''
-
-  // Collapsible sections state
-  let collapsedSections: Record<string, boolean> = {
-    general_hotkeys: false,
-    general_startup: true,
-    general_overlay: true,
-    dictation_audio: false,
-    dictation_stt: false,
-    dictation_formatting: true,
-    dictionary: false,
-    command: false,
-    privacy: false,
-    advanced: false,
-    advanced_danger: false
-  }
 
   function toggleSection(section: string) {
     collapsedSections[section] = !collapsedSections[section]
@@ -135,7 +161,7 @@
       sidebarDictationStore.updateFromConfig(settings, platform)
 
       if (config) {
-        if (config.audio_device == null || config.audio_device === 'default' || config.audio_device === '') {
+        if (config.audio_device == null || config.audio_device === '') {
           config.audio_device = ''
         }
         if (!config.logging) {
@@ -211,6 +237,7 @@
           engineDownloadProgress = { ...engineDownloadProgress, [sidecar_id]: { percent: percent ?? null, downloaded_bytes, total_bytes } }
         }
       )
+
     } catch (e) {
       console.error('Failed to load settings:', e)
     } finally {
@@ -262,6 +289,14 @@
     const next = { ...modelErrors }
     delete next[modelId]
     modelErrors = next
+  }
+
+  function selectSttModeCard(mode: string) {
+    if (!config) return
+    if (mode === 'Cloud' || mode === 'Local' || mode === 'Hybrid') {
+      config.stt_config.mode = mode
+      void onSttModeChange()
+    }
   }
 
   async function onSttModeChange() {
@@ -914,279 +949,397 @@
 
     <div class="settings-content">
       {#if activeTab === 'general'}
-        <section class="settings-section" class:collapsed={collapsedSections.general_hotkeys}>
-          <button type="button" class="section-header" on:click={() => toggleSection('general_hotkeys')}>
-            <h3>Dictation Hotkeys</h3>
-            <Icon icon={collapsedSections.general_hotkeys ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Hold to Dictate</span>
-                <span class="setting-desc">Press and hold this hotkey to dictate, release to stop</span>
-              </div>
-              <div class="setting-control">
-                <HotkeyCapture value={config.hotkey ?? ''} platform={appPlatform} onChange={setHotkey} />
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Short-press threshold (ms)</span>
-                <span class="setting-desc">Releases earlier than this are treated as short presses and cancelled</span>
-              </div>
-              <div class="setting-control">
-                <input type="number" min="0" max="2000" step="50" bind:value={config.min_hold_ms} on:change={scheduleSave} />
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Toggle Dictation</span>
-                <span class="setting-desc">Press once to start, again to stop</span>
-              </div>
-              <div class="setting-control">
-                <HotkeyCapture value={config.toggle_dictation_hotkey ?? ''} platform={appPlatform} onChange={setToggleHotkey} />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-section" class:collapsed={collapsedSections.general_startup}>
-          <button type="button" class="section-header" on:click={() => toggleSection('general_startup')}>
-            <h3>Startup</h3>
-            <Icon icon={collapsedSections.general_startup ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <div class="setting-row checkbox-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.auto_start} on:change={scheduleSave} />
-                <span>Start on login</span>
-              </label>
-            </div>
-            <div class="setting-row checkbox-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.start_in_focus} on:change={scheduleSave} />
-                <span>Start in focus (show window on startup)</span>
-              </label>
-              <span class="setting-desc">If disabled, app starts minimized to tray</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-section" class:collapsed={collapsedSections.general_overlay}>
-          <button type="button" class="section-header" on:click={() => toggleSection('general_overlay')}>
-            <h3>Overlay Appearance</h3>
-            <Icon icon={collapsedSections.general_overlay ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Waveform Style</span>
-                <span class="setting-desc">Choose how your voice is visualized</span>
-              </div>
-              <div class="setting-control">
-                <select bind:value={config.waveform_style} on:change={scheduleSave}>
-                  <option value="SiriWave">Siri Wave</option>
-                  <option value="EchoRing">Echo Ring</option>
-                  <option value="RoundedBars">Rounded Bars</option>
-                  <option value="BreathingAura">Breathing Aura</option>
-                  <option value="Oscilloscope">Oscilloscope</option>
-                  <option value="NeonPulse">Neon Pulse</option>
-                  <option value="Aurora">Aurora Borealis</option>
-                </select>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Expand Direction</span>
-                <span class="setting-desc">Which direction the pill expands</span>
-              </div>
-              <div class="setting-control">
-                <select bind:value={config.overlay_expand_direction} on:change={scheduleSave}>
-                  <option value="Up">Upwards</option>
-                  <option value="Down">Downwards</option>
-                  <option value="Center">Center</option>
-                </select>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Screen Position</span>
-                <span class="setting-desc">Where the pill appears on your primary monitor</span>
-              </div>
-              <div class="setting-control">
-                <select bind:value={config.overlay_position} on:change={scheduleSave}>
-                  <option value="BottomCenter">Bottom Center</option>
-                  <option value="BottomLeft">Bottom Left</option>
-                  <option value="BottomRight">Bottom Right</option>
-                  <option value="TopCenter">Top Center</option>
-                  <option value="TopLeft">Top Left</option>
-                  <option value="TopRight">Top Right</option>
-                  <option value="CenterLeft">Center Left</option>
-                  <option value="CenterRight">Center Right</option>
-                  <option value="Center">Center</option>
-                </select>
-              </div>
-            </div>
-            <div class="setting-row row-group">
-              <div class="setting-label">
-                <span class="setting-name">X Offset (px)</span>
-              </div>
-              <div class="setting-control">
-                <input type="number" bind:value={config.overlay_offset_x} on:input={scheduleSave} />
-              </div>
-              <div class="setting-label">
-                <span class="setting-name">Y Offset (px)</span>
-              </div>
-              <div class="setting-control">
-                <input type="number" bind:value={config.overlay_offset_y} on:input={scheduleSave} />
-              </div>
-            </div>
-          </div>
-        </section>
-
-      {:else if activeTab === 'dictation'}
-        <section class="settings-section" class:collapsed={collapsedSections.dictation_audio}>
-          <button type="button" class="section-header" on:click={() => toggleSection('dictation_audio')}>
-            <h3>Audio Input</h3>
-            <Icon icon={collapsedSections.dictation_audio ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Microphone</span>
-                <button class="btn-refresh" on:click={refreshAudioDevices} title="Refresh">
-                  <Icon icon="ph:arrow-clockwise" />
-                </button>
-              </div>
-              <div class="setting-control full-width">
-                <select bind:value={config.audio_device} on:change={scheduleSave}>
-                  {#if audioDevices.length === 0}
-                    <option value="">No devices found</option>
-                  {:else}
-                    {#each audioDevices as device}
-                      <option value={device.id === 'default' ? '' : device.id}>
-                        {device.is_default ? 'Default — ' + device.name : device.name}
-                      </option>
-                    {/each}
-                  {/if}
-                </select>
-                {#if audioDevices.length === 0}
-                  <span class="hint warning">No audio devices found. Try refreshing.</span>
-                {:else}
-                  <span class="hint">{audioDevices.length} audio device(s) available</span>
-                {/if}
-              </div>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Test Microphone</span>
-                <span class="setting-desc">Record and hear playback</span>
-              </div>
-              <div class="setting-control">
-                {#if testingMic}
-                  <button class="btn-secondary" on:click={stopTestRecording}>Stop</button>
-                {:else}
-                  <button class="btn-secondary" on:click={startTestRecording}>Start</button>
-                {/if}
-              </div>
-            </div>
-            <div class="mic-level-container">
-              <div class="mic-level" role="meter" aria-valuenow={Math.round(micLevel * 100)}>
-                <div class="mic-bar" style="width: {micLevel * 100}%"></div>
-              </div>
-              {#if testingMic}
-                <span class="mic-status">Recording…</span>
-              {:else if micLevel > 0}
-                <span class="mic-status">Volume: {Math.round(micLevel * 100)}%</span>
-              {/if}
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">VAD Sensitivity</span>
-                <span class="setting-desc">Voice Activity Detection sensitivity</span>
-              </div>
-              <div class="setting-control">
-                <select bind:value={config.stt_config.vad_preset} on:change={scheduleSave}>
-                  <option value="Fast">Fast (0.8s silence)</option>
-                  <option value="Balanced">Balanced (1.5s silence)</option>
-                  <option value="Accurate">Accurate (2.5s silence)</option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-section" class:collapsed={collapsedSections.dictation_stt}>
-          <button type="button" class="section-header" on:click={() => toggleSection('dictation_stt')}>
-            <h3>Speech-to-Text Mode</h3>
-            <Icon icon={collapsedSections.dictation_stt ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Mode</span>
-              </div>
-              <div class="setting-control">
-                <select bind:value={config.stt_config.mode} on:change={onSttModeChange}>
-                  <option value="Cloud">Cloud</option>
-                  <option value="Local">Local (SenseVoice)</option>
-                  <option value="Hybrid">Hybrid (Auto-switch)</option>
-                </select>
-              </div>
-            </div>
-
-            {#if config.stt_config.mode === 'Cloud' || config.stt_config.mode === 'Hybrid'}
-              <div class="setting-row">
-                <div class="setting-label">
-                  <span class="setting-name">Cloud Provider</span>
-                </div>
-                <div class="setting-control">
-                  <select bind:value={config.stt_config.provider} on:change={onCloudProviderChange}>
-                    <option value="groq">Groq</option>
-                    <option value="openai">OpenAI</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="setting-row">
-                <div class="setting-label">
-                  <span class="setting-name">API Key</span>
-                  {#if hasApiKey && !apiKeyInput}
-                    <span class="badge configured">✓ Configured</span>
-                  {/if}
-                </div>
-                <div class="setting-control full-width">
-                  <div class="input-group">
-                    <input
-                      type="password"
-                      bind:value={apiKeyInput}
-                      on:input={scheduleSave}
-                      placeholder={hasApiKey ? "Enter new key to change" : "Enter API key"}
-                    />
-                    <button class="btn-secondary" on:click={checkApiKey}>Validate</button>
-                    {#if hasApiKey && !apiKeyInput}
-                      <button class="btn-secondary danger" on:click={clearApiKey}>Clear</button>
-                    {/if}
+        <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.general_hotkeys}>
+            <button type="button" class="section-header" on:click={() => toggleSection('general_hotkeys')}>
+              <h3>Dictation Hotkeys</h3>
+              <Icon icon={collapsedSections.general_hotkeys ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.general_hotkeys}
+              <div class="section-content">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Hold to Dictate</span>
+                    <span class="setting-desc">Press and hold to start dictating</span>
                   </div>
-                  {#if apiKeyValid !== null}
-                    <span class="validation {apiKeyValid ? 'success' : 'error'}">
-                      {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
-                    </span>
-                  {/if}
-                  <p class="hint">
-                    {#if config.stt_config.provider === 'openai'}
-                      <a href="https://platform.openai.com/api-keys" target="_blank">Get your API key from OpenAI →</a>
-                    {:else}
-                      <a href="https://console.groq.com" target="_blank">Get your API key from Groq →</a>
-                    {/if}
-                  </p>
+                  <div class="setting-control">
+                    <HotkeyCapture value={config.hotkey ?? ''} platform={appPlatform} onChange={setHotkey} />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Toggle Dictation</span>
+                    <span class="setting-desc">Press to start/stop dictating</span>
+                  </div>
+                  <div class="setting-control">
+                    <HotkeyCapture value={config.toggle_dictation_hotkey ?? ''} platform={appPlatform} onChange={setToggleHotkey} />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Toggle Language</span>
+                    <span class="setting-desc">Switch between recognition languages</span>
+                  </div>
+                  <div class="setting-control">
+                    <HotkeyCapture value={config.language_toggle_hotkey ?? ''} platform={appPlatform} onChange={setLanguageToggleHotkey} />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Command Mode</span>
+                    <span class="setting-desc">Create notes, tasks, and reminders by voice</span>
+                  </div>
+                  <div class="setting-control">
+                    <HotkeyCapture value={config.command_config?.hotkey ?? ''} platform={appPlatform} onChange={setCommandHotkey} />
+                  </div>
                 </div>
               </div>
             {/if}
+          </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.general_startup}>
+            <button type="button" class="section-header" on:click={() => toggleSection('general_startup')}>
+              <h3>Startup &amp; Behavior</h3>
+              <Icon icon={collapsedSections.general_startup ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.general_startup}
+              <div class="section-content">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Launch at Login</span>
+                    <span class="setting-desc">Start Kalam automatically when you log in</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.auto_start} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Show Window on Startup</span>
+                    <span class="setting-desc">Open the main window when the app starts; otherwise start in the tray</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.start_in_focus} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Recording Mode</span>
+                    <span class="setting-desc">Which dictation hotkeys are active (both can still be configured above)</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="segmented-control">
+                      <button
+                        type="button"
+                        class:active={recordingModeSegment() === 'Hold'}
+                        on:click={() => setRecordingMode('Hold')}
+                      >Hold</button>
+                      <button
+                        type="button"
+                        class:active={recordingModeSegment() === 'Toggle'}
+                        on:click={() => setRecordingMode('Toggle')}
+                      >Toggle</button>
+                      <button
+                        type="button"
+                        class:active={recordingModeSegment() === 'Both'}
+                        on:click={() => setRecordingMode('Both')}
+                      >Both</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {/if}
+          </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.general_appearance}>
+            <button type="button" class="section-header" on:click={() => toggleSection('general_appearance')}>
+              <h3>Appearance</h3>
+              <Icon icon={collapsedSections.general_appearance ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.general_appearance}
+              <div class="section-content">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Theme</span>
+                    <span class="setting-desc">Auto follows your system; Dark and Light stay fixed</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="segmented-control">
+                      <button
+                        type="button"
+                        class:active={themeSegment() === 'Auto'}
+                        on:click={() => setThemePreferenceSetting('Auto')}
+                      >Auto</button>
+                      <button
+                        type="button"
+                        class:active={themeSegment() === 'Dark'}
+                        on:click={() => setThemePreferenceSetting('Dark')}
+                      >Dark</button>
+                      <button
+                        type="button"
+                        class:active={themeSegment() === 'Light'}
+                        on:click={() => setThemePreferenceSetting('Light')}
+                      >Light</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Waveform Style</span>
+                    <span class="setting-desc">Visual style of the recording indicator</span>
+                  </div>
+                  <div class="setting-control">
+                    <select class="form-select" bind:value={config.waveform_style} on:change={scheduleSave}>
+                      <option value="SiriWave">Siri Wave</option>
+                      <option value="EchoRing">Echo Ring</option>
+                      <option value="RoundedBars">Rounded Bars</option>
+                      <option value="BreathingAura">Breathing Aura</option>
+                      <option value="Oscilloscope">Oscilloscope</option>
+                      <option value="NeonPulse">Neon Pulse</option>
+                      <option value="Aurora">Aurora Borealis</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Expand Direction</span>
+                    <span class="setting-desc">Which direction the overlay pill expands</span>
+                  </div>
+                  <div class="setting-control">
+                    <select class="form-select" bind:value={config.overlay_expand_direction} on:change={scheduleSave}>
+                      <option value="Up">Upwards</option>
+                      <option value="Down">Downwards</option>
+                      <option value="Center">Center</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Overlay Position</span>
+                    <span class="setting-desc">Where to show the recording overlay</span>
+                  </div>
+                  <div class="setting-control">
+                    <select class="form-select" bind:value={config.overlay_position} on:change={scheduleSave}>
+                      <option value="BottomCenter">Bottom Center</option>
+                      <option value="BottomLeft">Bottom Left</option>
+                      <option value="BottomRight">Bottom Right</option>
+                      <option value="TopCenter">Top Center</option>
+                      <option value="TopLeft">Top Left</option>
+                      <option value="TopRight">Top Right</option>
+                      <option value="CenterLeft">Center Left</option>
+                      <option value="CenterRight">Center Right</option>
+                      <option value="Center">Center</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="setting-row sub-setting">
+                  <div class="setting-label">
+                    <span class="setting-name">Offset X</span>
+                    <span class="setting-desc">Horizontal adjustment (pixels)</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="number-input">
+                      <input type="number" bind:value={config.overlay_offset_x} step="10" on:input={scheduleSave} />
+                      <span class="unit">px</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row sub-setting">
+                  <div class="setting-label">
+                    <span class="setting-name">Offset Y</span>
+                    <span class="setting-desc">Vertical adjustment (pixels)</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="number-input">
+                      <input type="number" bind:value={config.overlay_offset_y} step="10" on:input={scheduleSave} />
+                      <span class="unit">px</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {/if}
+          </section>
+        </div>
+
+      {:else if activeTab === 'dictation'}
+        <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.dictation_audio}>
+            <button type="button" class="section-header" on:click={() => toggleSection('dictation_audio')}>
+              <h3>Audio Input</h3>
+              <Icon icon={collapsedSections.dictation_audio ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.dictation_audio}
+              <div class="section-content">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Microphone</span>
+                    <span class="setting-desc">Select your audio input device</span>
+                  </div>
+                  <div class="setting-control">
+                    <button type="button" class="btn-refresh" on:click={refreshAudioDevices} title="Refresh devices">
+                      <Icon icon="ph:arrow-clockwise" />
+                    </button>
+                    <select class="form-select" bind:value={config.audio_device} on:change={scheduleSave}>
+                      {#if audioDevices.length === 0}
+                        <option value="">No devices found</option>
+                      {:else}
+                        <option value="">System default</option>
+                        {#each audioDevices as device}
+                          <option value={device.id}>
+                            {device.is_default ? 'Default — ' + device.name : device.name}
+                          </option>
+                        {/each}
+                      {/if}
+                    </select>
+                  </div>
+                </div>
+                {#if audioDevices.length === 0}
+                  <p class="hint warning">No audio devices found. Try refreshing.</p>
+                {/if}
+
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Minimum Hold Time</span>
+                    <span class="setting-desc">Minimum milliseconds to hold the dictation hotkey</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="number-input">
+                      <input type="number" bind:value={config.min_hold_ms} min="0" max="2000" step="50" on:change={scheduleSave} />
+                      <span class="unit">ms</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Test Microphone</span>
+                    <span class="setting-desc">Record a sample and hear playback</span>
+                  </div>
+                  <div class="setting-control">
+                    {#if testingMic}
+                      <button type="button" class="settings-secondary-btn" on:click={stopTestRecording}>Stop</button>
+                    {:else}
+                      <button type="button" class="settings-secondary-btn" on:click={startTestRecording}>Start</button>
+                    {/if}
+                  </div>
+                </div>
+                <div class="mic-level-container">
+                  <div class="mic-level" role="meter" aria-valuenow={Math.round(micLevel * 100)}>
+                    <div class="mic-bar" style="width: {micLevel * 100}%"></div>
+                  </div>
+                  {#if testingMic}
+                    <span class="mic-status">Recording…</span>
+                  {:else if micLevel > 0}
+                    <span class="mic-status">Volume: {Math.round(micLevel * 100)}%</span>
+                  {/if}
+                </div>
+
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">VAD Sensitivity</span>
+                    <span class="setting-desc">Voice activity detection (silence before end)</span>
+                  </div>
+                  <div class="setting-control">
+                    <select class="form-select" bind:value={config.stt_config.vad_preset} on:change={scheduleSave}>
+                      <option value="Fast">Fast (0.8s silence)</option>
+                      <option value="Balanced">Balanced (1.5s silence)</option>
+                      <option value="Accurate">Accurate (2.5s silence)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            {/if}
+          </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.dictation_mode}>
+            <button type="button" class="section-header" on:click={() => toggleSection('dictation_mode')}>
+              <h3>Speech-to-Text Mode</h3>
+              <Icon icon={collapsedSections.dictation_mode ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.dictation_mode}
+              <div class="section-content">
+                <div class="stt-mode-cards">
+                  {#each ['Cloud', 'Local', 'Hybrid'] as mode}
+                    <button
+                      type="button"
+                      class="stt-mode-card"
+                      class:active={config.stt_config.mode === mode}
+                      on:click={() => selectSttModeCard(mode)}
+                    >
+                      <div class="mode-icon">
+                        <Icon icon={mode === 'Cloud' ? 'ph:cloud' : mode === 'Local' ? 'ph:hard-drives' : 'ph:arrows-left-right'} />
+                      </div>
+                      <div class="mode-info">
+                        <span class="mode-name">{mode}</span>
+                        <span class="mode-desc">
+                          {mode === 'Cloud'
+                            ? 'Fastest, requires internet'
+                            : mode === 'Local'
+                              ? 'Private, runs on your device'
+                              : 'Combines both for best results'}
+                        </span>
+                      </div>
+                    </button>
+                  {/each}
+                </div>
+
+                {#if config.stt_config.mode === 'Cloud' || config.stt_config.mode === 'Hybrid'}
+                  <div class="setting-row sub-setting">
+                    <div class="setting-label">
+                      <span class="setting-name">Cloud Provider</span>
+                      <span class="setting-desc">API service for transcription</span>
+                    </div>
+                    <div class="setting-control">
+                      <select class="form-select" bind:value={config.stt_config.provider} on:change={onCloudProviderChange}>
+                        <option value="groq">Groq (whisper-large-v3-turbo)</option>
+                        <option value="openai">OpenAI (whisper-1)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="api-key-section">
+                    <div class="api-key-row">
+                      <input
+                        type="password"
+                        class="api-key-input"
+                        bind:value={apiKeyInput}
+                        on:input={scheduleSave}
+                        placeholder={hasApiKey ? 'Enter new key to change' : 'Enter API key...'}
+                      />
+                      <button type="button" class="settings-secondary-btn" on:click={checkApiKey}>Validate</button>
+                      {#if hasApiKey && !apiKeyInput}
+                        <button type="button" class="settings-secondary-btn danger" on:click={clearApiKey}>Clear</button>
+                      {/if}
+                    </div>
+                    {#if apiKeyValid !== null}
+                      <span class="validation-badge" class:valid={apiKeyValid}>
+                        {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
+                      </span>
+                    {/if}
+                    {#if hasApiKey && !apiKeyInput}
+                      <span class="hint" style="display:block;margin-top:8px">API key on file</span>
+                    {/if}
+                    <p class="api-key-hint">
+                      {#if config.stt_config.provider === 'openai'}
+                        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">Get your API key from OpenAI →</a>
+                      {:else}
+                        <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">Get your API key from Groq →</a>
+                      {/if}
+                    </p>
+                  </div>
+                {/if}
 
             {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
+              <div class="local-models-section">
+                <p class="local-models-hint">
+                  Select one model; it is used when mode is Local. Download, start, or stop from the list.
+                </p>
               <div class="setting-row local-model-row">
                 <div class="setting-label full-width">
                   <span class="setting-name">Local Model</span>
@@ -1240,15 +1393,15 @@
                         {/if}
                         <div class="model-actions">
                           {#if !status?.installed}
-                            <button class="btn-secondary" disabled={(hardwareReqs[modelId] && !hardwareReqs[modelId].can_run) || sidecarAvailable[modelId] === false} on:click|stopPropagation={() => downloadModel(modelId)}>Download</button>
+                            <button type="button" class="settings-secondary-btn" disabled={(hardwareReqs[modelId] && !hardwareReqs[modelId].can_run) || sidecarAvailable[modelId] === false} on:click|stopPropagation={() => downloadModel(modelId)}>Download</button>
                           {:else}
                             {#if status.status === 'Stopped' || status.status === 'Error'}
-                              <button class="btn-secondary" disabled={sidecarAvailable[modelId] === false} on:click|stopPropagation={() => startModel(modelId)}>Start</button>
+                              <button type="button" class="settings-secondary-btn" disabled={sidecarAvailable[modelId] === false} on:click|stopPropagation={() => startModel(modelId)}>Start</button>
                             {:else if status.status === 'Running'}
-                              <button class="btn-secondary" on:click|stopPropagation={() => stopModel(modelId)}>Stop</button>
-                              <button class="btn-secondary" on:click|stopPropagation={() => restartModel(modelId)}>Restart</button>
+                              <button type="button" class="settings-secondary-btn" on:click|stopPropagation={() => stopModel(modelId)}>Stop</button>
+                              <button type="button" class="settings-secondary-btn" on:click|stopPropagation={() => restartModel(modelId)}>Restart</button>
                             {/if}
-                            <button class="btn-secondary danger" on:click|stopPropagation={() => deleteModel(modelId)}>Delete</button>
+                            <button type="button" class="settings-secondary-btn danger" on:click|stopPropagation={() => deleteModel(modelId)}>Delete</button>
                           {/if}
                         </div>
                       </div>
@@ -1258,10 +1411,11 @@
                   {#if sidecarInstalled}
                     <div class="local-engine-section">
                       <span class="setting-desc">Local STT engine is installed</span>
-                      <button class="btn-secondary danger" on:click={() => uninstallEngine(config?.stt_config?.local_model ?? 'sensevoice')}>Uninstall engine</button>
+                      <button type="button" class="settings-secondary-btn danger" on:click={() => uninstallEngine(config?.stt_config?.local_model ?? 'sensevoice')}>Uninstall engine</button>
                     </div>
                   {/if}
                 </div>
+              </div>
               </div>
             {/if}
 
@@ -1294,149 +1448,168 @@
                   {/each}
                 </div>
                 <div class="add-language">
-                  <select bind:value={addLanguageCode} on:change={addSelectedLanguage}>
+                  <select class="form-select" bind:value={addLanguageCode} on:change={addSelectedLanguage}>
                     <option value="">Add a language…</option>
                     {#each LANGUAGE_OPTIONS as opt}
                       <option value={opt.code} disabled={(config?.languages ?? []).includes(opt.code)}>{opt.label}</option>
                     {/each}
                   </select>
                 </div>
-
-                {#if (config?.languages?.length ?? 0) >= 2}
-                  <div class="language-toggle-hotkey">
-                    <span class="setting-desc">Language toggle hotkey</span>
-                    <HotkeyCapture value={config.language_toggle_hotkey ?? ''} platform={appPlatform} onChange={setLanguageToggleHotkey} />
-                  </div>
-                {/if}
               </div>
             </div>
           </div>
+            {/if}
         </section>
 
         <section class="settings-section" class:collapsed={collapsedSections.dictation_formatting}>
           <button type="button" class="section-header" on:click={() => toggleSection('dictation_formatting')}>
-            <h3>Text Formatting</h3>
-            <Icon icon={collapsedSections.dictation_formatting ? 'ph:caret-right' : 'ph:caret-down'} />
+            <h3>Formatting &amp; Output</h3>
+            <Icon icon={collapsedSections.dictation_formatting ? 'ph:caret-down' : 'ph:caret-up'} />
           </button>
+          {#if !collapsedSections.dictation_formatting}
           <div class="section-content">
-            <div class="setting-row checkbox-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.formatting.voice_commands} on:change={scheduleSave} />
-                <span>Enable voice commands ("period", "new line", etc.)</span>
-              </label>
-            </div>
-            <div class="setting-row checkbox-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.formatting.filler_word_removal} on:change={scheduleSave} />
-                <span>Remove filler words ("um", "uh", "like")</span>
-              </label>
-            </div>
-            <div class="setting-row checkbox-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.formatting.auto_punctuation} on:change={scheduleSave} />
-                <span>Auto-punctuation</span>
-              </label>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Auto-punctuation</span>
+                <span class="setting-desc">Automatically insert commas and periods</span>
+              </div>
+              <div class="setting-control">
+                <label class="toggle-switch">
+                  <input type="checkbox" bind:checked={config.formatting.auto_punctuation} on:change={scheduleSave} />
+                  <span class="slider"></span>
+                </label>
+              </div>
             </div>
             <div class="setting-row">
               <div class="setting-label">
-                <span class="setting-name">Text Injection Method</span>
+                <span class="setting-name">Voice Commands</span>
+                <span class="setting-desc">Say "new line", "delete", etc. to control text</span>
               </div>
               <div class="setting-control">
-                <select bind:value={config.formatting.injection_method} on:change={scheduleSave}>
-                  <option value="Auto">Auto (recommended)</option>
-                  <option value="Keystrokes">Keystrokes only</option>
-                  <option value="Clipboard">Clipboard only</option>
+                <label class="toggle-switch">
+                  <input type="checkbox" bind:checked={config.formatting.voice_commands} on:change={scheduleSave} />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Filler Word Removal</span>
+                <span class="setting-desc">Remove "um", "uh", "like", etc.</span>
+              </div>
+              <div class="setting-control">
+                <label class="toggle-switch">
+                  <input type="checkbox" bind:checked={config.formatting.filler_word_removal} on:change={scheduleSave} />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Text Injection</span>
+                <span class="setting-desc">How to insert text into applications</span>
+              </div>
+              <div class="setting-control">
+                <select class="form-select" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
+                  <option value="Auto">Automatic</option>
+                  <option value="Keystrokes">Simulate Keystrokes</option>
+                  <option value="Clipboard">Use Clipboard</option>
                 </select>
               </div>
             </div>
           </div>
+          {/if}
         </section>
+
+        </div>
 
       {:else if activeTab === 'dictionary'}
-        <section class="settings-section" class:collapsed={collapsedSections.dictionary}>
-          <button type="button" class="section-header" on:click={() => toggleSection('dictionary')}>
-            <h3>Custom Vocabulary</h3>
-            <Icon icon={collapsedSections.dictionary ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <p class="hint">
-              These words improve transcription accuracy for names, brands, and specialized terms.
-            </p>
-            <div class="setting-row">
-              <div class="setting-label full-width">
-                <span class="setting-name">Add Term</span>
-                <div class="input-group">
-                  <input
-                    type="text"
-                    bind:value={dictionaryNewTerm}
-                    placeholder="e.g. Kalam, Balacode"
-                    on:keydown={(e) => e.key === 'Enter' && addDictionaryTerm()}
-                  />
-                  <button type="button" class="btn-secondary" disabled={!dictionaryNewTerm.trim() || dictionaryLoading} on:click={addDictionaryTerm}>
-                    Add
-                  </button>
+        <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.dictionary}>
+            <button type="button" class="section-header" on:click={() => toggleSection('dictionary')}>
+              <h3>Custom Vocabulary</h3>
+              <Icon icon={collapsedSections.dictionary ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.dictionary}
+              <div class="section-content">
+                <p class="hint">
+                  These words improve transcription accuracy for names, brands, and specialized terms.
+                </p>
+                <div class="setting-row">
+                  <div class="setting-label full-width">
+                    <span class="setting-name">Add Term</span>
+                    <div class="input-group">
+                      <input
+                        type="text"
+                        bind:value={dictionaryNewTerm}
+                        placeholder="e.g. Kalam, Balacode"
+                        on:keydown={(e) => e.key === 'Enter' && addDictionaryTerm()}
+                      />
+                      <button type="button" class="settings-secondary-btn" disabled={!dictionaryNewTerm.trim() || dictionaryLoading} on:click={addDictionaryTerm}>
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label full-width">
+                    <span class="setting-name">Current Terms</span>
+                    {#if dictionaryLoading && dictionaryEntries.length === 0}
+                      <p class="hint">Loading…</p>
+                    {:else if dictionaryEntries.length === 0}
+                      <p class="hint">No terms yet. Add words above.</p>
+                    {:else}
+                      <ul class="dictionary-list">
+                        {#each dictionaryEntries as entry (entry.id)}
+                          <li>
+                            <span class="dictionary-term">{entry.term}</span>
+                            <button type="button" class="btn-icon remove" on:click={() => deleteDictionaryEntry(entry.id)}>
+                              <Icon icon="ph:trash" />
+                            </button>
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label full-width">
-                <span class="setting-name">Current Terms</span>
-                {#if dictionaryLoading && dictionaryEntries.length === 0}
-                  <p class="hint">Loading…</p>
-                {:else if dictionaryEntries.length === 0}
-                  <p class="hint">No terms yet. Add words above.</p>
-                {:else}
-                  <ul class="dictionary-list">
-                    {#each dictionaryEntries as entry (entry.id)}
-                      <li>
-                        <span class="dictionary-term">{entry.term}</span>
-                        <button type="button" class="btn-icon remove" on:click={() => deleteDictionaryEntry(entry.id)}>
-                          <Icon icon="ph:trash" />
-                        </button>
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              </div>
-            </div>
-          </div>
-        </section>
+            {/if}
+          </section>
+        </div>
 
       {:else if activeTab === 'command'}
-        <section class="settings-section" class:collapsed={collapsedSections.command}>
-          <button type="button" class="section-header" on:click={() => toggleSection('command')}>
-            <h3>Command Mode</h3>
-            <Icon icon={collapsedSections.command ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <p class="hint">
-              Use a dedicated hotkey to speak commands. Creates notes, tasks, or reminders.
-            </p>
-            <div class="setting-row checkbox-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.command_config.enabled} on:change={scheduleSave} />
-                <span>Enable Command Mode</span>
-              </label>
-            </div>
-
-            {#if config.command_config.enabled}
-              <div class="setting-row">
-                <div class="setting-label">
-                  <span class="setting-name">Command Hotkey</span>
-                  <span class="setting-desc">Press, then speak naturally</span>
+        <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.command}>
+            <button type="button" class="section-header" on:click={() => toggleSection('command')}>
+              <h3>Command Mode</h3>
+              <Icon icon={collapsedSections.command ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.command}
+              <div class="section-content">
+                <p class="hint">
+                  Use the command hotkey (General → Dictation Hotkeys) to create notes, tasks, or reminders by voice.
+                </p>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Enable Command Mode</span>
+                    <span class="setting-desc">When off, the command hotkey does nothing</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.command_config.enabled} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
                 </div>
-                <div class="setting-control">
-                  <HotkeyCapture value={config.command_config.hotkey ?? ''} platform={appPlatform} onChange={setCommandHotkey} />
-                </div>
-              </div>
 
+                {#if config.command_config.enabled}
               <div class="setting-row">
                 <div class="setting-label">
                   <span class="setting-name">LLM Provider</span>
                   <span class="setting-desc">Optional: enables natural language understanding</span>
                 </div>
                 <div class="setting-control">
-                  <select value={config.command_config.provider ?? ''} on:change={setCommandProvider}>
+                  <select class="form-select" value={config.command_config.provider ?? ''} on:change={setCommandProvider}>
                     <option value="">None (basic parsing)</option>
                     <option value="groq">Groq</option>
                     <option value="openrouter">OpenRouter</option>
@@ -1467,11 +1640,11 @@
                         on:input={() => { commandApiKeyStatus = 'idle'; commandApiKeyError = null; scheduleSave(); }}
                         placeholder={hasCommandApiKey ? "Enter new key to change" : "Enter API key"}
                       />
-                      <button class="btn-secondary" disabled={loadingLlmModels || (!commandApiKeyInput.trim() && !config.command_config.api_keys?.[config.command_config.provider])} on:click={fetchCommandLlmModels}>
+                      <button type="button" class="settings-secondary-btn" disabled={loadingLlmModels || (!commandApiKeyInput.trim() && !config.command_config.api_keys?.[config.command_config.provider])} on:click={fetchCommandLlmModels}>
                         {loadingLlmModels ? 'Testing…' : 'Test & Load'}
                       </button>
                       {#if hasCommandApiKey && !commandApiKeyInput}
-                        <button class="btn-secondary danger" on:click={clearCommandApiKey}>Clear</button>
+                        <button type="button" class="settings-secondary-btn danger" on:click={clearCommandApiKey}>Clear</button>
                       {/if}
                     </div>
                     {#if commandApiKeyError}
@@ -1534,148 +1707,174 @@
                   </div>
                 {/if}
               {/if}
+                {/if}
+              </div>
             {/if}
-          </div>
-        </section>
+          </section>
+        </div>
 
       {:else if activeTab === 'privacy'}
-        <section class="settings-section" class:collapsed={collapsedSections.privacy}>
-          <button type="button" class="section-header" on:click={() => toggleSection('privacy')}>
-            <h3>Privacy</h3>
-            <Icon icon={collapsedSections.privacy ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <p class="hint">
-              <a href="https://kalam.stream/privacy.html" target="_blank">Read our Privacy Policy →</a>
-            </p>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">History Retention</span>
+        <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.privacy_data}>
+            <button type="button" class="section-header" on:click={() => toggleSection('privacy_data')}>
+              <h3>Data &amp; Privacy</h3>
+              <Icon icon={collapsedSections.privacy_data ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.privacy_data}
+              <div class="section-content">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">History Retention</span>
+                    <span class="setting-desc">How long to keep dictation history</span>
+                  </div>
+                  <div class="setting-control">
+                    <select class="form-select" bind:value={config.privacy.history_retention_days} on:change={scheduleSave}>
+                      <option value={7}>7 days</option>
+                      <option value={30}>30 days</option>
+                      <option value={90}>90 days</option>
+                      <option value={365}>1 year</option>
+                      <option value={0}>Forever</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Sensitive app detection</span>
+                    <span class="setting-desc">Automatically use local STT when a sensitive app is in focus</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.privacy.sensitive_app_detection} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Telemetry</span>
+                    <span class="setting-desc">Send anonymous usage statistics (no audio or transcribed text)</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.privacy.telemetry_enabled} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="privacy-info">
+                  <Icon icon="ph:shield-check" />
+                  <p>
+                    Your voice data is never stored on our servers. Transcriptions are processed in real-time and discarded
+                    immediately. Local mode keeps everything on your device.
+                    <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy →</a>
+                  </p>
+                </div>
               </div>
-              <div class="setting-control">
-                <select bind:value={config.privacy.history_retention_days} on:change={scheduleSave}>
-                  <option value={7}>7 days</option>
-                  <option value={30}>30 days</option>
-                  <option value={90}>90 days</option>
-                  <option value={365}>1 year</option>
-                  <option value={0}>Forever</option>
-                </select>
-              </div>
-            </div>
-            <div class="setting-row checkbox-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.privacy.sensitive_app_detection} on:change={scheduleSave} />
-                <span>Auto-switch to local mode in sensitive apps</span>
-              </label>
-            </div>
-            <div class="setting-row checkbox-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.privacy.telemetry_enabled} on:change={scheduleSave} />
-                <span>Send anonymous usage data to improve Kalam</span>
-              </label>
-              <span class="setting-desc">No audio or text is ever sent</span>
-            </div>
-          </div>
-        </section>
+            {/if}
+          </section>
+        </div>
 
       {:else if activeTab === 'advanced'}
-        <section class="settings-section" class:collapsed={collapsedSections.advanced}>
-          <button type="button" class="section-header" on:click={() => toggleSection('advanced')}>
-            <h3>App Data & Logging</h3>
-            <Icon icon={collapsedSections.advanced ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <p class="hint">Logs are stored in memory and database—no separate .log files.</p>
-
-            <div class="setting-row">
-              <div class="setting-label full-width">
-                <span class="setting-name">App Data Folder</span>
+        <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.advanced_logs}>
+            <button type="button" class="section-header" on:click={() => toggleSection('advanced_logs')}>
+              <h3>Logging &amp; Diagnostics</h3>
+              <Icon icon={collapsedSections.advanced_logs ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.advanced_logs}
+              <div class="section-content">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Enable Logging</span>
+                    <span class="setting-desc">Keep app logs for troubleshooting (in memory and database)</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.logging.enabled} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row sub-setting">
+                  <div class="setting-label">
+                    <span class="setting-name">Log Level</span>
+                  </div>
+                  <div class="setting-control">
+                    <select class="form-select" bind:value={config.logging.level} on:change={scheduleSave}>
+                      <option value="Off">Off</option>
+                      <option value="Error">Error</option>
+                      <option value="Warn">Warn</option>
+                      <option value="Info">Info</option>
+                      <option value="Debug">Debug</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="setting-row sub-setting">
+                  <div class="setting-label">
+                    <span class="setting-name">Max Records</span>
+                    <span class="setting-desc">Between 500 and 20,000</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="number-input">
+                      <input type="number" min="500" max="20000" step="500" bind:value={config.logging.max_records} on:change={scheduleSave} />
+                    </div>
+                  </div>
+                </div>
                 {#if appDataPath}
-                  <code class="path-display">{appDataPath}</code>
+                  <p class="hint path-display" style="margin-top:12px;font-size:12px;word-break:break-all">{appDataPath}</p>
                 {/if}
                 {#if openFolderError}
-                  <p class="hint error">Failed to open: {openFolderError}</p>
+                  <p class="hint error">Failed to open folder: {openFolderError}</p>
                 {/if}
-                <button type="button" class="btn-secondary" on:click={openAppDataFolder}>
-                  Open folder
-                </button>
-              </div>
-            </div>
-
-            <div class="setting-row checkbox-row">
-              <label class="checkbox-label">
-                <input type="checkbox" bind:checked={config.logging.enabled} on:change={scheduleSave} />
-                <span>Enable in-app logging</span>
-              </label>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Log Level</span>
-              </div>
-              <div class="setting-control">
-                <select bind:value={config.logging.level} on:change={scheduleSave}>
-                  <option value="Off">Off</option>
-                  <option value="Error">Error</option>
-                  <option value="Warn">Warn</option>
-                  <option value="Info">Info</option>
-                  <option value="Debug">Debug</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Max Records</span>
-                <span class="setting-desc">Between 500 and 20,000</span>
-              </div>
-              <div class="setting-control">
-                <input type="number" min="500" max="20000" step="500" bind:value={config.logging.max_records} on:change={scheduleSave} />
-              </div>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-label full-width">
-                <span class="setting-name">Export Log</span>
-                <div class="button-row">
-                  <button class="btn-secondary" on:click={downloadLog}>Download log</button>
-                  <button class="btn-secondary" on:click={downloadLogsCsv}>Download CSV</button>
+                <div class="log-actions">
+                  <button type="button" class="settings-secondary-btn" on:click={downloadLog}>
+                    <Icon icon="ph:download" /> Download log
+                  </button>
+                  <button type="button" class="settings-secondary-btn" on:click={downloadLogsCsv}>Download CSV</button>
+                  <button type="button" class="settings-secondary-btn" on:click={openAppDataFolder}>
+                    <Icon icon="ph:folder-open" /> Open Data Folder
+                  </button>
                 </div>
                 <p class="hint">
                   {#if logEmpty}
                     No log entries yet. Enable logging to capture entries.
                   {:else}
-                    Download current buffer or full history from database.
+                    Download current buffer or full history from the database.
                   {/if}
                 </p>
                 {#if logExportMessage}
                   <p class="hint error">{logExportMessage}</p>
                 {/if}
               </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-section danger-zone" class:collapsed={collapsedSections.advanced_danger}>
-          <button type="button" class="section-header" on:click={() => toggleSection('advanced_danger')}>
-            <h3>Danger Zone</h3>
-            <Icon icon={collapsedSections.advanced_danger ? 'ph:caret-right' : 'ph:caret-down'} />
-          </button>
-          <div class="section-content">
-            <p class="hint">Reset removes all configuration, history, and data.</p>
-            {#if resetError}
-              <p class="hint error">{resetError}</p>
             {/if}
-            <button class="btn-danger" disabled={resetting} on:click={confirmAndReset}>
-              {resetting ? 'Resetting…' : 'Reset entire application'}
+          </section>
+
+          <section class="settings-section danger" class:collapsed={collapsedSections.advanced_danger}>
+            <button type="button" class="section-header" on:click={() => toggleSection('advanced_danger')}>
+              <h3>Danger Zone</h3>
+              <Icon icon={collapsedSections.advanced_danger ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
-          </div>
-        </section>
+            {#if !collapsedSections.advanced_danger}
+              <div class="section-content">
+                <div class="danger-item">
+                  <div class="danger-info">
+                    <span class="danger-title">Clear All Data</span>
+                    <span class="danger-desc">Delete history, notes, tasks, reminders, snippets, and settings</span>
+                  </div>
+                  <button type="button" class="danger-btn" disabled={resetting} on:click={confirmAndReset}>
+                    {resetting ? 'Resetting…' : 'Reset'}
+                  </button>
+                </div>
+                {#if resetError}
+                  <p class="hint error">{resetError}</p>
+                {/if}
+              </div>
+            {/if}
+          </section>
+        </div>
 
       {:else if activeTab === 'about'}
-        <div class="about-tab">
-          <About />
-        </div>
+        <About embeddedInSettings={true} />
       {/if}
     </div>
   </div>

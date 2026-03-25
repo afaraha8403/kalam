@@ -3,6 +3,7 @@ pub mod audio;
 mod commands;
 mod config;
 mod db;
+mod app_info;
 #[cfg(feature = "dev-bridge")]
 mod dev_bridge;
 mod formatting;
@@ -211,6 +212,8 @@ pub struct AppState {
     pub foreground_for_injection: Arc<Mutex<Option<usize>>>,
     /// On Windows: lowercase process filename (e.g. "notepad.exe") of the foreground window at recording start.
     pub foreground_process_name: Arc<Mutex<Option<String>>>,
+    /// Full filesystem path to the foreground executable when available (used for friendly name + icon resolution).
+    pub foreground_exe_path: Arc<Mutex<Option<String>>>,
     pub press_start_time: Arc<Mutex<Option<std::time::Instant>>>,
     pub local_model_manager: Arc<crate::stt::lifecycle::LocalModelManager>,
     /// Set when starting recording: Dictation (main hotkey) or Command (command hotkey). Read in stop_dictation to decide inject vs command pipeline.
@@ -271,6 +274,7 @@ impl AppState {
             last_injected_text,
             foreground_for_injection: Arc::new(Mutex::new(None)),
             foreground_process_name: Arc::new(Mutex::new(None)),
+            foreground_exe_path: Arc::new(Mutex::new(None)),
             press_start_time: Arc::new(Mutex::new(None)),
             local_model_manager,
             recording_type: Arc::new(Mutex::new(RecordingType::Dictation)),
@@ -316,10 +320,21 @@ fn create_registrations(
     toggle_hotkey_str: Option<String>,
     language_toggle_hotkey: Option<String>,
     command_hotkey_str: Option<String>,
+    recording_mode: Option<crate::config::RecordingMode>,
 ) -> Vec<HotkeyRegistration> {
     let mut registrations: Vec<HotkeyRegistration> = Vec::new();
 
-    if let Some(hotkey_str) = hold_hotkey_str {
+    // None = legacy / default: register both hold and toggle when configured.
+    let hold_ref: &Option<String> = match recording_mode {
+        Some(crate::config::RecordingMode::Toggle) => &None,
+        _ => hold_hotkey_str,
+    };
+    let toggle_effective: Option<String> = match recording_mode {
+        Some(crate::config::RecordingMode::Hold) => None,
+        _ => toggle_hotkey_str,
+    };
+
+    if let Some(hotkey_str) = hold_ref {
         if !hotkey_str.trim().is_empty() {
             if let Ok(target_hotkey) = parse_rdev_hotkey(hotkey_str) {
                 let app_handle_press = app_handle.clone();
@@ -421,7 +436,7 @@ fn create_registrations(
         }
     }
 
-    if let Some(ref toggle_str) = toggle_hotkey_str {
+    if let Some(ref toggle_str) = toggle_effective {
         if !toggle_str.trim().is_empty() {
             if let Ok(toggle_hotkey) = parse_rdev_hotkey(toggle_str) {
                 let app_handle_press = app_handle.clone();
@@ -752,7 +767,13 @@ pub fn run() {
             });
 
             // Register global hotkeys via rdev (dictation + optional language toggle + optional command mode)
-            let (hotkey_str, toggle_dictation_hotkey, language_toggle_hotkey, command_hotkey_str) = {
+            let (
+                hotkey_str,
+                toggle_dictation_hotkey,
+                language_toggle_hotkey,
+                command_hotkey_str,
+                recording_mode,
+            ) = {
                 let state = app.state::<AppState>();
                 let config = state.config.blocking_lock();
                 let cfg = config.get_all();
@@ -765,6 +786,7 @@ pub fn run() {
                     cfg.toggle_dictation_hotkey.clone(),
                     cfg.language_toggle_hotkey.clone(),
                     cmd_hk,
+                    cfg.recording_mode,
                 )
             };
 
@@ -775,6 +797,7 @@ pub fn run() {
                 toggle_dictation_hotkey,
                 language_toggle_hotkey,
                 command_hotkey_str,
+                recording_mode,
             );
 
             if !registrations.is_empty() {
@@ -796,6 +819,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_platform,
+            get_os_release_info,
+            get_app_icon,
+            resolve_target_app,
             set_hotkeys_paused,
             get_app_version,
             check_for_updates,
@@ -828,6 +854,7 @@ pub fn run() {
             resize_overlay,
             get_overlay_initial_state,
             cancel_transcription,
+            ui_toggle_dictation,
             trace_latency,
             start_overlay_message_log,
             stop_overlay_message_log,
@@ -847,7 +874,9 @@ pub fn run() {
             commands::delete_entry,
             commands::search_notes,
             commands::get_note_labels,
+            commands::get_note_scope_counts,
             commands::empty_trash,
+            commands::empty_task_trash,
             commands::save_attachment,
             commands::search_similar,
             commands::get_dictionary_entries,
@@ -989,6 +1018,58 @@ pub async fn run_update_check_user_initiated(app: &tauri::AppHandle) -> anyhow::
 #[tauri::command]
 fn get_platform() -> String {
     std::env::consts::OS.to_string()
+}
+
+/// Human-readable OS name and version for onboarding / support context (sysinfo).
+#[derive(serde::Serialize)]
+pub struct OsReleaseInfo {
+    pub name: String,
+    pub version: String,
+}
+
+pub(crate) fn read_os_release_info() -> OsReleaseInfo {
+    use sysinfo::System;
+    let name = System::name()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| std::env::consts::OS.to_string());
+    let version = System::long_os_version()
+        .filter(|s| !s.is_empty())
+        .or_else(System::os_version)
+        .unwrap_or_default();
+    OsReleaseInfo { name, version }
+}
+
+#[tauri::command]
+fn get_os_release_info() -> OsReleaseInfo {
+    read_os_release_info()
+}
+
+/// Base64-encoded PNG for `applications.icon_png`, or None if not cached.
+#[tauri::command]
+fn get_app_icon(process_name: String) -> Result<Option<String>, String> {
+    use base64::Engine;
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    let normalized = crate::app_info::normalize_process_name(&process_name);
+    let icon: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT icon_png FROM applications WHERE process_name = ?1",
+            [&normalized],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+    Ok(icon.map(|b| base64::engine::general_purpose::STANDARD.encode(b)))
+}
+
+/// Resolve display name and icon for a process (fills `applications` if missing).
+#[tauri::command]
+fn resolve_target_app(process_name: String) -> Result<(String, Option<String>), String> {
+    use base64::Engine;
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    let (name, icon) = crate::db::get_or_resolve_application(&conn, &process_name, None)
+        .map_err(|e| e.to_string())?;
+    let icon_b64 = icon.map(|b| base64::engine::general_purpose::STANDARD.encode(b));
+    Ok((name, icon_b64))
 }
 
 #[tauri::command]
@@ -1354,6 +1435,7 @@ async fn save_settings(
                 config_to_save.toggle_dictation_hotkey.clone(),
                 config_to_save.language_toggle_hotkey.clone(),
                 cmd_hk,
+                config_to_save.recording_mode,
             );
             crate::hotkey::update_registrations(registrations);
 
@@ -1830,7 +1912,9 @@ fn resize_overlay(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
 }
 
 fn emit_overlay_event(app: &tauri::AppHandle, event: OverlayEvent) {
-    let _ = app.emit_to(OVERLAY_LABEL, "overlay-state", event);
+    let _ = app.emit_to(OVERLAY_LABEL, "overlay-state", event.clone());
+    // Main shell status bar runs in a different webview; mirror lifecycle for runtime-first UI.
+    let _ = app.emit("overlay-state-broadcast", event);
 
     // WebView2's Chromium renderer throttles ExecuteScript delivery for unfocused windows.
     // Nudge the renderer by forcing a repaint on the overlay HWND. This sends a synchronous
@@ -1886,6 +1970,14 @@ async fn cancel_transcription(state: tauri::State<'_, AppState>) -> Result<(), S
     guard.cancel();
     drop(guard);
     emit_overlay_event(&state.app_handle, OverlayEvent::Cancelling);
+    Ok(())
+}
+
+/// Toggle dictation from the main-window status bar (same behavior as the toggle hotkey).
+#[tauri::command]
+async fn ui_toggle_dictation(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let is_recording = state.is_recording.clone();
+    toggle_dictation(state, is_recording).await;
     Ok(())
 }
 
@@ -2122,10 +2214,10 @@ fn show_overlay(app: &tauri::AppHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// On Windows: resolve the lowercase process filename (e.g. "notepad.exe") for a given HWND.
+/// On Windows: resolve lowercase filename and full image path for the foreground HWND.
 /// Returns None if the process cannot be queried.
 #[cfg(windows)]
-fn get_process_name_for_hwnd(hwnd: usize) -> Option<String> {
+fn get_foreground_exe_info(hwnd: usize) -> Option<(String, String)> {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -2143,7 +2235,7 @@ fn get_process_name_for_hwnd(hwnd: usize) -> Option<String> {
         return None;
     }
 
-    let mut buf = [0u16; 260];
+    let mut buf = [0u16; 1024];
     let mut size = buf.len() as u32;
     let ok = unsafe { QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size) };
     unsafe { CloseHandle(handle) };
@@ -2153,10 +2245,12 @@ fn get_process_name_for_hwnd(hwnd: usize) -> Option<String> {
     }
 
     let path = String::from_utf16_lossy(&buf[..size as usize]);
-    std::path::Path::new(&path)
+    let path = path.trim_end_matches('\0').to_string();
+    let short = std::path::Path::new(&path)
         .file_name()
         .and_then(|n| n.to_str())
-        .map(|s| s.to_lowercase())
+        .map(|s| s.to_lowercase())?;
+    Some((short, path))
 }
 
 async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<AtomicBool>) {
@@ -2205,17 +2299,21 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
         let hwnd = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
         if hwnd != 0 {
             *state.foreground_for_injection.lock().await = Some(hwnd as usize);
-            // Resolve process name in background so it doesn't block pill/sound (like beta.5).
+            // Resolve process name + full path in background so it doesn't block pill/sound (like beta.5).
             let process_name_state = state.foreground_process_name.clone();
+            let exe_path_state = state.foreground_exe_path.clone();
             let hwnd_usize = hwnd as usize;
             tauri::async_runtime::spawn(async move {
                 let name = tauri::async_runtime::spawn_blocking(move || {
-                    get_process_name_for_hwnd(hwnd_usize)
+                    get_foreground_exe_info(hwnd_usize)
                 })
                 .await
                 .unwrap_or(None);
                 if let Ok(mut guard) = process_name_state.try_lock() {
-                    *guard = name;
+                    *guard = name.as_ref().map(|(n, _)| n.clone());
+                }
+                if let Ok(mut guard) = exe_path_state.try_lock() {
+                    *guard = name.as_ref().map(|(_, p)| p.clone());
                 }
             });
         }
@@ -2225,6 +2323,18 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
         if let Some((process_name, _title)) = crate::config::privacy::get_foreground_app() {
             if !process_name.is_empty() {
                 *state.foreground_process_name.lock().await = Some(process_name);
+            }
+        }
+        if let Ok(window) = active_win_pos_rs::get_active_window() {
+            let pid = window.process_id;
+            use sysinfo::{Pid, ProcessesToUpdate, System};
+            let mut sys = System::new();
+            sys.refresh_processes(ProcessesToUpdate::Some(&[Pid::from_u32(pid as u32)]));
+            if let Some(p) = sys.process(Pid::from_u32(pid as u32)) {
+                if let Some(exe) = p.exe() {
+                    *state.foreground_exe_path.lock().await =
+                        Some(exe.to_string_lossy().to_string());
+                }
             }
         }
     }
@@ -2324,8 +2434,9 @@ async fn run_command_pipeline(
         } else if lower.starts_with("new task") {
             ("task", trimmed["new task".len()..].trim().to_string())
         } else if lower.starts_with("new reminder") {
+            // Voice "new reminder" creates a note; user sets `reminder_at` in the note editor (no standalone reminder type).
             (
-                "reminder",
+                "note",
                 trimmed["new reminder".len()..].trim().to_string(),
             )
         } else {
@@ -2370,7 +2481,7 @@ CLASSIFICATION RULES (follow strictly):
 WHEN IN DOUBT: if the user describes something to accomplish (even without a deadline), choose TASK. Only choose REMINDER when the user explicitly wants to be notified/alerted at a time.
 
 Return ONLY a valid JSON object with these keys (omit any key that is not present or not inferable):
-- entry_type: exactly one of "note", "task", "reminder"
+- entry_type: exactly one of "note", "task" (if the user wants a time-based reminder with no task to complete, use "note" with reminder_at)
 - title: short, clear summary (for tasks: the action; for reminders: what to be reminded about; for notes: a brief heading)
 - content: additional details or description (optional; for reminders usually omit unless the user gave extra context)
 - due_date: ISO 8601 date-time deadline. Applies to tasks (when it's due) and notes (if the user mentioned a date relevant to the note). Not used for reminders.
@@ -2396,8 +2507,11 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
                     if let Some(obj) = v.as_object() {
                         if let Some(et) = obj.get("entry_type").and_then(|x| x.as_str()) {
                             let et_lower = et.to_lowercase();
-                            if et_lower == "note" || et_lower == "task" || et_lower == "reminder" {
+                            if et_lower == "note" || et_lower == "task" {
                                 resolved_entry_type = et_lower;
+                            } else if et_lower == "reminder" {
+                                // LLM may still emit "reminder"; store as a note with reminder_at / rrule.
+                                resolved_entry_type = "note".to_string();
                             }
                         }
                         if resolved_entry_type.is_empty() {
@@ -2480,9 +2594,6 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
         title = None;
     }
 
-    if entry_type == "reminder" && title.is_none() && content.is_empty() {
-        title = Some(payload.clone());
-    }
 
     let entry = crate::models::Entry {
         id: uuid::Uuid::new_v4().to_string(),
@@ -2509,6 +2620,7 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
         archived_at: None,
         deleted_at: None,
         target_app: None,
+        target_app_name: None,
         duration_ms: None,
         word_count: None,
         stt_latency_ms: None,
@@ -2516,6 +2628,7 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
         dictation_language: None,
         session_mode: None,
         stt_provider: None,
+        note_order: 0,
     };
 
     let conn = crate::db::open_db().map_err(|e| e.to_string())?;
@@ -2525,7 +2638,6 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
     let _state = app_handle.state::<AppState>();
     let label = match entry_type {
         "task" => "Task",
-        "reminder" => "Reminder",
         _ => "Note",
     };
     let summary = title.as_deref().unwrap_or(content.as_str());
@@ -2798,6 +2910,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         let foreground_hwnd = state.foreground_for_injection.lock().await.take();
         #[allow(unused_variables)]
         let foreground_process = state.foreground_process_name.lock().await.take();
+        let foreground_exe_path = state.foreground_exe_path.lock().await.take();
         let recording_type = *state.recording_type.lock().await;
         let transcription_cancel = state.transcription_cancel.clone();
 
@@ -3035,6 +3148,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             if let Err(e) = history::save_transcription(
                                 &cmd_text,
                                 foreground_process.clone(),
+                                foreground_exe_path.clone(),
                                 recording_duration_ms,
                                 meta,
                             )
@@ -3093,6 +3207,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                         if let Err(e) = history::save_transcription(
                             &formatted,
                             foreground_process.clone(),
+                            foreground_exe_path.clone(),
                             recording_duration_ms,
                             meta,
                         )

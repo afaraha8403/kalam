@@ -4,6 +4,9 @@
   import { fade } from 'svelte/transition'
   import StatusBar from '../components/StatusBar.svelte'
   import Icon from '@iconify/svelte'
+  import SveltyPicker from 'svelty-picker'
+  import { getKalamSveltyPickerLocaleOptions } from '$lib/sveltyPickerLocale'
+  import type { KalamSveltyPickerLocaleOptions } from '$lib/sveltyPickerLocale'
   import { modifierSortIndex, superKeyLabel } from '../lib/platformHotkey'
   import type { AppConfig } from '../types'
 
@@ -15,6 +18,10 @@
   export let dbStatus: { ok: boolean } | null = null
   export let statusBarPlatform: string = ''
   export let lastLatencyMs: number | null = null
+  /** Status bar: refresh DB status (parent owns `dbStatus` state). */
+  export let onRetryDb: () => void | Promise<void> = () => {}
+
+  let sdtLocale: KalamSveltyPickerLocaleOptions = getKalamSveltyPickerLocaleOptions()
 
   let darkMode = true
   let isLoading = true
@@ -346,6 +353,20 @@
     else if (hour < 17) greeting = 'Good afternoon'
     else greeting = 'Good evening'
     setTimeout(() => isLoading = false, 300)
+    const onPriorityDoc = (e: MouseEvent) => {
+      if (!priorityPopoverEl) return
+      if (priorityPopoverEl.contains(e.target as Node)) return
+      priorityMenuOpen = false
+    }
+    document.addEventListener('click', onPriorityDoc)
+    const onPriorityKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') priorityMenuOpen = false
+    }
+    window.addEventListener('keydown', onPriorityKey)
+    return () => {
+      document.removeEventListener('click', onPriorityDoc)
+      window.removeEventListener('keydown', onPriorityKey)
+    }
   })
 
   function formatTime(iso: string) {
@@ -532,6 +553,22 @@
   let taskDraft = { title: '', content: '', due_date: '', priority: 0, is_completed: false, subtasks: [] as {title: string, is_completed: boolean}[], tags: [] as string[] }
   let newTaskLabelInput = ''
   let newSubtaskInput = ''
+  let priorityMenuOpen = false
+  let priorityPopoverEl: HTMLDivElement | null = null
+
+  const prototypePriorityChoices: { value: number; label: string; short: string }[] = [
+    { value: 0, label: 'No priority', short: 'None' },
+    { value: 1, label: 'Low priority', short: 'Low' },
+    { value: 2, label: 'Medium priority', short: 'Med' },
+    { value: 3, label: 'High priority', short: 'High' }
+  ]
+  function prototypePriorityShort(p: number) {
+    return prototypePriorityChoices.find((c) => c.value === p)?.short ?? 'None'
+  }
+  function pickPrototypePriority(v: number) {
+    taskDraft.priority = v
+    priorityMenuOpen = false
+  }
 
   $: if (currentPage === 'task-detail') {
     if (selectedTaskId) {
@@ -663,6 +700,21 @@
   let reminderDraft = { title: '', reminder_at: '', rrule: '', tags: [] as string[] }
   let newReminderTagInput = ''
   let remindersSearchQuery = ''
+
+  function sveltyDetailToString(e: CustomEvent<string | null | undefined>): string {
+    const v = e.detail
+    return v == null || v === '' ? '' : String(v)
+  }
+  function onPrototypeNoteReminderChange(e: CustomEvent<string | null | undefined>) {
+    noteDraft.reminder_at = sveltyDetailToString(e)
+    showReminderInput = false
+  }
+  function onPrototypeTaskDueChange(e: CustomEvent<string | null | undefined>) {
+    taskDraft.due_date = sveltyDetailToString(e)
+  }
+  function onPrototypeReminderDraftChange(e: CustomEvent<string | null | undefined>) {
+    reminderDraft.reminder_at = sveltyDetailToString(e)
+  }
 
   $: if (currentPage === 'reminder-detail') {
     if (selectedReminderId) {
@@ -1279,12 +1331,19 @@
                   </button>
                   {#if showReminderInput}
                     <div class="sleek-popover reminder-popover" transition:fade={{ duration: 150 }}>
-                      <input 
-                        type="datetime-local" 
-                        class="sleek-datetime-input"
-                        bind:value={noteDraft.reminder_at}
-                        on:change={() => showReminderInput = false}
-                      />
+                      <div class="kalam-sdt-datetime">
+                        <SveltyPicker
+                          mode="datetime"
+                          format={sdtLocale.format}
+                          displayFormat={sdtLocale.displayFormat}
+                          displayFormatType={sdtLocale.displayFormatType}
+                          i18n={sdtLocale.i18n}
+                          weekStart={sdtLocale.weekStart}
+                          value={noteDraft.reminder_at || null}
+                          inputClasses="sleek-datetime-input"
+                          on:change={onPrototypeNoteReminderChange}
+                        />
+                      </div>
                       {#if noteDraft.reminder_at}
                         <button type="button" class="sleek-clear-btn" on:click={() => { noteDraft.reminder_at = ''; showReminderInput = false; }}>
                           Clear Reminder
@@ -1394,39 +1453,68 @@
                     <Icon icon="ph:trash" />
                   </button>
                 {/if}
-                <div class="task-priority-selector compact">
-                  {#each [0, 1, 2, 3] as p}
-                    <button 
-                      type="button" 
-                      class="priority-btn" 
-                      class:selected={taskDraft.priority === p}
-                      on:click={() => taskDraft.priority = p}
-                      title={p === 0 ? 'No priority' : `Priority ${p}`}
-                    >
-                      {#if p === 0}
-                        <Icon icon="ph:minus" />
-                      {:else}
-                        {'!'.repeat(p)}
-                      {/if}
-                    </button>
-                  {/each}
-                </div>
-                <button 
-                  type="button" 
-                  class="sleek-tool-btn complete-toggle compact" 
-                  class:completed={taskDraft.is_completed}
-                  on:click={() => taskDraft.is_completed = !taskDraft.is_completed}
-                  title={taskDraft.is_completed ? 'Mark as incomplete' : 'Mark as complete'}
-                >
-                  <Icon icon={taskDraft.is_completed ? 'ph:check-circle-fill' : 'ph:circle'} />
-                </button>
                 <button type="button" class="sleek-cancel" on:click={backToTasks}>Cancel</button>
                 <button type="button" class="sleek-save" on:click={saveTask} disabled={!taskDraft.title?.trim()}>Save</button>
               </div>
             </header>
 
             <div class="sleek-body">
-              <input type="text" class="sleek-title" bind:value={taskDraft.title} placeholder="Task Title" autofocus />
+              <div class="task-title-row">
+                <button 
+                  type="button" 
+                  class="sleek-tool-btn complete-toggle compact task-complete-btn" 
+                  class:completed={taskDraft.is_completed}
+                  on:click={() => taskDraft.is_completed = !taskDraft.is_completed}
+                  title={taskDraft.is_completed ? 'Mark as incomplete' : 'Mark as complete'}
+                >
+                  <Icon icon={taskDraft.is_completed ? 'ph:check-circle-fill' : 'ph:circle-bold'} />
+                </button>
+
+                <input type="text" class="sleek-title" bind:value={taskDraft.title} placeholder="Task Title" autofocus />
+
+                <div class="task-priority-popover" bind:this={priorityPopoverEl}>
+                  <button
+                    type="button"
+                    class="task-priority-trigger"
+                    aria-haspopup="listbox"
+                    aria-expanded={priorityMenuOpen}
+                    aria-label="Priority: {prototypePriorityShort(taskDraft.priority)}"
+                    on:click|stopPropagation={() => (priorityMenuOpen = !priorityMenuOpen)}
+                  >
+                    <Icon
+                      icon={taskDraft.priority > 0 ? 'ph:flag-fill' : 'ph:flag'}
+                      class="task-priority-trigger-flag p{taskDraft.priority}"
+                    />
+                    <span class="task-priority-trigger-text">{prototypePriorityShort(taskDraft.priority)}</span>
+                    <Icon icon="ph:caret-down" class="task-priority-trigger-caret" />
+                  </button>
+                  {#if priorityMenuOpen}
+                    <ul class="task-priority-menu" role="listbox" aria-label="Choose priority">
+                      {#each prototypePriorityChoices as choice}
+                        <li role="none">
+                          <button
+                            type="button"
+                            class="task-priority-option"
+                            class:selected={choice.value === taskDraft.priority}
+                            role="option"
+                            aria-selected={choice.value === taskDraft.priority}
+                            on:click|stopPropagation={() => pickPrototypePriority(choice.value)}
+                          >
+                            <Icon
+                              icon={choice.value > 0 ? 'ph:flag-fill' : 'ph:flag'}
+                              class="task-priority-option-flag p{choice.value}"
+                            />
+                            <span class="task-priority-option-label">{choice.label}</span>
+                            {#if choice.value === taskDraft.priority}
+                              <Icon icon="ph:check" class="task-priority-option-check" />
+                            {/if}
+                          </button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </div>
+              </div>
               
               <textarea class="sleek-content task-desc" bind:value={taskDraft.content} placeholder="Add description..."></textarea>
 
@@ -1434,11 +1522,15 @@
                 <h3 class="section-title">Due Date</h3>
                 <div class="due-date-input-row">
                   <Icon icon="ph:calendar-blank" />
-                  <input 
-                    type="datetime-local" 
-                    class="sleek-datetime-input"
-                    bind:value={taskDraft.due_date}
-                  />
+                  <div class="kalam-sdt-datetime">
+                    <SveltyPicker
+                      mode="datetime"
+                      format="yyyy-mm-ddThh:ii"
+                      value={taskDraft.due_date || null}
+                      inputClasses="sleek-datetime-input"
+                      on:change={onPrototypeTaskDueChange}
+                    />
+                  </div>
                   {#if taskDraft.due_date}
                     <button type="button" class="sleek-clear-btn" on:click={() => taskDraft.due_date = ''}>
                       <Icon icon="ph:x" />
@@ -1612,12 +1704,21 @@
               <input type="text" class="sleek-title" bind:value={reminderDraft.title} placeholder="Reminder Title" autofocus />
               
               <div class="reminder-form-row">
-                <label class="form-label">Date & Time</label>
-                <input 
-                  type="datetime-local" 
-                  class="sleek-datetime-input full-width"
-                  bind:value={reminderDraft.reminder_at}
-                />
+                <label class="form-label" for="prototype-reminder-datetime">Date & Time</label>
+                <div class="kalam-sdt-datetime">
+                  <SveltyPicker
+                    mode="datetime"
+                    format={sdtLocale.format}
+                    displayFormat={sdtLocale.displayFormat}
+                    displayFormatType={sdtLocale.displayFormatType}
+                    i18n={sdtLocale.i18n}
+                    weekStart={sdtLocale.weekStart}
+                    value={reminderDraft.reminder_at || null}
+                    inputClasses="sleek-datetime-input full-width"
+                    inputId="prototype-reminder-datetime"
+                    on:change={onPrototypeReminderDraftChange}
+                  />
+                </div>
               </div>
 
               <div class="reminder-form-row">
@@ -1809,7 +1910,7 @@
                                     {/each}
                                   </div>
                                 {:else}
-                                  <span class="hotkey-placeholder">Press keys...</span>
+                                  <span class="hotkey-placeholder">Hold two or more keys at once, then release</span>
                                 {/if}
                                 <button class="hotkey-cancel" on:click|stopPropagation={stopHotkeyCapture}>
                                   <Icon icon="ph:x" />
@@ -1825,7 +1926,7 @@
                                     <Icon icon="ph:x" />
                                   </button>
                                 {:else}
-                                  <span class="hotkey-placeholder">Click to set</span>
+                                  <span class="hotkey-placeholder">Click, then hold two or more keys</span>
                                   <Icon icon="ph:pencil-simple" class="hotkey-edit-icon" />
                                 {/if}
                               {/if}
@@ -1856,7 +1957,7 @@
                                     {/each}
                                   </div>
                                 {:else}
-                                  <span class="hotkey-placeholder">Press keys...</span>
+                                  <span class="hotkey-placeholder">Hold two or more keys at once, then release</span>
                                 {/if}
                                 <button class="hotkey-cancel" on:click|stopPropagation={stopHotkeyCapture}>
                                   <Icon icon="ph:x" />
@@ -1872,7 +1973,7 @@
                                     <Icon icon="ph:x" />
                                   </button>
                                 {:else}
-                                  <span class="hotkey-placeholder">Click to set</span>
+                                  <span class="hotkey-placeholder">Click, then hold two or more keys</span>
                                   <Icon icon="ph:pencil-simple" class="hotkey-edit-icon" />
                                 {/if}
                               {/if}
@@ -1903,7 +2004,7 @@
                                     {/each}
                                   </div>
                                 {:else}
-                                  <span class="hotkey-placeholder">Press keys...</span>
+                                  <span class="hotkey-placeholder">Hold two or more keys at once, then release</span>
                                 {/if}
                                 <button class="hotkey-cancel" on:click|stopPropagation={stopHotkeyCapture}>
                                   <Icon icon="ph:x" />
@@ -1919,7 +2020,7 @@
                                     <Icon icon="ph:x" />
                                   </button>
                                 {:else}
-                                  <span class="hotkey-placeholder">Click to set</span>
+                                  <span class="hotkey-placeholder">Click, then hold two or more keys</span>
                                   <Icon icon="ph:pencil-simple" class="hotkey-edit-icon" />
                                 {/if}
                               {/if}
@@ -1950,7 +2051,7 @@
                                     {/each}
                                   </div>
                                 {:else}
-                                  <span class="hotkey-placeholder">Press keys...</span>
+                                  <span class="hotkey-placeholder">Hold two or more keys at once, then release</span>
                                 {/if}
                                 <button class="hotkey-cancel" on:click|stopPropagation={stopHotkeyCapture}>
                                   <Icon icon="ph:x" />
@@ -1966,7 +2067,7 @@
                                     <Icon icon="ph:x" />
                                   </button>
                                 {:else}
-                                  <span class="hotkey-placeholder">Click to set</span>
+                                  <span class="hotkey-placeholder">Click, then hold two or more keys</span>
                                   <Icon icon="ph:pencil-simple" class="hotkey-edit-icon" />
                                 {/if}
                               {/if}
@@ -2522,7 +2623,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.</pre>
     {/if}
 
     <div class="status-bar-wrap">
-      <StatusBar config={statusBarConfig} dbStatus={dbStatus} platform={statusBarPlatform} {lastLatencyMs} />
+      <StatusBar
+        config={statusBarConfig}
+        dbStatus={dbStatus}
+        platform={statusBarPlatform}
+        {lastLatencyMs}
+        dictationEnabled={dictationEnabled}
+        onRetryDb={onRetryDb}
+      />
     </div>
   </main>
 </div>
@@ -3586,6 +3694,18 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.</pre>
     transition: all 0.2s ease;
   }
 
+  .task-title-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: var(--space-xl, 24px);
+  }
+
+  .task-title-row .sleek-title {
+    margin-bottom: 0;
+    flex: 1;
+  }
+
   .sleek-title:hover {
     border-color: var(--border);
   }
@@ -3777,7 +3897,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.</pre>
     border: 1px solid var(--border-light);
     background: var(--bg);
     color: var(--text);
-    font-size: 13px;
+    font-size: 14px;
     font-family: var(--font);
     outline: none;
     cursor: pointer;
@@ -3907,29 +4027,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.</pre>
 
   .sleek-tool-btn.complete-toggle.compact :global(svg) {
     font-size: 20px;
-  }
-
-  .task-priority-selector.compact {
-    display: flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--bg-elevated);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-  }
-
-  .task-priority-selector.compact .priority-btn {
-    padding: 4px 8px;
-    font-size: 11px;
-    min-width: 28px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .task-priority-selector.compact .priority-btn :global(svg) {
-    font-size: 14px;
   }
 
   /* Reduced motion preference */
@@ -4159,6 +4256,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.</pre>
     background: var(--bg);
   }
 
+  .due-date-input-row :global(.sleek-datetime-input) {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    transition: color 0.2s ease;
+  }
+
   .due-date-input-row :global(svg) {
     color: var(--text-muted);
     font-size: 20px;
@@ -4360,14 +4464,14 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.</pre>
 
   .reminder-source-badge {
     font-size: 11px;
-    padding: 2px 8px;
-    border-radius: var(--radius-full);
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 6px;
     background: var(--bg);
     border: 1px solid var(--border);
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    font-weight: 600;
   }
 
   .reminder-source-badge.note {

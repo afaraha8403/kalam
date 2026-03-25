@@ -4,6 +4,9 @@
   import { listen } from '@tauri-apps/api/event'
   import Icon from '@iconify/svelte'
 
+  /** When true, use prototype settings About layout (version + updates bar, two cards, license). */
+  export let embeddedInSettings = false
+
   let appVersion = ''
   let licenseOpen = false
   let updateChecking = false
@@ -155,6 +158,131 @@ maintainers to request a commercial license.`
   }
 </script>
 
+{#if embeddedInSettings}
+  <div class="settings-tab-content about-content">
+    <section class="about-top-section">
+      <div class="about-top-content">
+        <div class="version-block">
+          <span class="version-label">Current version: <strong>{appVersion || '…'}</strong></span>
+        </div>
+        <div class="updates-block">
+          <select
+            class="channel-select"
+            bind:value={updateChannel}
+            on:change={onChannelChange}
+            aria-label="Update channel"
+          >
+            <option value="stable">Stable (Recommended)</option>
+            <option value="beta">Beta (Pre-releases)</option>
+          </select>
+          <button type="button" class="btn-check" disabled={updateChecking} on:click={checkUpdates}>
+            {#if updateChecking}
+              <Icon icon="ph:spinner-gap-duotone" class="spin" /> Checking…
+            {:else}
+              Check Now
+            {/if}
+          </button>
+        </div>
+      </div>
+      {#if updateStatus === 'up-to-date'}
+        <div class="status-msg success"><Icon icon="ph:check-circle-duotone" /> Up to date</div>
+        {#if updateStagedMessage}
+          <div class="status-msg success staged-hint"><Icon icon="ph:info-duotone" /> {updateStagedMessage}</div>
+        {/if}
+      {:else if updateStatus === 'available'}
+        <div class="status-msg available"><Icon icon="ph:sparkle-duotone" /> Update {updateVersion} available!</div>
+        <div class="update-install-actions update-install-actions--split">
+          <button
+            type="button"
+            class="btn-install"
+            disabled={updateInstalling}
+            on:click={() => downloadAndInstall(true)}
+          >
+            {#if updateInstalling && !updateInstallingDeferred}
+              {#if updateDownloadPercent != null}
+                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Updating… {updateDownloadPercent}%
+              {:else}
+                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading &amp; installing…
+              {/if}
+            {:else}
+              <Icon icon="ph:arrow-clockwise-duotone" /> Update now
+            {/if}
+          </button>
+          <button
+            type="button"
+            class="btn-install-secondary"
+            disabled={updateInstalling}
+            on:click={() => downloadAndInstall(false)}
+            title="Download and install in the background; apply when you quit and open Kalam again"
+          >
+            {#if updateInstalling && updateInstallingDeferred}
+              {#if updateDownloadPercent != null}
+                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading… {updateDownloadPercent}%
+              {:else}
+                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Preparing…
+              {/if}
+            {:else}
+              <Icon icon="ph:moon-stars-duotone" /> Update on next start
+            {/if}
+          </button>
+        </div>
+      {:else if updateStatus === 'error'}
+        <div class="status-msg error"><Icon icon="ph:warning-circle-duotone" /> {updateError}</div>
+      {/if}
+    </section>
+
+    <div class="about-grid two-col">
+      <section class="about-card">
+        <div class="card-icon"><Icon icon="ph:users-three-duotone" /></div>
+        <h3>Community</h3>
+        <p class="byline">
+          Created by <a href="https://github.com/afaraha8403" target="_blank" rel="noopener noreferrer">Ali Farahat</a
+          >, founder of <a href="https://balacode.io" target="_blank" rel="noopener noreferrer">Balacode.io</a>.
+        </p>
+        <div class="action-group">
+          <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" class="action-link">
+            <Icon icon="ph:github-logo-duotone" />
+            <span>GitHub Repository</span>
+          </a>
+          <a href="https://kalam.stream/terms.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
+            <Icon icon="ph:file-text-duotone" />
+            <span>Terms &amp; Conditions</span>
+          </a>
+          <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
+            <Icon icon="ph:shield-check-duotone" />
+            <span>Privacy Policy</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="about-card highlight">
+        <div class="card-icon"><Icon icon="ph:heart-duotone" /></div>
+        <h3>Support Kalam</h3>
+        <p class="card-text">Keep Kalam sustainable and free. Commercial use requires a separate license.</p>
+        <div class="action-group">
+          <a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener noreferrer" class="btn-primary about-btn-primary">
+            <Icon icon="ph:heart-straight-fill" /> Sponsor
+          </a>
+          <a href="https://kalam.stream/business.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
+            Commercial License
+          </a>
+        </div>
+      </section>
+    </div>
+
+    <section class="license-section">
+      <button type="button" class="accordion" on:click={() => (licenseOpen = !licenseOpen)} aria-expanded={licenseOpen}>
+        <span class="accordion-title"><Icon icon="ph:file-text-duotone" /> License Information</span>
+        <Icon icon={licenseOpen ? 'ph:caret-up' : 'ph:caret-down'} />
+      </button>
+      {#if licenseOpen}
+        <div class="license-content">
+          <pre class="license-text">{LICENSE_TEXT}</pre>
+        </div>
+      {/if}
+    </section>
+  </div>
+{:else}
 <div class="about-container">
   <header class="about-header animate-in" style="--delay: 0.1s">
     <span class="version-label">Current version: <strong>{appVersion || '…'}</strong></span>
@@ -284,6 +412,7 @@ maintainers to request a commercial license.`
     {/if}
   </section>
 </div>
+{/if}
 
 <style>
   .about-container {

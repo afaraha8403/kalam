@@ -190,3 +190,91 @@ h1, h2, h3, h4, h5, h6 {
 [data-theme='light'] .kalam-dash-tooltip .kalam-heatmap-tip-count {
   color: #1d1d1f !important;
 }
+
+/*
+ * Svelty-picker: component CSS is bundled in the package; these variables map the popup
+ * and control colors to `.kalam-sleek` tokens (defined in App.svelte / Prototype.svelte).
+ */
+.kalam-sleek .kalam-sdt-datetime {
+  display: block;
+  width: 100%;
+  font-size: 12px;
+  line-height: 1.3;
+  /* Default svelty time face is 220px; shrink popup footprint */
+  --sdt-clock-size: 168px;
+  --sdt-bg-main: var(--bg-elevated);
+  --sdt-color: var(--text);
+  --sdt-bg-selected: var(--accent);
+  --sdt-table-selected-bg: var(--accent);
+  --sdt-color-selected: var(--accent-fg);
+  --sdt-header-color: var(--text);
+  --sdt-table-data-bg-hover: var(--bg-hover);
+  --sdt-shadow-color: rgba(0, 0, 0, 0.12);
+  --sdt-wrap-shadow: var(--shadow);
+  --sdt-radius: var(--radius-md);
+  --sdt-today-bg: var(--accent);
+  --sdt-today-color: var(--accent-fg);
+  --sdt-header-btn-bg-hover: var(--bg-hover);
+  --sdt-table-today-indicator: var(--border-light);
+  --sdt-table-disabled-date: var(--text-muted);
+}
+
+.kalam-sleek .kalam-sdt-datetime .std-component-wrap {
+  display: block;
+  width: 100%;
+}
+
+.kalam-sleek .kalam-sdt-datetime .std-component-wrap input[type='text'] {
+  box-sizing: border-box;
+  width: 100%;
+  /* Overrides svelty default; must match .sleek-datetime-input / other sleek inline fields (14px). */
+  font-size: 14px;
+  padding: 6px 10px;
+  min-height: 0;
+}
+
+/* Compact calendar + time panel (svelty-picker defaults ~280px wide) */
+.kalam-sleek .kalam-sdt-datetime .std-calendar-wrap {
+  width: 232px;
+  max-width: min(232px, 92vw);
+  padding: 0.35rem;
+}
+
+.kalam-sleek .kalam-sdt-datetime .sdt-calendar {
+  height: 188px;
+}
+
+.kalam-sleek .kalam-sdt-datetime .sdt-table-height {
+  height: 188px;
+}
+
+.kalam-sleek .kalam-sdt-datetime .sdt-btn-day {
+  max-height: 26px;
+  height: 26px;
+  padding: 0.15rem;
+}
+
+.kalam-sleek .kalam-sdt-datetime .sdt-cal-th {
+  height: 20px;
+  font-size: 11px;
+}
+
+.kalam-sleek .kalam-sdt-datetime .sdt-btn-row {
+  margin-top: 0.35rem;
+  gap: 0.35rem;
+}
+
+.kalam-sleek .kalam-sdt-datetime .sdt-action-btn {
+  padding: 0.2em 0.45em;
+  font-size: 11px;
+}
+
+.kalam-sleek .kalam-sdt-datetime .sdt-tbody-lg .std-btn {
+  height: 56px;
+}
+
+/* Due date row: picker grows between calendar icon and clear button */
+.kalam-sleek .due-date-input-row .kalam-sdt-datetime {
+  flex: 1;
+  min-width: 0;
+}

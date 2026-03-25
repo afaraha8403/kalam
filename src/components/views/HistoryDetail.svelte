@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import Icon from '@iconify/svelte'
   import { getEntry, createEntry, deleteEntry, newEntry } from '../../lib/api/db'
+  import { getAppIcon } from '../../lib/api/appInfo'
   import type { Entry } from '../../types'
   import { selectedHistoryId } from '../../lib/historyDetailStore'
   import { selectedNoteId } from '../../lib/noteDetailStore'
@@ -13,6 +14,8 @@
 
   let historyId: string | null = null
   let entry: Entry | null = null
+  /** Data URL for target app icon from `applications` cache (when available). */
+  let appIconUrl: string | null = null
   let loading = true
   let loadError: string | null = null
   let busy = false
@@ -258,7 +261,20 @@
         </div>
         <div class="history-stat">
           <dt>Target app</dt>
-          <dd class="history-stat-mono">{entry.target_app?.trim() || '—'}</dd>
+          <dd class="history-target-app">
+            {#if appIconUrl}
+              <img
+                src={appIconUrl}
+                alt=""
+                class="history-target-app-icon"
+                width="18"
+                height="18"
+              />
+            {/if}
+            <span title={entry.target_app?.trim() || undefined}>
+              {entry.target_app_name?.trim() || entry.target_app?.trim() || '—'}
+            </span>
+          </dd>
         </div>
       </dl>
 
@@ -382,10 +398,18 @@
     color: var(--text-muted, #86868b);
   }
 
-  .history-stat-mono {
-    font-family: ui-monospace, monospace;
-    font-size: 13px;
-    font-weight: 500;
+  .history-target-app {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .history-target-app-icon {
+    flex-shrink: 0;
+    border-radius: 4px;
+    object-fit: contain;
   }
 
   .history-transcript {

@@ -5,6 +5,10 @@
   import { getEntry, createEntry, updateEntry, deleteEntry, newEntry } from '../../lib/api/db'
   import type { Entry } from '../../types'
   import Icon from '@iconify/svelte'
+  import SveltyPicker from 'svelty-picker'
+  import { getKalamSveltyPickerLocaleOptions } from '$lib/sveltyPickerLocale'
+  import type { KalamSveltyPickerLocaleOptions } from '$lib/sveltyPickerLocale'
+  import TiptapEditor from '../TiptapEditor.svelte'
   import { selectedNoteId } from '../../lib/noteDetailStore'
   import { selectedHistoryId } from '../../lib/historyDetailStore'
   import { noteDetailReturnTo } from '../../lib/detailReturnStore'
@@ -35,21 +39,33 @@
   }
   let newLabelInput = ''
   let showColorPicker = false
-  let showReminderInput = false
   let loading = true
   let saving = false
+  /** Inline message when save is blocked or the API fails (Svelte 4 needs `draft = { ...draft }` for nested updates to refresh bindings). */
+  let saveError: string | null = null
   /** From DB: controls archive / unarchive in header (not in draft). */
   let entryArchivedAt: string | null = null
   let entryDeletedAt: string | null = null
 
+  let sdtLocale: KalamSveltyPickerLocaleOptions = getKalamSveltyPickerLocaleOptions()
+
   onMount(() => {
-    return selectedNoteId.subscribe((id) => {
+    const unsub = selectedNoteId.subscribe((id) => {
       noteId = id ?? null
       loadDraft(noteId)
     })
+    const onLang = () => {
+      sdtLocale = getKalamSveltyPickerLocaleOptions()
+    }
+    window.addEventListener('languagechange', onLang)
+    return () => {
+      unsub()
+      window.removeEventListener('languagechange', onLang)
+    }
   })
 
   async function loadDraft(id: string | null) {
+    saveError = null
     loading = true
     entryArchivedAt = null
     entryDeletedAt = null
@@ -93,43 +109,58 @@
       navigate('history-detail')
       return
     }
+    if (ret?.type === 'reminders') {
+      navigate('reminders')
+      return
+    }
     navigate('notes')
   }
 
   function addTag(t: string) {
     const tag = t.trim()
     if (tag && !draft.tags.includes(tag)) {
-      draft.tags = [...draft.tags, tag]
+      draft = { ...draft, tags: [...draft.tags, tag] }
       newLabelInput = ''
     }
   }
 
   function removeTag(tag: string) {
-    draft.tags = draft.tags.filter((x) => x !== tag)
+    draft = { ...draft, tags: draft.tags.filter((x) => x !== tag) }
+  }
+
+  /** Strip HTML for empty-body check; stored content is HTML from Tiptap. */
+  function plainTextFromHtml(html: string): string {
+    return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
   }
 
   async function save() {
+    saveError = null
     const title = draft.title.trim()
     const content = draft.content.trim()
-    if (!title && !content) return
+    if (!title && !plainTextFromHtml(content)) {
+      saveError = 'Add a title or some note text before saving.'
+      return
+    }
     saving = true
     try {
       const reminderAt = draft.reminder_at.trim() ? new Date(draft.reminder_at).toISOString() : null
       if (noteId) {
         const entry = await getEntry(noteId)
-        if (entry && entry.entry_type === 'note') {
-          const updated: Entry = {
-            ...entry,
-            title: title || null,
-            content: content || '',
-            color: draft.color || null,
-            reminder_at: reminderAt,
-            is_pinned: draft.pinned,
-            tags: [...draft.tags],
-            updated_at: new Date().toISOString()
-          }
-          await updateEntry(updated)
+        if (!entry || entry.entry_type !== 'note') {
+          saveError = 'Could not load this note to save. Go back and open it again.'
+          return
         }
+        const updated: Entry = {
+          ...entry,
+          title: title || null,
+          content: content || '',
+          color: draft.color || null,
+          reminder_at: reminderAt,
+          is_pinned: draft.pinned,
+          tags: [...draft.tags],
+          updated_at: new Date().toISOString()
+        }
+        await updateEntry(updated)
       } else {
         const entry = newEntry('note', content, {
           title: title || null,
@@ -145,6 +176,7 @@
       exitToNotesList()
     } catch (e) {
       console.error('Failed to save note:', e)
+      saveError = e instanceof Error ? e.message : 'Save failed.'
     } finally {
       saving = false
     }
@@ -220,22 +252,48 @@
     }
   }
 
+  /** Trashed notes: clear deleted_at so the note returns to Notes (same as list Restore). */
+  async function restoreFromDetail() {
+    if (!noteId || saving) return
+    saving = true
+    try {
+      const entry = await getEntry(noteId)
+      if (entry?.entry_type === 'note') {
+        await updateEntry({
+          ...entry,
+          deleted_at: null,
+          updated_at: new Date().toISOString()
+        })
+        back()
+      }
+    } catch (e) {
+      console.error('Failed to restore note:', e)
+    } finally {
+      saving = false
+    }
+  }
+
   function formatNoteDate(iso: string) {
     if (!iso) return ''
     const d = new Date(iso)
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
   }
 
-  function formatReminder(iso: string) {
-    if (!iso) return ''
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  /** SveltyPicker change payload — keep logic in script (Svelte templates cannot use TS `as`). */
+  function onReminderPickerChange(e: CustomEvent<string | null | undefined>) {
+    const v = e.detail
+    draft = { ...draft, reminder_at: v == null || v === '' ? '' : String(v) }
   }
 
-  /** Close color/reminder popovers when clicking outside the control that opened them. */
+  /** Must reassign `draft` so Svelte 4 re-runs `disabled` / labels that depend on `draft.content`. */
+  function onTiptapHtmlChange(e: CustomEvent<{ html: string }>) {
+    draft = { ...draft, content: e.detail.html }
+  }
+
+  /** Close color popover when clicking outside its anchor. */
   function handleClickOutside(event: MouseEvent) {
     const target = event.target as HTMLElement
     if (!target.closest('.color-dropdown-container')) showColorPicker = false
-    if (!target.closest('.reminder-dropdown-container')) showReminderInput = false
   }
 </script>
 
@@ -251,14 +309,67 @@
         <Icon icon="ph:caret-left" /> Notes
       </button>
       <div class="sleek-actions note-detail-header-actions">
+        <div class="color-dropdown-container">
+          <button
+            type="button"
+            class="sleek-tool-btn color-toggle"
+            on:click|stopPropagation={() => (showColorPicker = !showColorPicker)}
+            title="Change color"
+            aria-label="Change note color"
+          >
+            <span class="current-color-indicator" style:background-color={draft.color || 'var(--bg-elevated)'}></span>
+          </button>
+          {#if showColorPicker}
+            <div class="sleek-popover color-popover header-anchor-popover" transition:fade={{ duration: 150 }}>
+              <div class="sleek-colors-grid">
+                {#each NOTE_COLORS as c}
+                  <button
+                    type="button"
+                    class="sleek-color-dot"
+                    class:selected={draft.color === c.value}
+                    style:background-color={c.value || 'var(--bg-elevated)'}
+                    on:click={() => {
+                      draft = { ...draft, color: c.value }
+                      showColorPicker = false
+                    }}
+                    title={c.name}
+                  ></button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+        <button
+          type="button"
+          class="sleek-tool-btn"
+          class:active={draft.pinned}
+          on:click={() => (draft = { ...draft, pinned: !draft.pinned })}
+          title="Pin note"
+          aria-label={draft.pinned ? 'Unpin note' : 'Pin note'}
+        >
+          <Icon icon={draft.pinned ? 'ph:push-pin-fill' : 'ph:push-pin'} />
+        </button>
+        {#if noteId && entryDeletedAt}
+          <button
+            type="button"
+            class="sleek-cancel"
+            on:click={restoreFromDetail}
+            disabled={saving}
+            title="Return to Notes"
+            aria-label="Restore note from trash"
+          >
+            <Icon icon="ph:arrow-counter-clockwise" />
+            Restore
+          </button>
+        {/if}
         {#if noteId}
           <button
             type="button"
             class="sleek-icon-btn danger"
             on:click={deleteNote}
             disabled={saving}
-            title="Delete"
-            aria-label="Delete"
+            title={entryDeletedAt ? 'Delete permanently' : 'Move to trash'}
+            aria-label={entryDeletedAt ? 'Delete permanently' : 'Move to trash'}
           >
             <Icon icon="ph:trash" />
           </button>
@@ -278,26 +389,42 @@
           {:else}
             <button
               type="button"
-              class="sleek-icon-btn"
+              class="sleek-cancel"
               on:click={unarchiveFromDetail}
               disabled={saving}
-              title="Unarchive"
+              title="Return to Notes"
               aria-label="Unarchive"
             >
               <Icon icon="ph:archive-tray" />
+              Unarchive
             </button>
           {/if}
         {/if}
         <button type="button" class="sleek-cancel" on:click={back}>Cancel</button>
-        <button type="button" class="sleek-save" on:click={save} disabled={(!draft.title?.trim() && !draft.content?.trim()) || saving}>
+        <button
+          type="button"
+          class="sleek-save"
+          on:click={save}
+          disabled={(!draft.title?.trim() && !plainTextFromHtml(draft.content)) || saving}
+        >
           Save
         </button>
       </div>
     </header>
 
+    {#if saveError}
+      <p class="note-detail-save-error" role="alert">{saveError}</p>
+    {/if}
+
     <div class="sleek-body">
       <input type="text" class="sleek-title" bind:value={draft.title} placeholder="Note Title" />
-      <textarea class="sleek-content" bind:value={draft.content} placeholder="Start typing..."></textarea>
+      <TiptapEditor
+        documentKey={noteId ?? 'new-note'}
+        html={draft.content}
+        placeholder="Start typing… Type / for formatting"
+        shellClass="sleek-content"
+        on:change={onTiptapHtmlChange}
+      />
       <div class="sleek-labels">
         <Icon icon="ph:tag" />
         {#if draft.tags.length > 0}
@@ -316,50 +443,39 @@
           on:keydown={(e) => e.key === 'Enter' && (addTag(newLabelInput), e.preventDefault())}
         />
       </div>
+      <!-- Same structure as TaskDetail reminder: globals in App.svelte + app.css (.due-date-input-row, .section-title) -->
+      <div class="reminder-section">
+        <h3 class="section-title">Reminder</h3>
+        <div class="due-date-input-row">
+          <Icon icon="ph:bell" aria-hidden="true" />
+          <div class="kalam-sdt-datetime">
+            <SveltyPicker
+              mode="datetime"
+              format={sdtLocale.format}
+              displayFormat={sdtLocale.displayFormat}
+              displayFormatType={sdtLocale.displayFormatType}
+              i18n={sdtLocale.i18n}
+              weekStart={sdtLocale.weekStart}
+              value={draft.reminder_at || null}
+              inputClasses="sleek-datetime-input"
+              on:change={onReminderPickerChange}
+            />
+          </div>
+          {#if draft.reminder_at}
+            <button type="button" class="sleek-clear-btn" on:click={() => (draft = { ...draft, reminder_at: '' })} aria-label="Clear reminder">
+              <Icon icon="ph:x" />
+            </button>
+          {/if}
+        </div>
+        {#if draft.reminder_at && new Date(draft.reminder_at).getTime() < Date.now()}
+          <p class="reminder-past-hint">Reminder time is in the past; you can still save.</p>
+        {/if}
+      </div>
     </div>
 
     <footer class="sleek-footer">
       <div class="sleek-meta">
         {draft.updated_at ? `Edited ${formatNoteDate(draft.updated_at)}` : 'New Note'}
-      </div>
-      <div class="sleek-tools">
-        <div class="color-dropdown-container">
-          <button type="button" class="sleek-tool-btn color-toggle" on:click={() => { showColorPicker = !showColorPicker; showReminderInput = false; }} title="Change color">
-            <span class="current-color-indicator" style:background-color={draft.color || 'var(--bg-elevated)'}></span>
-          </button>
-          {#if showColorPicker}
-            <div class="sleek-popover color-popover" transition:fade={{ duration: 150 }}>
-              <div class="sleek-colors-grid">
-                {#each NOTE_COLORS as c}
-                  <button
-                    type="button"
-                    class="sleek-color-dot"
-                    class:selected={draft.color === c.value}
-                    style:background-color={c.value || 'var(--bg-elevated)'}
-                    on:click={() => { draft.color = c.value; showColorPicker = false; }}
-                    title={c.name}
-                  ></button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
-        <div class="reminder-dropdown-container">
-          <button type="button" class="sleek-tool-btn" class:active={!!draft.reminder_at} on:click={() => { showReminderInput = !showReminderInput; showColorPicker = false; }} title={draft.reminder_at ? formatReminder(draft.reminder_at) : 'Set reminder'}>
-            <Icon icon={draft.reminder_at ? 'ph:bell-fill' : 'ph:bell'} />
-          </button>
-          {#if showReminderInput}
-            <div class="sleek-popover reminder-popover" transition:fade={{ duration: 150 }}>
-              <input type="datetime-local" class="sleek-datetime-input" bind:value={draft.reminder_at} on:change={() => (showReminderInput = false)} />
-              {#if draft.reminder_at}
-                <button type="button" class="sleek-clear-btn" on:click={() => { draft.reminder_at = ''; showReminderInput = false; }}>Clear Reminder</button>
-              {/if}
-            </div>
-          {/if}
-        </div>
-        <button type="button" class="sleek-tool-btn" class:active={draft.pinned} on:click={() => (draft.pinned = !draft.pinned)} title="Pin note">
-          <Icon icon={draft.pinned ? 'ph:push-pin-fill' : 'ph:push-pin'} />
-        </button>
       </div>
     </footer>
   </div>
@@ -376,6 +492,16 @@
     min-width: 0;
   }
 
+  .note-detail-save-error {
+    margin: 0 var(--space-lg, 16px) var(--space-sm, 8px);
+    padding: var(--space-sm, 8px) var(--space-md, 12px);
+    border-radius: var(--radius-md, 8px);
+    background: color-mix(in srgb, var(--danger, #dc2626) 12%, transparent);
+    color: var(--text, inherit);
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+
   .note-detail-page .note-detail-header-actions {
     display: flex;
     justify-content: flex-end;
@@ -389,5 +515,25 @@
   :global(.kalam-sleek .page-content .note-detail-header-actions .sleek-icon-btn:disabled) {
     opacity: 0.35;
     cursor: not-allowed;
+  }
+
+  /* Color popover in header: open below anchor (global .sleek-popover uses bottom:… for footer tools). */
+  .note-detail-header-actions :global(.header-anchor-popover.sleek-popover) {
+    bottom: auto;
+    top: calc(100% + 8px);
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+
+  /* Spacing after labels; section-title / due-date-input-row match TaskDetail via App.svelte globals */
+  .note-detail-page .reminder-section {
+    margin-top: var(--space-xl, 24px);
+  }
+
+  .reminder-past-hint {
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-secondary, #86868b);
   }
 </style>
