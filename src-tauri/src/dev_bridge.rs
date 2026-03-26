@@ -37,7 +37,11 @@ pub async fn run() {
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::OPTIONS,
+        ])
         .allow_headers([axum::http::header::CONTENT_TYPE]);
 
     let app = Router::new()
@@ -45,12 +49,22 @@ pub async fn run() {
         .route("/api/invoke", post(handle_invoke))
         .layer(cors);
 
-    log::info!("Dev bridge listening on http://{} (browser can use this for data)", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap_or_else(|e| {
-        log::warn!("Dev bridge bind failed: {}. Browser dev will not get DB data.", e);
-        panic!("Dev bridge bind failed: {}", e);
-    });
-    axum::serve(listener, app).await.expect("Dev bridge server error");
+    log::info!(
+        "Dev bridge listening on http://{} (browser can use this for data)",
+        addr
+    );
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!(
+                "Dev bridge bind failed: {}. Browser dev will not get DB data.",
+                e
+            );
+            panic!("Dev bridge bind failed: {}", e);
+        });
+    axum::serve(listener, app)
+        .await
+        .expect("Dev bridge server error");
 }
 
 /// Response headers to prevent browser caching of API results (tasks/reminders must stay fresh).
@@ -92,7 +106,8 @@ async fn handle_invoke(Json(req): Json<InvokeRequest>) -> impl IntoResponse {
 
 /// Get a key from args, or from args.args (frontend sometimes sends { args: { ... } }).
 fn arg_get<'a>(args: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
-    args.get(key).or_else(|| args.get("args").and_then(|a| a.get(key)))
+    args.get(key)
+        .or_else(|| args.get("args").and_then(|a| a.get(key)))
 }
 
 async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {
@@ -103,7 +118,9 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
             serde_json::to_value(cfg).map_err(|e| e.to_string())
         }
         "get_platform" => Ok(serde_json::Value::String(platform())),
-        "get_os_release_info" => serde_json::to_value(crate::read_os_release_info()).map_err(|e| e.to_string()),
+        "get_os_release_info" => {
+            serde_json::to_value(crate::read_os_release_info()).map_err(|e| e.to_string())
+        }
         "get_db_status" => {
             let ok = crate::db::open_db().is_ok();
             serde_json::to_value(serde_json::json!({ "ok": ok })).map_err(|e| e.to_string())
@@ -119,10 +136,15 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
             serde_json::to_value(stats).map_err(|e| e.to_string())
         }
         "get_history" => {
-            let limit = arg_get(args, "limit").and_then(|v| v.as_u64()).map(|n| n as u32);
-            let offset = arg_get(args, "offset").and_then(|v| v.as_u64()).map(|n| n as u32);
-            let entries =
-                crate::history::get_history(limit, offset).await.map_err(|e| e.to_string())?;
+            let limit = arg_get(args, "limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u32);
+            let offset = arg_get(args, "offset")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u32);
+            let entries = crate::history::get_history(limit, offset)
+                .await
+                .map_err(|e| e.to_string())?;
             serde_json::to_value(entries).map_err(|e| e.to_string())
         }
         "search_history" => {
@@ -130,7 +152,9 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let entries = crate::history::search(&query).await.map_err(|e| e.to_string())?;
+            let entries = crate::history::search(&query)
+                .await
+                .map_err(|e| e.to_string())?;
             serde_json::to_value(entries).map_err(|e| e.to_string())
         }
         "clear_history" => {
@@ -146,7 +170,9 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .ok_or_else(|| "missing dayEnd".to_string())?;
-            let limit = arg_get(args, "limit").and_then(|v| v.as_u64()).unwrap_or(50) as i64;
+            let limit = arg_get(args, "limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50) as i64;
             let conn = crate::db::open_db().map_err(|e| e.to_string())?;
             let entries = crate::db::get_tasks_due_on(&conn, &day_start, &day_end, limit)
                 .map_err(|e| e.to_string())?;
@@ -161,7 +187,9 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .ok_or_else(|| "missing dayEnd".to_string())?;
-            let limit = arg_get(args, "limit").and_then(|v| v.as_u64()).unwrap_or(50) as i64;
+            let limit = arg_get(args, "limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(50) as i64;
             let conn = crate::db::open_db().map_err(|e| e.to_string())?;
             let entries = crate::db::get_reminders_due_on(&conn, &day_start, &day_end, limit)
                 .map_err(|e| e.to_string())?;
@@ -186,47 +214,78 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
                 .and_then(|v| v.as_str())
                 .map(String::from)
                 .ok_or_else(|| "missing entryType".to_string())?;
-            let scope = arg_get(args, "scope").and_then(|v| v.as_str()).map(String::from);
-            let limit = arg_get(args, "limit").and_then(|v| v.as_i64()).unwrap_or(100);
-            let offset = arg_get(args, "offset").and_then(|v| v.as_i64()).unwrap_or(0);
+            let scope = arg_get(args, "scope")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let limit = arg_get(args, "limit")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(100);
+            let offset = arg_get(args, "offset")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             let conn = crate::db::open_db().map_err(|e| e.to_string())?;
-            let entries = crate::db::get_entries_by_type(&conn, &entry_type, scope.as_deref(), limit, offset)
-                .map_err(|e| e.to_string())?;
+            let entries =
+                crate::db::get_entries_by_type(&conn, &entry_type, scope.as_deref(), limit, offset)
+                    .map_err(|e| e.to_string())?;
             serde_json::to_value(entries).map_err(|e| e.to_string())
         }
         "get_entries_with_reminder" => {
-            let limit = arg_get(args, "limit").and_then(|v| v.as_i64()).unwrap_or(200);
-            let offset = arg_get(args, "offset").and_then(|v| v.as_i64()).unwrap_or(0);
+            let limit = arg_get(args, "limit")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(200);
+            let offset = arg_get(args, "offset")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             let conn = crate::db::open_db().map_err(|e| e.to_string())?;
-            let entries =
-                crate::db::get_entries_with_reminder(&conn, limit, offset).map_err(|e| e.to_string())?;
+            let entries = crate::db::get_entries_with_reminder(&conn, limit, offset)
+                .map_err(|e| e.to_string())?;
             serde_json::to_value(entries).map_err(|e| e.to_string())
         }
         "get_entries_for_reminders" => {
-            let limit = arg_get(args, "limit").and_then(|v| v.as_i64()).unwrap_or(200);
-            let offset = arg_get(args, "offset").and_then(|v| v.as_i64()).unwrap_or(0);
+            let limit = arg_get(args, "limit")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(200);
+            let offset = arg_get(args, "offset")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             let conn = crate::db::open_db().map_err(|e| e.to_string())?;
-            let entries =
-                crate::db::get_entries_for_reminders_view(&conn, limit, offset).map_err(|e| e.to_string())?;
+            let entries = crate::db::get_entries_for_reminders_view(&conn, limit, offset)
+                .map_err(|e| e.to_string())?;
             serde_json::to_value(entries).map_err(|e| e.to_string())
         }
         "search_notes" => {
-            let query = arg_get(args, "query").and_then(|v| v.as_str()).map(String::from);
-            let label = arg_get(args, "label").and_then(|v| v.as_str()).map(String::from);
+            let query = arg_get(args, "query")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let label = arg_get(args, "label")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let scope = arg_get(args, "scope")
                 .and_then(|v| v.as_str())
                 .unwrap_or("active")
                 .to_string();
-            let limit = arg_get(args, "limit").and_then(|v| v.as_i64()).unwrap_or(100);
-            let offset = arg_get(args, "offset").and_then(|v| v.as_i64()).unwrap_or(0);
+            let limit = arg_get(args, "limit")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(100);
+            let offset = arg_get(args, "offset")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             let conn = crate::db::open_db().map_err(|e| e.to_string())?;
-            let entries =
-                crate::db::search_notes(&conn, query.as_deref(), label.as_deref(), &scope, limit, offset)
-                    .map_err(|e| e.to_string())?;
+            let entries = crate::db::search_notes(
+                &conn,
+                query.as_deref(),
+                label.as_deref(),
+                &scope,
+                limit,
+                offset,
+            )
+            .map_err(|e| e.to_string())?;
             serde_json::to_value(entries).map_err(|e| e.to_string())
         }
         "get_note_labels" => {
-            let scope = arg_get(args, "scope").and_then(|v| v.as_str()).map(String::from);
+            let scope = arg_get(args, "scope")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let conn = crate::db::open_db().map_err(|e| e.to_string())?;
             let labels =
                 crate::db::get_note_labels(&conn, scope.as_deref()).map_err(|e| e.to_string())?;

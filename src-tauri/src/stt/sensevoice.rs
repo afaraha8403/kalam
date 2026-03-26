@@ -202,15 +202,20 @@ fn transcribe_via_whisper_http(audio: &[f32], sample_rate: u32) -> anyhow::Resul
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()?;
-        let resp = client.post(&url).multipart(form).send().await.map_err(|e| {
-            let transient = e.is_timeout() || e.is_connect();
-            if transient {
-                log::warn!("Whisper HTTP transport failed: {}", e);
-                anyhow::anyhow!(TranscriptionError::Local { server_down: true })
-            } else {
-                e.into()
-            }
-        })?;
+        let resp = client
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| {
+                let transient = e.is_timeout() || e.is_connect();
+                if transient {
+                    log::warn!("Whisper HTTP transport failed: {}", e);
+                    anyhow::anyhow!(TranscriptionError::Local { server_down: true })
+                } else {
+                    e.into()
+                }
+            })?;
         let status = resp.status();
         let body = resp.text().await.map_err(|e| {
             let transient = e.is_timeout() || e.is_connect();

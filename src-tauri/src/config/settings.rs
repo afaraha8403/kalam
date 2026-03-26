@@ -153,7 +153,15 @@ pub enum WaveformStyle {
     NeonPulse,
     /// Legacy waveform names deserialize here (see serde aliases).
     #[default]
-    #[serde(alias = "Line", alias = "Symmetric", alias = "Heartbeat", alias = "Snake", alias = "DoubleHelix", alias = "Waves", alias = "CenterSplit")]
+    #[serde(
+        alias = "Line",
+        alias = "Symmetric",
+        alias = "Heartbeat",
+        alias = "Snake",
+        alias = "DoubleHelix",
+        alias = "Waves",
+        alias = "CenterSplit"
+    )]
     Aurora,
 }
 
@@ -406,7 +414,8 @@ impl Default for PrivacyConfig {
             telemetry_enabled: false,
             sensitive_app_detection: true,
             sensitive_app_patterns: vec![SensitiveAppPattern {
-                pattern: r"(?i)(1password|bitwarden|keepass|lastpass|dashlane|nordpass)".to_string(),
+                pattern: r"(?i)(1password|bitwarden|keepass|lastpass|dashlane|nordpass)"
+                    .to_string(),
                 pattern_type: PatternType::ProcessName,
                 action: PrivacyAction::ForceLocal,
             }],

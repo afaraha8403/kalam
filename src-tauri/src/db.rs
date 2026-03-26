@@ -183,7 +183,10 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         |row| row.get(0),
     )?;
     if has_note_order == 0 {
-        conn.execute("ALTER TABLE entries ADD COLUMN note_order INTEGER DEFAULT 0", [])?;
+        conn.execute(
+            "ALTER TABLE entries ADD COLUMN note_order INTEGER DEFAULT 0",
+            [],
+        )?;
     }
 
     if backfill_done == 0 {
@@ -817,10 +820,7 @@ pub fn get_or_resolve_application(
     let (display_name, icon_png) = if let Some(info) = resolved {
         (info.display_name, info.icon_png)
     } else {
-        (
-            crate::app_info::capitalize_process_name(&normalized),
-            None,
-        )
+        (crate::app_info::capitalize_process_name(&normalized), None)
     };
 
     conn.execute(
@@ -963,11 +963,7 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<crate::models::Entry> {
     let dictation_language: Option<String> = row.get(25)?;
     let session_mode: Option<String> = row.get(26)?;
     let stt_provider: Option<String> = row.get(27)?;
-    let note_order: i64 = row
-        .get::<_, Option<i64>>(28)
-        .ok()
-        .flatten()
-        .unwrap_or(0);
+    let note_order: i64 = row.get::<_, Option<i64>>(28).ok().flatten().unwrap_or(0);
     Ok(crate::models::Entry {
         id,
         entry_type,
@@ -1053,7 +1049,10 @@ pub fn get_entries_by_type(
             "trash" => " AND deleted_at IS NOT NULL",
             _ => " AND deleted_at IS NULL AND archived_at IS NULL",
         };
-        (where_scope, " ORDER BY is_pinned DESC, note_order ASC, updated_at DESC")
+        (
+            where_scope,
+            " ORDER BY is_pinned DESC, note_order ASC, updated_at DESC",
+        )
     } else if entry_type == "task" {
         let scope = scope.unwrap_or("active");
         let where_scope = match scope {
@@ -1107,7 +1106,10 @@ pub fn get_tasks_due_on(
          ORDER BY due_date ASC LIMIT ?3",
         SELECT_ENTRY_ROW
     ))?;
-    let rows = stmt.query_map(rusqlite::params![day_start_iso, day_end_iso, limit], row_to_entry)?;
+    let rows = stmt.query_map(
+        rusqlite::params![day_start_iso, day_end_iso, limit],
+        row_to_entry,
+    )?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|e| e.into())
 }
@@ -1127,7 +1129,10 @@ pub fn get_reminders_due_on(
          ORDER BY reminder_at ASC LIMIT ?3",
         SELECT_ENTRY_ROW
     ))?;
-    let rows = stmt.query_map(rusqlite::params![day_start_iso, day_end_iso, limit], row_to_entry)?;
+    let rows = stmt.query_map(
+        rusqlite::params![day_start_iso, day_end_iso, limit],
+        row_to_entry,
+    )?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|e| e.into())
 }
@@ -1242,10 +1247,7 @@ pub fn empty_task_trash(conn: &Connection) -> anyhow::Result<i64> {
 
 /// Get a single entry by id.
 pub fn get_entry(conn: &Connection, id: &str) -> anyhow::Result<Option<crate::models::Entry>> {
-    let mut stmt = conn.prepare(&format!(
-        "{} FROM entries WHERE id = ?1",
-        SELECT_ENTRY_ROW
-    ))?;
+    let mut stmt = conn.prepare(&format!("{} FROM entries WHERE id = ?1", SELECT_ENTRY_ROW))?;
     let mut rows = stmt.query(rusqlite::params![id])?;
     Ok(rows.next()?.map(|row| row_to_entry(row)).transpose()?)
 }

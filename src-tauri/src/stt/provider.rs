@@ -22,7 +22,10 @@ fn selected_api_key(config: &STTConfig) -> Option<String> {
 /// Per-request ceiling for cloud STT HTTP calls; floored so we do not regress below the old 30s failure window.
 fn cloud_transcription_http_timeout(config: &STTConfig) -> std::time::Duration {
     const FLOOR_SECS: u64 = 45;
-    let secs = config.transcription_timeout.timeout_max_seconds.max(FLOOR_SECS);
+    let secs = config
+        .transcription_timeout
+        .timeout_max_seconds
+        .max(FLOOR_SECS);
     std::time::Duration::from_secs(secs)
 }
 
@@ -39,8 +42,10 @@ pub fn create_provider_sync(
                 let api_key = selected_api_key(config)
                     .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
                 let t = cloud_transcription_http_timeout(config);
-                Ok(Box::new(super::groq::GroqProvider::new(api_key.clone(), t)?)
-                    as Box<dyn STTProvider>)
+                Ok(
+                    Box::new(super::groq::GroqProvider::new(api_key.clone(), t)?)
+                        as Box<dyn STTProvider>,
+                )
             }
             "openai" => {
                 let api_key = selected_api_key(config)
@@ -101,8 +106,10 @@ impl STTProviderFactory {
                         let api_key = selected_api_key(&config)
                             .ok_or_else(|| anyhow::anyhow!("Groq API key not set"))?;
                         let t = cloud_transcription_http_timeout(&config);
-                        Ok(Box::new(super::groq::GroqProvider::new(api_key.clone(), t)?)
-                            as Box<dyn STTProvider>)
+                        Ok(
+                            Box::new(super::groq::GroqProvider::new(api_key.clone(), t)?)
+                                as Box<dyn STTProvider>,
+                        )
                     }
                     "openai" => {
                         let api_key = selected_api_key(&config)

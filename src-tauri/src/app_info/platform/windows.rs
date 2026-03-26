@@ -16,11 +16,7 @@ pub fn resolve_display_name(exe_path: &str) -> Option<String> {
 }
 
 fn trim_product_suffix(s: &str) -> String {
-    s.split(" - ")
-        .next()
-        .unwrap_or(s)
-        .trim()
-        .to_string()
+    s.split(" - ").next().unwrap_or(s).trim().to_string()
 }
 
 pub fn resolve_display_name_from_process_only(_original: &str, normalized: &str) -> Option<String> {

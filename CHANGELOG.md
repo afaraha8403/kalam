@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 - **Fix:** **Release / CI:** `svelte-check` failed because `tsconfig.json` lacked `$lib` path aliases (Vite had them only at build time); added `paths`, `vite/client`, strict TS fixes (Prototype, Home Apex options, App overlay listener cleanup, Tiptap toolbar reactivity, etc.), and Rust **clippy -D warnings** cleanups so tag builds complete.
+- **Change:** **Rust:** ran **`cargo fmt`** on `src-tauri` so **`cargo fmt -- --check`** matches the formatter on **GitHub Actions** `stable` (workflow was failing the format step after checks passed).
 - **Change:** **Settings → General → Dictation Hotkeys:** accordion open/close uses a **short slide** animation (~180ms) as a first step toward smoother section toggles.
 - **Fix:** **History detail** **Copy** (header and transcript): shows the same **Copied** feedback as the **History** list (label + check icon, short timeout).
 - **Change:** **Settings → Speech-to-Text Mode:** mode cards order is **Auto → Hybrid → Cloud → Local** (left to right).

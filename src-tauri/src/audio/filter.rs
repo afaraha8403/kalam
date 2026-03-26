@@ -178,10 +178,7 @@ fn apply_compressor(samples: &mut [f32], ratio: f32, threshold_db: f32, sample_r
 
 /// Peak normalization to target dBFS (linear amplitude relative to full scale 1.0).
 fn apply_normalize(samples: &mut [f32], target_db: f32) {
-    let peak = samples
-        .iter()
-        .map(|s| s.abs())
-        .fold(0.0f32, f32::max);
+    let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     if peak < 1e-9 {
         return;
     }

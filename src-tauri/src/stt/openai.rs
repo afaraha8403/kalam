@@ -63,7 +63,8 @@ impl STTProvider for OpenAIProvider {
             form = form.text("prompt", p.to_string());
         }
 
-        let response = self.client
+        let response = self
+            .client
             .post("https://api.openai.com/v1/audio/transcriptions")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
@@ -83,9 +84,9 @@ impl STTProvider for OpenAIProvider {
             }));
         }
 
-        let result: OpenAIResponse = response.json().map_err(|e| {
-            anyhow::anyhow!(TranscriptionError::Unknown(e.to_string()))
-        })?;
+        let result: OpenAIResponse = response
+            .json()
+            .map_err(|e| anyhow::anyhow!(TranscriptionError::Unknown(e.to_string())))?;
 
         Ok(TranscriptionResult {
             text: result.text,

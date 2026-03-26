@@ -264,11 +264,7 @@ pub fn transcribe_chunked(
         return Ok(result);
     }
 
-    let windows = split_segments_by_max_duration(
-        raw_segments,
-        max_samples,
-        CHUNK_OVERLAP_SAMPLES,
-    );
+    let windows = split_segments_by_max_duration(raw_segments, max_samples, CHUNK_OVERLAP_SAMPLES);
     log::info!(
         "STT chunking: vad_segments={} chunked_windows={} empty_vad_timewindows=false",
         raw_len,

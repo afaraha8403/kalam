@@ -332,7 +332,10 @@ pub async fn export(format: &str) -> anyhow::Result<String> {
                         .replace(',', "\\,"),
                     entry.stt_mode.as_deref().unwrap_or(""),
                     entry.word_count.map(|n| n.to_string()).unwrap_or_default(),
-                    entry.stt_latency_ms.map(|n| n.to_string()).unwrap_or_default(),
+                    entry
+                        .stt_latency_ms
+                        .map(|n| n.to_string())
+                        .unwrap_or_default(),
                     entry.stt_provider.as_deref().unwrap_or(""),
                 ));
             }

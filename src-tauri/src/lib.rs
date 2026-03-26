@@ -1,9 +1,9 @@
+mod app_info;
 pub mod app_log;
 pub mod audio;
 mod commands;
 mod config;
 mod db;
-mod app_info;
 #[cfg(feature = "dev-bridge")]
 mod dev_bridge;
 mod formatting;
@@ -702,7 +702,8 @@ pub fn run() {
         let b = b.device_event_filter(tauri::DeviceEventFilter::Always);
         b
     };
-    builder.setup(|app| {
+    builder
+        .setup(|app| {
             // Initialize app state (first use of config; logger already set in main)
             let state = AppState::new(app.handle().clone())?;
 
@@ -799,23 +800,27 @@ pub fn run() {
 
             // Background monitor: if active mic disconnects, fall back to default and notify
             let hotplug_handle = app.handle().clone();
-            std::thread::spawn(move || {
-                loop {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                    let state = hotplug_handle.state::<AppState>();
-                    let device_id = state.config.blocking_lock().get_all().audio_device.clone();
-                    let fell_back = {
-                        let mut capture = state.audio_capture.blocking_lock();
-                        capture.try_fallback_if_disconnected(device_id.as_deref())
-                    };
-                    if fell_back {
-                        let mut config_mgr = state.config.blocking_lock();
-                        let mut cfg = config_mgr.get_all();
-                        cfg.audio_device = Some("default".to_string());
-                        let _ = config_mgr.save(cfg);
-                        drop(config_mgr);
-                        emit_overlay_event(&hotplug_handle, OverlayEvent::Error { message: "Microphone disconnected. Switched to system default.".to_string() });
-                    }
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                let state = hotplug_handle.state::<AppState>();
+                let device_id = state.config.blocking_lock().get_all().audio_device.clone();
+                let fell_back = {
+                    let mut capture = state.audio_capture.blocking_lock();
+                    capture.try_fallback_if_disconnected(device_id.as_deref())
+                };
+                if fell_back {
+                    let mut config_mgr = state.config.blocking_lock();
+                    let mut cfg = config_mgr.get_all();
+                    cfg.audio_device = Some("default".to_string());
+                    let _ = config_mgr.save(cfg);
+                    drop(config_mgr);
+                    emit_overlay_event(
+                        &hotplug_handle,
+                        OverlayEvent::Error {
+                            message: "Microphone disconnected. Switched to system default."
+                                .to_string(),
+                        },
+                    );
                 }
             });
 
@@ -830,7 +835,9 @@ pub fn run() {
                 let state = app.state::<AppState>();
                 let config = state.config.blocking_lock();
                 let cfg = config.get_all();
-                let cmd_hk = cfg.command_config.enabled
+                let cmd_hk = cfg
+                    .command_config
+                    .enabled
                     .then(|| cfg.command_config.hotkey.clone())
                     .flatten()
                     .filter(|s| !s.trim().is_empty());
@@ -1152,8 +1159,8 @@ pub struct AppListEntry {
 #[tauri::command]
 fn get_running_apps() -> Result<Vec<AppListEntry>, String> {
     use base64::Engine;
-    use sysinfo::{ProcessesToUpdate, System};
     use std::collections::HashSet;
+    use sysinfo::{ProcessesToUpdate, System};
 
     let mut sys = System::new_all();
     sys.refresh_processes(ProcessesToUpdate::All);
@@ -1172,11 +1179,7 @@ fn get_running_apps() -> Result<Vec<AppListEntry>, String> {
         }
 
         let exe_path = process.exe().map(|p| p.to_string_lossy().to_string());
-        let process_name = process
-            .name()
-            .to_string_lossy()
-            .to_string()
-            .to_lowercase();
+        let process_name = process.name().to_string_lossy().to_string().to_lowercase();
 
         // Skip if we've seen this normalized name
         let normalized = crate::app_info::normalize_process_name(&process_name);
@@ -1186,12 +1189,34 @@ fn get_running_apps() -> Result<Vec<AppListEntry>, String> {
 
         // Skip common system processes
         let system_procs: HashSet<&str> = [
-            "svchost.exe", "csrss.exe", "smss.exe", "services.exe", "lsass.exe",
-            "wininit.exe", "winlogon.exe", "explorer.exe", "taskhostw.exe",
-            "kernel", "registry", "system interrupts", "system",
-            "launchd", "kernel_task", "windowserver", "dock", "finder",
-            "systemd", "kthreadd", "init", "bash", "sh", "zsh",
-        ].iter().cloned().collect();
+            "svchost.exe",
+            "csrss.exe",
+            "smss.exe",
+            "services.exe",
+            "lsass.exe",
+            "wininit.exe",
+            "winlogon.exe",
+            "explorer.exe",
+            "taskhostw.exe",
+            "kernel",
+            "registry",
+            "system interrupts",
+            "system",
+            "launchd",
+            "kernel_task",
+            "windowserver",
+            "dock",
+            "finder",
+            "systemd",
+            "kthreadd",
+            "init",
+            "bash",
+            "sh",
+            "zsh",
+        ]
+        .iter()
+        .cloned()
+        .collect();
         if system_procs.contains(normalized.as_str()) {
             continue;
         }
@@ -1199,9 +1224,7 @@ fn get_running_apps() -> Result<Vec<AppListEntry>, String> {
         // Get display name and icon from DB/cache
         let (display_name, icon_opt) =
             crate::db::get_or_resolve_application(&conn, &process_name, exe_path.as_deref())
-                .unwrap_or_else(|_| {
-                    (crate::app_info::capitalize_process_name(&normalized), None)
-                });
+                .unwrap_or_else(|_| (crate::app_info::capitalize_process_name(&normalized), None));
 
         let icon_base64 = icon_opt.map(|b| base64::engine::general_purpose::STANDARD.encode(b));
 
@@ -1214,7 +1237,11 @@ fn get_running_apps() -> Result<Vec<AppListEntry>, String> {
     }
 
     // Sort by display name for better UX
-    results.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+    results.sort_by(|a, b| {
+        a.display_name
+            .to_lowercase()
+            .cmp(&b.display_name.to_lowercase())
+    });
 
     // Limit to reasonable number for UI performance
     results.truncate(100);
@@ -1275,12 +1302,14 @@ fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
                         if let Ok(sub_entries) = std::fs::read_dir(&path) {
                             for sub in sub_entries.flatten() {
                                 let sub_path = sub.path();
-                                if sub_path.extension()
+                                if sub_path
+                                    .extension()
                                     .map(|e| e.eq_ignore_ascii_case("exe"))
                                     .unwrap_or(false)
                                 {
                                     let exe_path = sub_path.to_string_lossy().to_string();
-                                    let process_name = crate::app_info::normalize_process_name(&exe_path);
+                                    let process_name =
+                                        crate::app_info::normalize_process_name(&exe_path);
                                     if !seen.insert(process_name.clone()) {
                                         continue;
                                     }
@@ -1319,9 +1348,9 @@ fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
                     }
 
                     if let Some(info) = crate::app_info::resolve(&exe_path) {
-                        let icon_base64 = info.icon_png.map(|b| {
-                            base64::engine::general_purpose::STANDARD.encode(b)
-                        });
+                        let icon_base64 = info
+                            .icon_png
+                            .map(|b| base64::engine::general_purpose::STANDARD.encode(b));
                         results.push(AppListEntry {
                             process_name: info.process_name,
                             display_name: info.display_name,
@@ -1347,9 +1376,9 @@ fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
                         }
 
                         if let Some(info) = crate::app_info::resolve(&exe_path) {
-                            let icon_base64 = info.icon_png.map(|b| {
-                                base64::engine::general_purpose::STANDARD.encode(b)
-                            });
+                            let icon_base64 = info
+                                .icon_png
+                                .map(|b| base64::engine::general_purpose::STANDARD.encode(b));
                             results.push(AppListEntry {
                                 process_name: info.process_name,
                                 display_name: info.display_name,
@@ -1388,7 +1417,8 @@ fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
 
                             if let Some(exec) = exec_line {
                                 let exe_name = exec.split_whitespace().next().unwrap_or(exec);
-                                let process_name = crate::app_info::normalize_process_name(exe_name);
+                                let process_name =
+                                    crate::app_info::normalize_process_name(exe_name);
                                 if !seen.insert(process_name.clone()) {
                                     continue;
                                 }
@@ -1408,20 +1438,24 @@ fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
                                     .find(|l| l.starts_with("Icon="))
                                     .map(|l| l.trim_start_matches("Icon="));
 
-                                let icon_base64 = icon_name.and_then(|icon| {
-                                    if std::path::Path::new(icon).is_absolute() && std::path::Path::new(icon).exists() {
-                                        std::fs::read(icon).ok()
-                                    } else {
-                                        // Try to look up in icon theme cache
-                                        use freedesktop_icon_lookup::Cache;
-                                        let mut cache = Cache::new().ok()?;
-                                        cache.load_default().ok()?;
-                                        let _ = cache.load("Adwaita");
-                                        let _ = cache.load("hicolor");
-                                        let icon_path = cache.lookup(icon, None::<&str>)?;
-                                        std::fs::read(icon_path).ok()
-                                    }
-                                }).map(|b| base64::engine::general_purpose::STANDARD.encode(b));
+                                let icon_base64 = icon_name
+                                    .and_then(|icon| {
+                                        if std::path::Path::new(icon).is_absolute()
+                                            && std::path::Path::new(icon).exists()
+                                        {
+                                            std::fs::read(icon).ok()
+                                        } else {
+                                            // Try to look up in icon theme cache
+                                            use freedesktop_icon_lookup::Cache;
+                                            let mut cache = Cache::new().ok()?;
+                                            cache.load_default().ok()?;
+                                            let _ = cache.load("Adwaita");
+                                            let _ = cache.load("hicolor");
+                                            let icon_path = cache.lookup(icon, None::<&str>)?;
+                                            std::fs::read(icon_path).ok()
+                                        }
+                                    })
+                                    .map(|b| base64::engine::general_purpose::STANDARD.encode(b));
 
                                 results.push(AppListEntry {
                                     process_name,
@@ -1438,7 +1472,11 @@ fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
     }
 
     // Sort by display name
-    results.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+    results.sort_by(|a, b| {
+        a.display_name
+            .to_lowercase()
+            .cmp(&b.display_name.to_lowercase())
+    });
 
     Ok(results)
 }
@@ -1918,9 +1956,7 @@ async fn reset_application(state: tauri::State<'_, AppState>) -> Result<(), Stri
 
     // Match save_settings: push config to the shell/overlay and re-register hotkeys so reset
     // is live without an app restart (previously only app_reset ran, leaving stale registrations).
-    let _ = state
-        .app_handle
-        .emit("settings_updated", &default_config);
+    let _ = state.app_handle.emit("settings_updated", &default_config);
     let _ = update_overlay_position(&state.app_handle);
     reset_overlay_state(&state.app_handle);
 
@@ -2022,11 +2058,7 @@ async fn test_microphone_stop(
         Ok((_level, mut samples, sample_rate)) => {
             let cfg = state.config.lock().await.get_all();
             let stt = crate::config::privacy::effective_stt_config(&cfg);
-            crate::audio::filter::apply_filter_chain(
-                &mut samples,
-                &stt.audio_filter,
-                sample_rate,
-            );
+            crate::audio::filter::apply_filter_chain(&mut samples, &stt.audio_filter, sample_rate);
             // Match dictation path: level reflects post-filter signal for the meter readout.
             let level = if samples.is_empty() {
                 0.0
@@ -2864,10 +2896,7 @@ async fn run_command_pipeline(
             ("task", trimmed["new task".len()..].trim().to_string())
         } else if lower.starts_with("new reminder") {
             // Voice "new reminder" creates a note; user sets `reminder_at` in the note editor (no standalone reminder type).
-            (
-                "note",
-                trimmed["new reminder".len()..].trim().to_string(),
-            )
+            ("note", trimmed["new reminder".len()..].trim().to_string())
         } else {
             if config.notifications.show_errors {
                 let state = app_handle.state::<AppState>();
@@ -3025,7 +3054,6 @@ Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Mond
         title = None;
     }
 
-
     let entry = crate::models::Entry {
         id: uuid::Uuid::new_v4().to_string(),
         entry_type: entry_type.to_string(),
@@ -3159,7 +3187,10 @@ fn calculate_transcription_timeout(
         return Duration::from_secs(secs);
     };
     let Ok(Some(row)) = db::get_daily_stats(&conn, Some(&today)) else {
-        log::debug!("Timeout: no stats for today, using default {}s", default_secs);
+        log::debug!(
+            "Timeout: no stats for today, using default {}s",
+            default_secs
+        );
         let secs = apply_audio_transcription_floor(
             default_secs.min(max_secs),
             recording_duration_ms,
@@ -3196,15 +3227,14 @@ fn calculate_transcription_timeout(
     let avg_secs = (avg_ms as f64) / 1000.0;
     let computed = (avg_secs * tc.timeout_multiplier) + (tc.timeout_buffer_seconds as f64);
     let timeout_secs = (computed as u64).clamp(min_secs, max_secs);
-    let timeout_secs = apply_audio_transcription_floor(
-        timeout_secs,
-        recording_duration_ms,
-        is_cloud,
-        max_secs,
-    );
+    let timeout_secs =
+        apply_audio_transcription_floor(timeout_secs, recording_duration_ms, is_cloud, max_secs);
     log::info!(
         "Transcription timeout: avg {}ms -> {}s (clamped to [{}, {}])",
-        avg_ms, timeout_secs, min_secs, max_secs
+        avg_ms,
+        timeout_secs,
+        min_secs,
+        max_secs
     );
     Duration::from_secs(timeout_secs)
 }
@@ -3392,8 +3422,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
             let max_wall_timeout = std::time::Duration::from_secs(
                 stt_config.transcription_timeout.timeout_max_seconds.max(1),
             );
-            let base_timeout =
-                calculate_transcription_timeout(&config, recording_duration_ms);
+            let base_timeout = calculate_transcription_timeout(&config, recording_duration_ms);
             let mut this_attempt_timeout = base_timeout;
             let expected_secs = base_timeout.as_secs().max(1) as u32;
             log::info!(
@@ -3468,7 +3497,8 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                         },
                     );
                 }
-                let (tx, rx) = oneshot::channel::<anyhow::Result<crate::stt::TranscriptionResult>>();
+                let (tx, rx) =
+                    oneshot::channel::<anyhow::Result<crate::stt::TranscriptionResult>>();
                 let job_attempt = job.clone();
                 std::thread::spawn(move || {
                     let r = run_transcribe_job(job_attempt);
@@ -3631,124 +3661,124 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                 );
                             }
                         } else {
-                        let len = last_injected_len.load(Ordering::SeqCst);
-                        let prev_text = last_injected_text.lock().await.clone();
-                        let prev_ref = prev_text.as_str();
-                        let (formatted, actions) = crate::formatting::format_text(
-                            &transcription_result.text,
-                            &config.formatting,
-                            &config.snippets,
-                            len,
-                            Some(prev_ref),
-                        );
-                        log::info!("Transcription completed, length: {}", formatted.len());
-                        let words_count = formatted.split_whitespace().count() as u32;
-                        let meta = crate::history::HistorySaveMeta {
-                            word_count: words_count,
-                            stt_latency_ms: latency_ms,
-                            stt_mode: stt_mode_label,
-                            stt_provider: stt_config.provider.trim().to_string(),
-                            dictation_language,
-                            session_mode: "dictation".to_string(),
-                        };
-                        if let Err(e) = history::save_transcription(
-                            &formatted,
-                            foreground_process.clone(),
-                            foreground_exe_path.clone(),
-                            recording_duration_ms,
-                            meta,
-                            config.privacy.history_retention_days,
-                        )
-                        .await
-                        {
-                            log::error!("Failed to save transcription to DB: {}", e);
-                        }
-                        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
-                        if let Ok(conn) = db::open_db() {
-                            if let Err(e) = db::record_transcription_stats(
-                                &conn,
-                                &date,
-                                words_count,
-                                latency_ms,
-                            ) {
-                                log::error!("Failed to record daily stats: {}", e);
-                            }
-                        }
-                        let _ = app_handle.emit(
-                            "transcription-saved",
-                            TranscriptionSavedPayload {
-                                latency_ms,
-                                words_count,
-                            },
-                        );
-                        let _ = app_handle.emit("dictation-result", &formatted);
-                        #[cfg(windows)]
-                        if let Some(hwnd) = foreground_hwnd {
-                            let _ = unsafe {
-                                windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(
-                                    hwnd as isize,
-                                )
+                            let len = last_injected_len.load(Ordering::SeqCst);
+                            let prev_text = last_injected_text.lock().await.clone();
+                            let prev_ref = prev_text.as_str();
+                            let (formatted, actions) = crate::formatting::format_text(
+                                &transcription_result.text,
+                                &config.formatting,
+                                &config.snippets,
+                                len,
+                                Some(prev_ref),
+                            );
+                            log::info!("Transcription completed, length: {}", formatted.len());
+                            let words_count = formatted.split_whitespace().count() as u32;
+                            let meta = crate::history::HistorySaveMeta {
+                                word_count: words_count,
+                                stt_latency_ms: latency_ms,
+                                stt_mode: stt_mode_label,
+                                stt_provider: stt_config.provider.trim().to_string(),
+                                dictation_language,
+                                session_mode: "dictation".to_string(),
                             };
-                            // Win11 XAML apps (e.g. Notepad) need extra time to fully settle
-                            // focus before synthetic input is accepted reliably.
-                            std::thread::sleep(std::time::Duration::from_millis(150));
-                        }
-                        // On Windows, override injection method to Clipboard for apps known to
-                        // corrupt rapid keystroke bursts via TSF (e.g. Win11 Notepad).
-                        #[allow(unused_mut)]
-                        let mut effective_formatting = config.formatting.clone();
-                        #[cfg(windows)]
-                        {
-                            if let Some(ref pname) = foreground_process {
-                                let name_lower = pname.to_lowercase();
-                                let force_clipboard = config
-                                    .formatting
-                                    .force_clipboard_apps
-                                    .iter()
-                                    .any(|app| name_lower.contains(&app.to_lowercase()));
-                                if force_clipboard {
-                                    log::info!(
-                                        "Forcing clipboard injection for process: {}",
-                                        pname
-                                    );
-                                    effective_formatting.injection_method =
-                                        crate::config::InjectionMethod::Clipboard;
+                            if let Err(e) = history::save_transcription(
+                                &formatted,
+                                foreground_process.clone(),
+                                foreground_exe_path.clone(),
+                                recording_duration_ms,
+                                meta,
+                                config.privacy.history_retention_days,
+                            )
+                            .await
+                            {
+                                log::error!("Failed to save transcription to DB: {}", e);
+                            }
+                            let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+                            if let Ok(conn) = db::open_db() {
+                                if let Err(e) = db::record_transcription_stats(
+                                    &conn,
+                                    &date,
+                                    words_count,
+                                    latency_ms,
+                                ) {
+                                    log::error!("Failed to record daily stats: {}", e);
                                 }
                             }
-                        }
-                        if let Ok(injector) = crate::injection::TextInjector::new() {
-                            for action in &actions {
-                                match action {
-                                    crate::formatting::VoiceAction::Undo => {
-                                        if let Err(e) = injector.inject_undo() {
-                                            log::error!("Failed to inject undo: {}", e);
+                            let _ = app_handle.emit(
+                                "transcription-saved",
+                                TranscriptionSavedPayload {
+                                    latency_ms,
+                                    words_count,
+                                },
+                            );
+                            let _ = app_handle.emit("dictation-result", &formatted);
+                            #[cfg(windows)]
+                            if let Some(hwnd) = foreground_hwnd {
+                                let _ = unsafe {
+                                    windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(
+                                        hwnd as isize,
+                                    )
+                                };
+                                // Win11 XAML apps (e.g. Notepad) need extra time to fully settle
+                                // focus before synthetic input is accepted reliably.
+                                std::thread::sleep(std::time::Duration::from_millis(150));
+                            }
+                            // On Windows, override injection method to Clipboard for apps known to
+                            // corrupt rapid keystroke bursts via TSF (e.g. Win11 Notepad).
+                            #[allow(unused_mut)]
+                            let mut effective_formatting = config.formatting.clone();
+                            #[cfg(windows)]
+                            {
+                                if let Some(ref pname) = foreground_process {
+                                    let name_lower = pname.to_lowercase();
+                                    let force_clipboard = config
+                                        .formatting
+                                        .force_clipboard_apps
+                                        .iter()
+                                        .any(|app| name_lower.contains(&app.to_lowercase()));
+                                    if force_clipboard {
+                                        log::info!(
+                                            "Forcing clipboard injection for process: {}",
+                                            pname
+                                        );
+                                        effective_formatting.injection_method =
+                                            crate::config::InjectionMethod::Clipboard;
+                                    }
+                                }
+                            }
+                            if let Ok(injector) = crate::injection::TextInjector::new() {
+                                for action in &actions {
+                                    match action {
+                                        crate::formatting::VoiceAction::Undo => {
+                                            if let Err(e) = injector.inject_undo() {
+                                                log::error!("Failed to inject undo: {}", e);
+                                            }
+                                        }
+                                        crate::formatting::VoiceAction::DeleteLastChars(n) => {
+                                            if let Err(e) = injector.inject_backspaces(*n) {
+                                                log::error!("Failed to inject backspaces: {}", e);
+                                            }
                                         }
                                     }
-                                    crate::formatting::VoiceAction::DeleteLastChars(n) => {
-                                        if let Err(e) = injector.inject_backspaces(*n) {
-                                            log::error!("Failed to inject backspaces: {}", e);
+                                }
+                                if !formatted.is_empty() {
+                                    if let Err(e) = injector
+                                        .inject_with_config(&formatted, &effective_formatting)
+                                        .await
+                                    {
+                                        log::error!("Failed to inject text: {}", e);
+                                    } else {
+                                        last_injected_len.store(formatted.len(), Ordering::SeqCst);
+                                        *last_injected_text.lock().await = formatted;
+                                        if config.notifications.show_completion {
+                                            let nm = &app_handle
+                                                .state::<AppState>()
+                                                .notification_manager;
+                                            let _ = nm.success("Dictation complete");
                                         }
                                     }
                                 }
                             }
-                            if !formatted.is_empty() {
-                                if let Err(e) = injector
-                                    .inject_with_config(&formatted, &effective_formatting)
-                                    .await
-                                {
-                                    log::error!("Failed to inject text: {}", e);
-                                } else {
-                                    last_injected_len.store(formatted.len(), Ordering::SeqCst);
-                                    *last_injected_text.lock().await = formatted;
-                                    if config.notifications.show_completion {
-                                        let nm = &app_handle
-                                            .state::<AppState>()
-                                            .notification_manager;
-                                        let _ = nm.success("Dictation complete");
-                                    }
-                                }
-                            }
-                        }
                         }
                     }
                 }
@@ -3763,12 +3793,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                         } else {
                             e.to_string()
                         };
-                        emit_overlay_event(
-                            &app_handle,
-                            OverlayEvent::Error {
-                                message,
-                            },
-                        );
+                        emit_overlay_event(&app_handle, OverlayEvent::Error { message });
                     }
                     // When last_error is None, user cancelled — no error overlay (Cancelling already shown).
                 }

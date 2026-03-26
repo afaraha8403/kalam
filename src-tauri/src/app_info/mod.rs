@@ -31,8 +31,7 @@ pub fn capitalize_process_name(name: &str) -> String {
         .unwrap_or(base)
         .strip_suffix(".EXE")
         .unwrap_or(base);
-    base
-        .chars()
+    base.chars()
         .map(|c| if matches!(c, '-' | '_') { ' ' } else { c })
         .collect::<String>()
         .split_whitespace()
@@ -60,9 +59,8 @@ pub fn resolve(exe_path_or_name: &str) -> Option<AppInfo> {
         || (cfg!(windows) && trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':');
 
     let (display_name, icon_png) = if looks_like_fs_path && path.exists() {
-        let dn = platform::resolve_display_name(trimmed).unwrap_or_else(|| {
-            capitalize_process_name(&process_name)
-        });
+        let dn = platform::resolve_display_name(trimmed)
+            .unwrap_or_else(|| capitalize_process_name(&process_name));
         let icon = platform::resolve_icon(trimmed);
         (dn, icon)
     } else {

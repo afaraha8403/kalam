@@ -124,7 +124,8 @@ pub struct GetRemindersDueOnArgs {
 pub fn get_reminders_due_on(args: GetRemindersDueOnArgs) -> Result<Vec<Entry>, String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
     let limit = args.limit.unwrap_or(50);
-    db::get_reminders_due_on(&conn, &args.day_start, &args.day_end, limit).map_err(|e| e.to_string())
+    db::get_reminders_due_on(&conn, &args.day_start, &args.day_end, limit)
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]

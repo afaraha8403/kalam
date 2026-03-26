@@ -68,7 +68,8 @@ impl STTProvider for GroqProvider {
             form = form.text("prompt", p.to_string());
         }
 
-        let response = self.client
+        let response = self
+            .client
             .post("https://api.groq.com/openai/v1/audio/transcriptions")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .multipart(form)
@@ -89,9 +90,9 @@ impl STTProvider for GroqProvider {
             }));
         }
 
-        let result: GroqResponse = response.json().map_err(|e| {
-            anyhow::anyhow!(TranscriptionError::Unknown(e.to_string()))
-        })?;
+        let result: GroqResponse = response
+            .json()
+            .map_err(|e| anyhow::anyhow!(TranscriptionError::Unknown(e.to_string())))?;
 
         Ok(TranscriptionResult {
             text: result.text,

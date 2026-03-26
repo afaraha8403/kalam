@@ -62,7 +62,10 @@ fn read_wav_mono_f32(path: &std::path::Path) -> (Vec<f32>, u32) {
                 panic!("unsupported int bits_per_sample: {}", bits);
             }
         }
-        SampleFormat::Float => reader.samples::<f32>().map(|s| s.expect("sample")).collect(),
+        SampleFormat::Float => reader
+            .samples::<f32>()
+            .map(|s| s.expect("sample"))
+            .collect(),
     };
     (samples, spec.sample_rate)
 }
@@ -152,8 +155,8 @@ fn groq_transcribes_fox_fixture_when_api_key_set() {
     }
 
     let audio = load_fixture_audio_16k();
-    let provider = GroqProvider::new(key.trim().to_string(), Duration::from_secs(90))
-        .expect("groq client");
+    let provider =
+        GroqProvider::new(key.trim().to_string(), Duration::from_secs(90)).expect("groq client");
     let vad = VADConfig::default();
     let out = transcribe_chunked(
         &provider,
