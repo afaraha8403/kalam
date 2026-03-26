@@ -104,10 +104,10 @@
   }
 
   // `toolbarTick` is read so Svelte reruns this when selection/doc changes.
-  $: toolbar =
-    editor &&
-    (toolbarTick,
-    {
+  $: toolbar = (() => {
+    void toolbarTick
+    if (!editor) return null
+    return {
       bold: editor.isActive('bold'),
       italic: editor.isActive('italic'),
       underline: editor.isActive('underline'),
@@ -122,7 +122,8 @@
       quote: editor.isActive('blockquote'),
       code: editor.isActive('code'),
       codeBlock: editor.isActive('codeBlock')
-    })
+    }
+  })()
 </script>
 
 <div class="kalam-tiptap-shell {shellClass}">

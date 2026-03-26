@@ -180,6 +180,10 @@
     settingsActiveTab = tab
   }
 
+  /** Literal tuples so settings bindings stay typed as narrow unions (svelte-check). */
+  const sttModeChoices = ['Cloud', 'Local', 'Hybrid'] as const
+  const localModelIds = ['sensevoice', 'whisper_base'] as const
+
   const navItems = [
     { id: 'home', label: 'Overview', icon: 'ph:squares-four' },
     { id: 'history', label: 'History', icon: 'ph:clock' },
@@ -595,7 +599,7 @@
     const title = taskDraft.title.trim()
     if (!title) return
     const now = new Date().toISOString()
-    const dueDate = taskDraft.due_date.trim() ? new Date(taskDraft.due_date).toISOString() : null
+    const dueDate = taskDraft.due_date.trim() ? new Date(taskDraft.due_date).toISOString() : ''
     if (selectedTaskId) {
       const idx = mockTasks.findIndex(t => t.id === selectedTaskId)
       if (idx >= 0) mockTasks = mockTasks.map((t, i) => i === idx ? { ...t, title, content: taskDraft.content, due_date: dueDate, priority: taskDraft.priority, is_completed: taskDraft.is_completed, subtasks: [...taskDraft.subtasks], tags: [...taskDraft.tags], updated_at: now } : t)
@@ -887,7 +891,7 @@
 
 <svelte:head>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 </svelte:head>
 
@@ -1025,7 +1029,7 @@
                     {#each mockReminders.slice(0, 3) as r}
                       <div class="simple-item">
                         <Icon icon="ph:clock" class="muted-icon" />
-                        <span class="simple-text">{r.text}</span>
+                        <span class="simple-text">{r.title}</span>
                       </div>
                     {/each}
                   </div>
@@ -2258,11 +2262,11 @@
                     {#if !settingsCollapsed.dictation_mode}
                       <div class="section-content">
                         <div class="stt-mode-cards">
-                          {#each ['Cloud', 'Local', 'Hybrid'] as mode}
+                          {#each sttModeChoices as mode}
                             <button
                               class="stt-mode-card"
                               class:active={settingsConfig.stt_mode === mode}
-                              on:click={() => settingsConfig.stt_mode = mode}
+                              on:click={() => (settingsConfig.stt_mode = mode)}
                             >
                               <div class="mode-icon">
                                 <Icon icon={mode === 'Cloud' ? 'ph:cloud' : mode === 'Local' ? 'ph:hard-drives' : 'ph:arrows-left-right'} />
@@ -2328,10 +2332,11 @@
                           <div class="local-models-section">
                             <p class="local-models-hint">Select one model; it is used when mode is Local. Download, start, or stop from the list.</p>
                             <div class="model-list">
-                              {#each Object.entries(localModelStatus) as [modelId, status]}
+                              {#each localModelIds as modelId}
+                                {@const status = localModelStatus[modelId]}
                                 {@const isActive = settingsConfig.local_model === modelId}
                                 <div class="model-item" class:active={isActive}>
-                                  <div class="model-info-row" on:click={() => settingsConfig.local_model = modelId}>
+                                  <div class="model-info-row" on:click={() => (settingsConfig.local_model = modelId)}>
                                     <span class="model-radio" class:checked={isActive}></span>
                                     <div class="model-details">
                                       <span class="model-name">{status.label}</span>
@@ -2343,9 +2348,9 @@
                                       <button class="secondary-btn">Download</button>
                                     {:else}
                                       {#if status.status === 'Stopped'}
-                                        <button class="secondary-btn" on:click|stopPropagation={() => localModelStatus[modelId].status = 'Running'}>Start</button>
+                                        <button class="secondary-btn" on:click|stopPropagation={() => (localModelStatus[modelId].status = 'Running')}>Start</button>
                                       {:else if status.status === 'Running'}
-                                        <button class="secondary-btn" on:click|stopPropagation={() => localModelStatus[modelId].status = 'Stopped'}>Stop</button>
+                                        <button class="secondary-btn" on:click|stopPropagation={() => (localModelStatus[modelId].status = 'Stopped')}>Stop</button>
                                         <button class="secondary-btn" on:click|stopPropagation={() => {}}>Restart</button>
                                       {:else if status.status === 'Starting'}
                                         <button class="secondary-btn" disabled>Starting...</button>

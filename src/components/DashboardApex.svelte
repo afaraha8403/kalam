@@ -37,7 +37,8 @@
     resizeFrame = requestAnimationFrame(() => {
       resizeFrame = null
       try {
-        chart?.resize()
+        // `apexcharts` typings omit `resize()` even though the runtime chart exposes it (used after layout changes).
+        ;(chart as unknown as { resize: () => void }).resize()
       } catch {
         /* WebView resize races */
       }

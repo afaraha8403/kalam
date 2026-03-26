@@ -4,7 +4,8 @@ import type { Entry, Subtask } from '../../types'
 /** Unify snake_case and camelCase from IPC/JSON so history detail stats stay populated. */
 function normalizeUnifiedEntry(raw: Entry | null): Entry | null {
   if (!raw || typeof raw !== 'object') return raw
-  const o = raw as Record<string, unknown>
+  // `Entry` is a structured type; widen through `unknown` before mutating dynamic keys from IPC.
+  const o = raw as unknown as Record<string, unknown>
   if (o.stt_latency_ms == null && typeof o.sttLatencyMs === 'number') o.stt_latency_ms = o.sttLatencyMs
   if (o.word_count == null && typeof o.wordCount === 'number') o.word_count = o.wordCount
   if (o.stt_mode == null && typeof o.sttMode === 'string') o.stt_mode = o.sttMode

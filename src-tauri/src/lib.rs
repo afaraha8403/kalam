@@ -3497,7 +3497,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             let te = last_error
                                 .as_ref()
                                 .and_then(|e| e.downcast_ref::<crate::stt::TranscriptionError>());
-                            let retriable = te.map_or(false, |t| t.is_retriable());
+                            let retriable = te.is_some_and(|t| t.is_retriable());
                             if retriable && attempt < MAX_ATTEMPTS {
                                 if let Some(t) = te {
                                     log::info!("Transcription error (retriable): {}", t);

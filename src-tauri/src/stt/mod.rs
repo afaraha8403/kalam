@@ -120,6 +120,12 @@ pub struct TranscriptionResult {
 
 pub struct STTManager;
 
+impl Default for STTManager {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl STTManager {
     pub fn new() -> Self {
         Self

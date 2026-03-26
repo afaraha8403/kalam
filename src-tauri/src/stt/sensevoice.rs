@@ -224,7 +224,7 @@ fn transcribe_via_whisper_http(audio: &[f32], sample_rate: u32) -> anyhow::Resul
         if !status.is_success() {
             let code = status.as_u16();
             // Bad gateway / service unavailable: often transient while the sidecar restarts.
-            if matches!(code, 502 | 503 | 504) {
+            if matches!(code, 502..=504) {
                 log::warn!("Whisper server HTTP {}: {}", code, body);
                 return Err(anyhow::anyhow!(TranscriptionError::Local {
                     server_down: true

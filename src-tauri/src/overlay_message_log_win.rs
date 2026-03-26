@@ -16,7 +16,9 @@ const WH_CALLWNDPROC_ID: i32 = 4;
 
 static mut CURRENT_HOOK: HHOOK = 0 as HHOOK;
 
+// Mirrors Win32 `CWPSTRUCT`; name matches the platform typedef.
 #[repr(C)]
+#[allow(clippy::upper_case_acronyms)]
 struct CWPSTRUCT {
     lparam: LPARAM,
     wparam: WPARAM,

@@ -811,7 +811,7 @@ pub fn get_or_resolve_application(
     }
 
     let resolved = exe_path_hint
-        .and_then(|p| crate::app_info::resolve(p))
+        .and_then(crate::app_info::resolve)
         .or_else(|| crate::app_info::resolve(&normalized));
 
     let (display_name, icon_png) = if let Some(info) = resolved {

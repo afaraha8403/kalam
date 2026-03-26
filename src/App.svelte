@@ -262,6 +262,9 @@
       unlistenTranscription = await listen<{ latency_ms?: number }>('transcription-saved', (e) => {
         if (e.payload?.latency_ms != null) lastLatencyMs = e.payload.latency_ms
       })
+      unlistenOverlayBroadcast = await listen<unknown>('overlay-state-broadcast', (e) => {
+        applyOverlayBroadcast(e.payload)
+      })
       try {
         const config = (await invoke('get_settings')) as AppConfig
         isFirstRun = skipOnboardingParam ? false : !config.onboarding_complete

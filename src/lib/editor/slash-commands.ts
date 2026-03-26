@@ -162,8 +162,9 @@ export const SlashCommands = Extension.create({
     }
 
     function renderMenu() {
-      if (!menuEl || !latest) return
-      menuEl.innerHTML = ''
+      const el = menuEl
+      if (!el || !latest) return
+      el.innerHTML = ''
       const items = latest.items
       items.forEach((item, index) => {
         const row = document.createElement('button')
@@ -175,7 +176,7 @@ export const SlashCommands = Extension.create({
         row.addEventListener('click', () => {
           latest?.command(item)
         })
-        menuEl.appendChild(row)
+        el.appendChild(row)
       })
     }
 

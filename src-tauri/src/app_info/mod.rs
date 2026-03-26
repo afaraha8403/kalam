@@ -31,8 +31,10 @@ pub fn capitalize_process_name(name: &str) -> String {
         .unwrap_or(base)
         .strip_suffix(".EXE")
         .unwrap_or(base);
-    base.replace('-', " ")
-        .replace('_', " ")
+    base
+        .chars()
+        .map(|c| if matches!(c, '-' | '_') { ' ' } else { c })
+        .collect::<String>()
         .split_whitespace()
         .map(|word| {
             let mut chars = word.chars();

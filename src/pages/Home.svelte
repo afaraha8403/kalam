@@ -422,7 +422,7 @@
       grid: { show: false, padding: { top: 18, right: 6, bottom: 0, left: 6 } },
       // Data labels already show counts per day; hover tooltip would duplicate that.
       tooltip: { enabled: false },
-    }
+    } as ApexOptions
   })()
 
   $: appsChartOptions = ((): ApexOptions | null => {
@@ -445,7 +445,7 @@
         tooltip: { enabled: false },
         dataLabels: { enabled: false },
         plotOptions: { pie: { donut: { size: '65%' } } }
-      }
+      } as ApexOptions
     }
     const pastelColors = ['#FFB3BA', '#FFDFBA', '#FFFFBA', '#BAFFC9', '#BAE1FF', '#AEC6CF', '#CBAACB', '#F49AC2']
     return {
@@ -457,7 +457,7 @@
         toolbar: { show: false }, 
         background: 'transparent',
         fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-        animations: { easing: 'easeinout', speed: 400 } 
+        animations: { easing: 'easeinout', speed: 400 },
       },
       series: apps.map(a => a.count),
       labels: apps.map(a => shortenAppLabel(a.app)),
@@ -492,7 +492,7 @@
           },
         },
       },
-    }
+    } as ApexOptions
   })()
 
   $: averageSessionLengthSec = ((): number => {

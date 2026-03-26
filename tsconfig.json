@@ -12,7 +12,12 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["@tauri-apps/api"]
+    "baseUrl": ".",
+    "paths": {
+      "$lib": ["./src/lib"],
+      "$lib/*": ["./src/lib/*"]
+    },
+    "types": ["@tauri-apps/api", "vite/client"]
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"]
 }
