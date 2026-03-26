@@ -502,8 +502,12 @@ fn create_registrations(
                             if cfg.languages.len() >= 2 {
                                 cfg.languages.swap(0, 1);
                                 let label = language_display_name(&cfg.languages[0]);
+                                // Clone so we can emit the same payload the UI expects from save_settings
+                                // (StatusBar reads active language from config, not only sidebarDictationStore).
+                                let updated = cfg.clone();
                                 if config_mgr.save(cfg).is_ok() {
                                     drop(config_mgr);
+                                    let _ = app_handle.emit("settings_updated", &updated);
                                     let msg = "Language: ".to_string();
                                     emit_overlay_event(
                                         &app_handle,
@@ -629,6 +633,32 @@ fn create_registrations(
     registrations
 }
 
+/// Sync OS login-item state with the `auto_start` config flag.
+/// Skipped in debug builds so we do not register `target/debug/...` as a login item.
+fn sync_autostart(app: &tauri::AppHandle, auto_start: bool) {
+    if cfg!(debug_assertions) {
+        log::info!(
+            "Dev build: skipping autostart sync (auto_start={})",
+            auto_start
+        );
+        return;
+    }
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    let result = if auto_start {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    match result {
+        Ok(_) => log::info!(
+            "Autostart {}.",
+            if auto_start { "enabled" } else { "disabled" }
+        ),
+        Err(e) => log::error!("Failed to sync autostart: {}", e),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Dev-only: HTTP bridge so browser (Vite dev) can read DB when Tauri app is running
@@ -655,6 +685,11 @@ pub fn run() {
             .plugin(tauri_plugin_notification::init())
             .plugin(tauri_plugin_updater::Builder::new().build())
             .plugin(tauri_plugin_shell::init())
+            .plugin(
+                tauri_plugin_autostart::Builder::new()
+                    .app_name("Kalam")
+                    .build(),
+            )
             .on_window_event(|window, event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     if window.label() == "main" {
@@ -674,11 +709,17 @@ pub fn run() {
             // Apply saved logging config to in-app log buffer
             app_log::reconfigure(state.config.blocking_lock().get_all().logging.clone());
 
-            // Get config for startup behavior
-            let start_in_focus = {
+            // Get config for startup behavior (one lock for related flags)
+            let (start_in_focus, auto_start, sound_on_background_start) = {
                 let config = state.config.blocking_lock();
-                config.get_all().start_in_focus
+                let c = config.get_all();
+                (
+                    c.start_in_focus,
+                    c.auto_start,
+                    c.notifications.sound_enabled,
+                )
             };
+            sync_autostart(app.handle(), auto_start);
 
             // Set app icon on main window (window title bar + taskbar on Windows)
             if let Some(window) = app.get_webview_window("main") {
@@ -694,9 +735,10 @@ pub fn run() {
                     window.set_focus()?;
                     log::info!("Window shown and focused on startup");
                 } else {
-                    // Play background start sound
-                    if let Err(e) = play_sound(app.handle(), "started-in-background") {
-                        log::warn!("Failed to play background start sound: {}", e);
+                    if sound_on_background_start {
+                        if let Err(e) = play_sound(app.handle(), "started-in-background") {
+                            log::warn!("Failed to play background start sound: {}", e);
+                        }
                     }
                     log::info!("App started in background (minimized to tray)");
                 }
@@ -707,6 +749,17 @@ pub fn run() {
 
             // Manage state
             app.manage(state);
+
+            let retention_startup = app
+                .state::<AppState>()
+                .config
+                .blocking_lock()
+                .get_all()
+                .privacy
+                .history_retention_days;
+            if let Err(e) = history::prune_history_by_retention(retention_startup) {
+                log::warn!("History retention prune on startup failed: {}", e);
+            }
 
             // Apply initial overlay position
             if let Err(e) = update_overlay_position(app.handle()) {
@@ -895,6 +948,9 @@ pub fn run() {
             commands::fetch_llm_models,
             commands::generate_structured_data,
             commands::test_llm_model,
+            get_running_apps,
+            pick_executable_file,
+            get_installed_apps,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -993,11 +1049,21 @@ pub async fn run_update_check(app: &tauri::AppHandle) -> anyhow::Result<()> {
 
 /// User-initiated check from tray: always run check and show a notification (up to date, update available, or error).
 pub async fn run_update_check_user_initiated(app: &tauri::AppHandle) -> anyhow::Result<()> {
+    let show_errors = app
+        .state::<AppState>()
+        .config
+        .lock()
+        .await
+        .get_all()
+        .notifications
+        .show_errors;
     let nm = &app.state::<AppState>().notification_manager;
     let update = match check_update_with_channel(app).await {
         Ok(u) => u,
         Err(e) => {
-            let _ = nm.error("Could not check for updates.");
+            if show_errors {
+                let _ = nm.error("Could not check for updates.");
+            }
             return Err(e);
         }
     };
@@ -1070,6 +1136,311 @@ fn resolve_target_app(process_name: String) -> Result<(String, Option<String>), 
         .map_err(|e| e.to_string())?;
     let icon_b64 = icon.map(|b| base64::engine::general_purpose::STANDARD.encode(b));
     Ok((name, icon_b64))
+}
+
+/// Information about a running or installed application for the "sensitive apps" picker.
+#[derive(serde::Serialize, Clone)]
+pub struct AppListEntry {
+    pub process_name: String,
+    pub display_name: String,
+    pub icon_base64: Option<String>,
+    pub exe_path: Option<String>,
+}
+
+/// List currently running processes with their friendly names and icons.
+/// Excludes system processes and the current app to keep the list useful.
+#[tauri::command]
+fn get_running_apps() -> Result<Vec<AppListEntry>, String> {
+    use base64::Engine;
+    use sysinfo::{ProcessesToUpdate, System};
+    use std::collections::HashSet;
+
+    let mut sys = System::new_all();
+    sys.refresh_processes(ProcessesToUpdate::All);
+
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    let current_pid = std::process::id();
+
+    // Collect unique process names, skipping system processes and this app
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut results: Vec<AppListEntry> = Vec::new();
+
+    for (pid, process) in sys.processes() {
+        // Skip current app
+        if pid.as_u32() == current_pid {
+            continue;
+        }
+
+        let exe_path = process.exe().map(|p| p.to_string_lossy().to_string());
+        let process_name = process
+            .name()
+            .to_string_lossy()
+            .to_string()
+            .to_lowercase();
+
+        // Skip if we've seen this normalized name
+        let normalized = crate::app_info::normalize_process_name(&process_name);
+        if !seen.insert(normalized.clone()) {
+            continue;
+        }
+
+        // Skip common system processes
+        let system_procs: HashSet<&str> = [
+            "svchost.exe", "csrss.exe", "smss.exe", "services.exe", "lsass.exe",
+            "wininit.exe", "winlogon.exe", "explorer.exe", "taskhostw.exe",
+            "kernel", "registry", "system interrupts", "system",
+            "launchd", "kernel_task", "windowserver", "dock", "finder",
+            "systemd", "kthreadd", "init", "bash", "sh", "zsh",
+        ].iter().cloned().collect();
+        if system_procs.contains(normalized.as_str()) {
+            continue;
+        }
+
+        // Get display name and icon from DB/cache
+        let (display_name, icon_opt) =
+            crate::db::get_or_resolve_application(&conn, &process_name, exe_path.as_deref())
+                .unwrap_or_else(|_| {
+                    (crate::app_info::capitalize_process_name(&normalized), None)
+                });
+
+        let icon_base64 = icon_opt.map(|b| base64::engine::general_purpose::STANDARD.encode(b));
+
+        results.push(AppListEntry {
+            process_name: normalized,
+            display_name,
+            icon_base64,
+            exe_path,
+        });
+    }
+
+    // Sort by display name for better UX
+    results.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+
+    // Limit to reasonable number for UI performance
+    results.truncate(100);
+
+    Ok(results)
+}
+
+/// Open a file picker to select an executable file. Returns the selected path or None if cancelled.
+#[tauri::command]
+async fn pick_executable_file() -> Result<Option<String>, String> {
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title("Select an application executable")
+        .add_filter("Executables", &["exe", "app", "AppImage", "bin"])
+        .add_filter("All files", &["*"])
+        .pick_file()
+        .await;
+
+    Ok(picked.map(|f| f.path().to_string_lossy().to_string()))
+}
+
+/// List installed applications (platform-specific).
+/// Windows: common installation directories
+/// macOS: /Applications folder
+/// Linux: .desktop entries
+#[tauri::command]
+fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
+    use base64::Engine;
+    use std::collections::HashSet;
+
+    let _conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut results: Vec<AppListEntry> = Vec::new();
+
+    #[cfg(windows)]
+    {
+        // Common Windows installation paths
+        let program_files = std::env::var("ProgramFiles").ok();
+        let program_files_x86 = std::env::var("ProgramFiles(x86)").ok();
+        let local_app_data = std::env::var("LocalAppData").ok();
+
+        let mut scan_dirs: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(pf) = program_files {
+            scan_dirs.push(std::path::PathBuf::from(pf));
+        }
+        if let Some(pf86) = program_files_x86 {
+            scan_dirs.push(std::path::PathBuf::from(pf86));
+        }
+        if let Some(la) = local_app_data {
+            scan_dirs.push(std::path::PathBuf::from(la));
+        }
+
+        for dir in scan_dirs {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        // Look for .exe files in subdirectories
+                        if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                            for sub in sub_entries.flatten() {
+                                let sub_path = sub.path();
+                                if sub_path.extension()
+                                    .map(|e| e.eq_ignore_ascii_case("exe"))
+                                    .unwrap_or(false)
+                                {
+                                    let exe_path = sub_path.to_string_lossy().to_string();
+                                    let process_name = crate::app_info::normalize_process_name(&exe_path);
+                                    if !seen.insert(process_name.clone()) {
+                                        continue;
+                                    }
+
+                                    if let Some(info) = crate::app_info::resolve(&exe_path) {
+                                        let icon_base64 = info.icon_png.map(|b| {
+                                            base64::engine::general_purpose::STANDARD.encode(b)
+                                        });
+                                        results.push(AppListEntry {
+                                            process_name: info.process_name,
+                                            display_name: info.display_name,
+                                            icon_base64,
+                                            exe_path: Some(exe_path),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let apps_dir = std::path::PathBuf::from("/Applications");
+        if let Ok(entries) = std::fs::read_dir(&apps_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "app").unwrap_or(false) {
+                    let exe_path = path.to_string_lossy().to_string();
+                    let process_name = crate::app_info::normalize_process_name(&exe_path);
+                    if !seen.insert(process_name.clone()) {
+                        continue;
+                    }
+
+                    if let Some(info) = crate::app_info::resolve(&exe_path) {
+                        let icon_base64 = info.icon_png.map(|b| {
+                            base64::engine::general_purpose::STANDARD.encode(b)
+                        });
+                        results.push(AppListEntry {
+                            process_name: info.process_name,
+                            display_name: info.display_name,
+                            icon_base64,
+                            exe_path: Some(exe_path),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Also check user Applications folder
+        if let Ok(home) = std::env::var("HOME") {
+            let user_apps = std::path::PathBuf::from(home).join("Applications");
+            if let Ok(entries) = std::fs::read_dir(&user_apps) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map(|e| e == "app").unwrap_or(false) {
+                        let exe_path = path.to_string_lossy().to_string();
+                        let process_name = crate::app_info::normalize_process_name(&exe_path);
+                        if !seen.insert(process_name.clone()) {
+                            continue;
+                        }
+
+                        if let Some(info) = crate::app_info::resolve(&exe_path) {
+                            let icon_base64 = info.icon_png.map(|b| {
+                                base64::engine::general_purpose::STANDARD.encode(b)
+                            });
+                            results.push(AppListEntry {
+                                process_name: info.process_name,
+                                display_name: info.display_name,
+                                icon_base64,
+                                exe_path: Some(exe_path),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Scan desktop entry directories
+        let desktop_dirs = [
+            std::path::PathBuf::from("/usr/share/applications"),
+            std::path::PathBuf::from("/usr/local/share/applications"),
+            std::env::var("HOME")
+                .map(|h| std::path::PathBuf::from(h).join(".local/share/applications"))
+                .unwrap_or_default(),
+        ];
+
+        for dir in desktop_dirs {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map(|e| e == "desktop").unwrap_or(false) {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            // Parse Exec line to get the binary name
+                            let exec_line = content
+                                .lines()
+                                .find(|l| l.starts_with("Exec="))
+                                .map(|l| l.trim_start_matches("Exec="));
+
+                            if let Some(exec) = exec_line {
+                                let exe_name = exec.split_whitespace().next().unwrap_or(exec);
+                                let process_name = crate::app_info::normalize_process_name(exe_name);
+                                if !seen.insert(process_name.clone()) {
+                                    continue;
+                                }
+
+                                // Get Name from desktop entry
+                                let name_line = content
+                                    .lines()
+                                    .find(|l| l.starts_with("Name="))
+                                    .map(|l| l.trim_start_matches("Name=").to_string())
+                                    .unwrap_or_else(|| {
+                                        crate::app_info::capitalize_process_name(&process_name)
+                                    });
+
+                                // Try to get icon
+                                let icon_name = content
+                                    .lines()
+                                    .find(|l| l.starts_with("Icon="))
+                                    .map(|l| l.trim_start_matches("Icon="));
+
+                                let icon_base64 = icon_name.and_then(|icon| {
+                                    if std::path::Path::new(icon).is_absolute() && std::path::Path::new(icon).exists() {
+                                        std::fs::read(icon).ok()
+                                    } else {
+                                        // Try to look up in icon theme cache
+                                        use freedesktop_icon_lookup::Cache;
+                                        let mut cache = Cache::new().ok()?;
+                                        cache.load_default().ok()?;
+                                        let _ = cache.load("Adwaita");
+                                        let _ = cache.load("hicolor");
+                                        let icon_path = cache.lookup(icon, None::<&str>)?;
+                                        std::fs::read(icon_path).ok()
+                                    }
+                                }).map(|b| base64::engine::general_purpose::STANDARD.encode(b));
+
+                                results.push(AppListEntry {
+                                    process_name,
+                                    display_name: name_line,
+                                    icon_base64,
+                                    exe_path: Some(exe_name.to_string()),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort by display name
+    results.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+
+    Ok(results)
 }
 
 #[tauri::command]
@@ -1403,6 +1774,8 @@ async fn save_settings(
             drop(config);
             let _ = update_overlay_position(&state.app_handle);
 
+            sync_autostart(&state.app_handle, config_to_save.auto_start);
+
             reset_overlay_state(&state.app_handle);
 
             if !config_to_save.dictation_enabled {
@@ -1542,8 +1915,33 @@ async fn reset_application(state: tauri::State<'_, AppState>) -> Result<(), Stri
         .map_err(|e| e.to_string())?;
     app_log::reconfigure(config.get_all().logging.clone());
     drop(config);
-    let _ = state.app_handle.emit("app_reset", ());
+
+    // Match save_settings: push config to the shell/overlay and re-register hotkeys so reset
+    // is live without an app restart (previously only app_reset ran, leaving stale registrations).
+    let _ = state
+        .app_handle
+        .emit("settings_updated", &default_config);
     let _ = update_overlay_position(&state.app_handle);
+    reset_overlay_state(&state.app_handle);
+
+    let cmd_hk = default_config
+        .command_config
+        .enabled
+        .then(|| default_config.command_config.hotkey.clone())
+        .flatten()
+        .filter(|s| !s.trim().is_empty());
+    let registrations = create_registrations(
+        &state.app_handle,
+        state.is_recording.clone(),
+        &default_config.hotkey,
+        default_config.toggle_dictation_hotkey.clone(),
+        default_config.language_toggle_hotkey.clone(),
+        cmd_hk,
+        default_config.recording_mode,
+    );
+    crate::hotkey::update_registrations(registrations);
+
+    let _ = state.app_handle.emit("app_reset", ());
     Ok(())
 }
 
@@ -1621,8 +2019,27 @@ async fn test_microphone_stop(
         .stop_and_get_test_result()
         .await
     {
-        Ok((level, samples, sample_rate)) => {
-            log::info!("Test stopped, level: {}, samples: {}", level, samples.len());
+        Ok((_level, mut samples, sample_rate)) => {
+            let cfg = state.config.lock().await.get_all();
+            let stt = crate::config::privacy::effective_stt_config(&cfg);
+            crate::audio::filter::apply_filter_chain(
+                &mut samples,
+                &stt.audio_filter,
+                sample_rate,
+            );
+            // Match dictation path: level reflects post-filter signal for the meter readout.
+            let level = if samples.is_empty() {
+                0.0
+            } else {
+                let sum: f32 = samples.iter().map(|s| s * s).sum();
+                let rms = (sum / samples.len() as f32).sqrt();
+                (rms * 10.0).min(1.0)
+            };
+            log::info!(
+                "Test stopped, level: {}, samples: {} (after optional filter)",
+                level,
+                samples.len()
+            );
             Ok(TestMicrophoneResult {
                 level,
                 samples,
@@ -1697,11 +2114,13 @@ async fn get_model_status(state: tauri::State<'_, AppState>) -> Result<serde_jso
             _ => (id.to_string(), "—".into(), "—".into()),
         }
     }
+    let rss_by_id = state.local_model_manager.sidecar_rss_by_model_id().await;
     let mut out = serde_json::Map::new();
     for m in crate::stt::models::known_models() {
         let status = state.local_model_manager.get_status(m.id).await;
         let (status_label, error_message) = status_parts(status);
         let (label, quality, languages) = model_metadata(m.id);
+        let rss_bytes = rss_by_id.get(m.id).copied();
         out.insert(
             m.id.to_string(),
             json!({
@@ -1712,7 +2131,8 @@ async fn get_model_status(state: tauri::State<'_, AppState>) -> Result<serde_jso
                 "download_progress": serde_json::Value::Null,
                 "label": label,
                 "quality": quality,
-                "languages": languages
+                "languages": languages,
+                "rss_bytes": rss_bytes
             }),
         );
     }
@@ -2284,8 +2704,17 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     latency_trace_write("after_emit_listening");
     let app_handle = state.app_handle.clone();
     latency_trace_write("T3_before_play_sound");
-    if let Err(e) = play_sound(&app_handle, "dictation-started") {
-        log::warn!("Failed to play dictation start sound: {}", e);
+    let sound_enabled = state
+        .config
+        .lock()
+        .await
+        .get_all()
+        .notifications
+        .sound_enabled;
+    if sound_enabled {
+        if let Err(e) = play_sound(&app_handle, "dictation-started") {
+            log::warn!("Failed to play dictation start sound: {}", e);
+        }
     }
     latency_trace_write("T3_after_play_sound");
     latency_trace_write("after_play_sound");
@@ -2440,10 +2869,12 @@ async fn run_command_pipeline(
                 trimmed["new reminder".len()..].trim().to_string(),
             )
         } else {
-            let state = app_handle.state::<AppState>();
-            let _ = state.notification_manager.warning(
-                "Say \"new note\", \"new task\", or \"new reminder\" followed by your content.",
-            );
+            if config.notifications.show_errors {
+                let state = app_handle.state::<AppState>();
+                let _ = state.notification_manager.warning(
+                    "Say \"new note\", \"new task\", or \"new reminder\" followed by your content.",
+                );
+            }
             return Err("Could not detect command. Say 'new note', 'new task', or 'new reminder' followed by your content.".to_string());
         };
         if p.is_empty() {
@@ -2829,11 +3260,19 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         );
         let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Processing);
 
-        // Play end sound
+        // Play end sound when the user enabled UI sounds
         let app_handle = state.app_handle.clone();
-
-        if let Err(e) = play_sound(&app_handle, "dictation-ended") {
-            log::warn!("Failed to play dictation end sound: {}", e);
+        let sound_enabled = state
+            .config
+            .lock()
+            .await
+            .get_all()
+            .notifications
+            .sound_enabled;
+        if sound_enabled {
+            if let Err(e) = play_sound(&app_handle, "dictation-ended") {
+                log::warn!("Failed to play dictation end sound: {}", e);
+            }
         }
 
         let (audio_data, sample_rate) =
@@ -2925,6 +3364,13 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                 | crate::config::STTMode::Hybrid
                 | crate::config::STTMode::Auto => None,
             };
+            // One-shot light DSP before STT; same buffer is reused across transcription retries.
+            let mut audio_data = audio_data;
+            crate::audio::filter::apply_filter_chain(
+                &mut audio_data,
+                &stt_config.audio_filter,
+                sample_rate,
+            );
             let audio_data = Arc::new(audio_data);
             let recording_duration_ms: Option<u32> = if sample_rate > 0 {
                 let ms = audio_data.len() as u64 * 1000 / sample_rate as u64;
@@ -3151,6 +3597,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                 foreground_exe_path.clone(),
                                 recording_duration_ms,
                                 meta,
+                                config.privacy.history_retention_days,
                             )
                             .await
                             {
@@ -3210,6 +3657,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             foreground_exe_path.clone(),
                             recording_duration_ms,
                             meta,
+                            config.privacy.history_retention_days,
                         )
                         .await
                         {
@@ -3292,6 +3740,12 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                 } else {
                                     last_injected_len.store(formatted.len(), Ordering::SeqCst);
                                     *last_injected_text.lock().await = formatted;
+                                    if config.notifications.show_completion {
+                                        let nm = &app_handle
+                                            .state::<AppState>()
+                                            .notification_manager;
+                                        let _ = nm.success("Dictation complete");
+                                    }
                                 }
                             }
                         }

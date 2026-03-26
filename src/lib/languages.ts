@@ -33,6 +33,14 @@ export function languageLabel(code: string): string {
   return LANGUAGE_OPTIONS.find((o) => o.code === code)?.label ?? code
 }
 
+/** STT language code stored on a history row. */
+export function historyLanguageLabel(code: string | null | undefined): string {
+  const c = (code ?? '').trim()
+  if (!c) return '—'
+  if (c.toLowerCase() === 'auto') return 'Auto'
+  return languageLabel(c)
+}
+
 export function getSupportedLanguagesForProvider(providerKey: string): string[] {
   return SUPPORTED_LANGUAGES_BY_PROVIDER[providerKey] ?? []
 }

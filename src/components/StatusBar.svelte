@@ -413,9 +413,11 @@
     cursor: pointer;
   }
 
+  /* Disabled = non-clickable info (e.g. DB OK); keep same ink as the rest of the bar. */
   .segment.interactive:disabled {
     cursor: default;
-    opacity: 0.75;
+    opacity: 1;
+    color: inherit;
   }
 
   .segment.error {
@@ -440,7 +442,6 @@
   /* Chevron (▼/▲) aligned with native select arrows on the mic control. */
   .stt-chevron {
     font-size: 0.7em;
-    opacity: 0.8;
     margin-left: 2px;
     line-height: 1;
     user-select: none;
@@ -476,7 +477,8 @@
 
   .mic-select:disabled {
     cursor: default;
-    opacity: 0.75;
+    opacity: 1;
+    color: inherit;
   }
 
   .mic-select:focus {
@@ -492,6 +494,7 @@
     margin: 0;
     border-radius: 0;
     font: inherit;
+    color: inherit;
   }
 
   .stt-wrap {
@@ -549,16 +552,14 @@
   }
 
   .hotkey-extra {
-    opacity: 0.9;
+    font: inherit;
   }
 
   .latency {
-    opacity: 0.9;
     font: inherit;
   }
 
   .lang-badge {
-    opacity: 0.95;
     font: inherit;
   }
 

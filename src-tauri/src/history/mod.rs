@@ -116,12 +116,15 @@ pub struct HistorySaveMeta {
     pub session_mode: String,
 }
 
+/// `history_retention_days` comes from config (`privacy.history_retention_days`); `0` skips age-based prune.
 pub async fn save_transcription(
     text: &str,
     target_app: Option<String>,
     target_exe_path: Option<String>,
     duration_ms: Option<u32>,
     meta: HistorySaveMeta,
+    // From `privacy.history_retention_days`; 0 means keep forever (no age prune).
+    history_retention_days: u32,
 ) -> anyhow::Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = Utc::now();
@@ -174,6 +177,37 @@ pub async fn save_transcription(
     db::insert_entry(&conn, &entry)?;
     db::insert_embedding_stub(&conn, &id)?;
     trim_history_if_needed(&conn)?;
+    prune_history_by_retention_on_conn(&conn, history_retention_days)?;
+    Ok(())
+}
+
+/// Remove history rows older than `retention_days` (0 = keep forever). Cleans orphaned `vec_entries`.
+pub fn prune_history_by_retention(retention_days: u32) -> anyhow::Result<()> {
+    if retention_days == 0 {
+        return Ok(());
+    }
+    let conn = db::open_db()?;
+    prune_history_by_retention_on_conn(&conn, retention_days)
+}
+
+fn prune_history_by_retention_on_conn(
+    conn: &rusqlite::Connection,
+    retention_days: u32,
+) -> anyhow::Result<()> {
+    if retention_days == 0 {
+        return Ok(());
+    }
+    // `created_at` is RFC3339 in `entries`; string compare is order-preserving for ISO-8601.
+    let cutoff = Utc::now() - chrono::Duration::days(i64::from(retention_days));
+    let cutoff_str = cutoff.to_rfc3339();
+    conn.execute(
+        "DELETE FROM entries WHERE entry_type = 'history' AND created_at < ?1",
+        [&cutoff_str],
+    )?;
+    conn.execute(
+        "DELETE FROM vec_entries WHERE entry_id NOT IN (SELECT id FROM entries)",
+        [],
+    )?;
     Ok(())
 }
 

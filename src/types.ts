@@ -75,6 +75,27 @@ export interface AppConfig {
   theme_preference?: ThemePreference
 }
 
+export type AudioFilterPreset = 'Off' | 'Light' | 'Moderate' | 'Custom'
+
+export interface AudioFilterConfig {
+  enabled: boolean
+  preset: AudioFilterPreset
+  highpass_cutoff_hz: number
+  noise_gate_threshold_db: number
+  compressor_ratio: number
+  compressor_threshold_db: number
+  normalize_target_db: number
+}
+
+/** Mirrors Rust `TranscriptionTimeoutConfig` (serde snake_case). */
+export interface TranscriptionTimeoutConfig {
+  timeout_min_seconds_cloud: number
+  timeout_min_seconds_local: number
+  timeout_max_seconds: number
+  timeout_multiplier: number
+  timeout_buffer_seconds: number
+}
+
 export interface STTConfig {
   mode: 'Cloud' | 'Local' | 'Hybrid' | 'Auto'
   provider: string
@@ -83,6 +104,9 @@ export interface STTConfig {
   api_key?: string | null
   local_model: string | null
   vad_preset: 'Fast' | 'Balanced' | 'Accurate'
+  audio_filter: AudioFilterConfig
+  /** Dynamic STT timeouts; optional for older saved configs (Rust fills defaults on load). */
+  transcription_timeout?: TranscriptionTimeoutConfig
 }
 
 export interface FormattingConfig {
@@ -93,6 +117,9 @@ export interface FormattingConfig {
   injection_method: 'Auto' | 'Keystrokes' | 'Clipboard'
   keystroke_delay_ms: number
   clipboard_threshold: number
+  /** Clipboard-injection retry count (Rust `injection` module). */
+  retry_attempts?: number
+  retry_delay_ms?: number
   force_clipboard_apps: string[]
 }
 
@@ -112,7 +139,8 @@ export interface PrivacyConfig {
 export interface SensitiveAppPattern {
   pattern: string
   pattern_type: 'ProcessName' | 'WindowTitle' | 'BundleId'
-  action: 'ForceLocal' | 'Block' | 'RequireConfirmation'
+  /** Only `ForceLocal` is supported; legacy configs may still deserialize extra values as ForceLocal in Rust. */
+  action: 'ForceLocal'
 }
 
 export interface NotificationConfig {

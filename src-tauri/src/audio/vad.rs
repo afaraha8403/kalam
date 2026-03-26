@@ -16,7 +16,12 @@ pub struct VADConfig {
 impl Default for VADConfig {
     fn default() -> Self {
         Self {
-            speech_threshold: 0.5,
+            // Raw sample amplitude threshold, NOT a Silero probability score.
+            // Normal speech from most microphones sits at 0.01–0.10 absolute amplitude;
+            // 0.02 catches typical speech while ignoring low-level mic noise.
+            // When the audio filter (Light preset) normalizes to −6 dBFS before VAD,
+            // this threshold works consistently across all mic gain levels.
+            speech_threshold: 0.02,
             silence_timeout_sec: 1.5,
             min_speech_duration_sec: 0.25,
             max_chunk_duration_sec: 30.0,
@@ -28,6 +33,7 @@ impl Default for VADConfig {
 impl VADConfig {
     pub fn fast() -> Self {
         Self {
+            speech_threshold: 0.03,
             silence_timeout_sec: 0.8,
             ..Default::default()
         }
@@ -35,6 +41,7 @@ impl VADConfig {
 
     pub fn accurate() -> Self {
         Self {
+            speech_threshold: 0.01,
             silence_timeout_sec: 2.5,
             ..Default::default()
         }

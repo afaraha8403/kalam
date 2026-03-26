@@ -1,11 +1,20 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount, tick } from 'svelte'
+  import { cubicOut } from 'svelte/easing'
+  import { slide } from 'svelte/transition'
   import { invoke, listenSafe } from '$lib/backend'
   import Icon from '@iconify/svelte'
   import { initTelemetry, optOut } from '../lib/telemetry'
   import { sidebarDictationStore } from '../lib/sidebarDictation'
   import { LANGUAGE_OPTIONS, languageLabel, isLanguageSupportedByProvider } from '../lib/languages'
-  import type { AppConfig, AudioDevice, DictionaryEntry, ThemePreference } from '../types'
+  import type {
+    AppConfig,
+    AudioDevice,
+    AudioFilterPreset,
+    DictionaryEntry,
+    SensitiveAppPattern,
+    ThemePreference,
+  } from '../types'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
   import About from './About.svelte'
 
@@ -40,6 +49,8 @@
     label?: string
     quality?: string
     languages?: string
+    /** Resident set size of the sidecar process (bytes), when running. */
+    rss_bytes?: number | null
   }
 
   const LOCAL_MODEL_IDS = ['sensevoice', 'whisper_base'] as const
@@ -71,6 +82,29 @@
     { id: 'about', label: 'About', icon: 'ph:info' },
   ]
 
+  /** Horizontal tab strip: global CSS hides scrollbars; fades + chevrons hint at sideways overflow. */
+  let tabsScrollEl: HTMLDivElement | null = null
+  let canScrollTabsLeft = false
+  let canScrollTabsRight = false
+
+  function updateTabScrollHints() {
+    const el = tabsScrollEl
+    if (!el) {
+      canScrollTabsLeft = false
+      canScrollTabsRight = false
+      return
+    }
+    const { scrollLeft, scrollWidth, clientWidth } = el
+    const maxScroll = scrollWidth - clientWidth
+    const slop = 2
+    canScrollTabsLeft = scrollLeft > slop
+    canScrollTabsRight = maxScroll > slop && scrollLeft < maxScroll - slop
+  }
+
+  function scrollSettingsTabsBy(delta: number) {
+    tabsScrollEl?.scrollBy({ left: delta, behavior: 'smooth' })
+  }
+
   /** Prototype: collapsed = section header only; names aligned with Prototype.svelte. */
   let collapsedSections: Record<string, boolean> = {
     general_hotkeys: false,
@@ -82,6 +116,7 @@
     dictionary: false,
     command: false,
     privacy_data: false,
+    privacy_notifications: false,
     advanced_logs: false,
     advanced_danger: false,
   }
@@ -95,6 +130,75 @@
   function setRecordingMode(m: 'Hold' | 'Toggle' | 'Both') {
     if (!config) return
     config.recording_mode = m === 'Both' ? null : m
+    scheduleSave()
+  }
+
+  /** Default dictation filter (Light); matches Rust `AudioFilterConfig::default()`.
+   *  Normalization ensures the VAD threshold works regardless of mic gain. */
+  function defaultAudioFilter() {
+    return {
+      enabled: true,
+      preset: 'Light' as AudioFilterPreset,
+      highpass_cutoff_hz: 80,
+      noise_gate_threshold_db: -45,
+      compressor_ratio: 3,
+      compressor_threshold_db: -18,
+      normalize_target_db: -6,
+    }
+  }
+
+  function applyAudioFilterPreset(preset: AudioFilterPreset) {
+    if (!config) return
+    const prev = config.stt_config.audio_filter
+    if (preset === 'Off') {
+      config = {
+        ...config,
+        stt_config: {
+          ...config.stt_config,
+          audio_filter: { ...prev, enabled: false, preset: 'Off' },
+        },
+      }
+      scheduleSave()
+      return
+    }
+    const base = { ...prev, preset, enabled: true }
+    if (preset === 'Light') {
+      base.highpass_cutoff_hz = 80
+      base.noise_gate_threshold_db = -45
+      base.compressor_ratio = 3
+      base.compressor_threshold_db = -18
+      base.normalize_target_db = -6
+    } else if (preset === 'Moderate') {
+      base.highpass_cutoff_hz = 100
+      base.noise_gate_threshold_db = -40
+      base.compressor_ratio = 4
+      base.compressor_threshold_db = -15
+      base.normalize_target_db = -3
+    }
+    config = { ...config, stt_config: { ...config.stt_config, audio_filter: base } }
+    scheduleSave()
+  }
+
+  function onAudioFilterPresetSelect(e: Event) {
+    const v = (e.currentTarget as HTMLSelectElement).value
+    if (v === 'Off' || v === 'Light' || v === 'Moderate' || v === 'Custom') {
+      applyAudioFilterPreset(v)
+    }
+  }
+
+  /** User moved a slider; force Custom + enabled so the chain runs with tuned values. */
+  function markAudioFilterCustomAndSave() {
+    if (!config) return
+    const af = config.stt_config.audio_filter
+    if (af.preset !== 'Custom' || !af.enabled) {
+      config = {
+        ...config,
+        stt_config: {
+          ...config.stt_config,
+          audio_filter: { ...af, preset: 'Custom', enabled: true },
+        },
+      }
+    }
     scheduleSave()
   }
 
@@ -183,6 +287,15 @@
         if (config.stt_config.api_key && !config.stt_config.api_keys[sttProvider]) {
           config.stt_config.api_keys[sttProvider] = config.stt_config.api_key
         }
+        if (!config.stt_config.audio_filter) {
+          config.stt_config.audio_filter = defaultAudioFilter()
+        } else {
+          const af = config.stt_config.audio_filter
+          // Legacy: any disabled state maps to preset Off in the unified dropdown (numeric fields kept).
+          if (!af.enabled && af.preset !== 'Off') {
+            config.stt_config.audio_filter = { ...af, preset: 'Off' }
+          }
+        }
         if (!config.waveform_style) config.waveform_style = 'Aurora'
         if (!config.overlay_position) config.overlay_position = 'BottomCenter'
         if (config.overlay_offset_x == null) config.overlay_offset_x = 0
@@ -246,10 +359,44 @@
   })
 
   onDestroy(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.overflow = ''
+      document.body.style.overflow = ''
+      document.documentElement.classList.remove('sensitive-app-picker-open')
+    }
     if (statusPollInterval) clearInterval(statusPollInterval)
     if (unlistenDownloadProgress) unlistenDownloadProgress()
     if (unlistenEngineDownloadProgress) unlistenEngineDownloadProgress()
   })
+
+  function tabsScrollAction(node: HTMLDivElement) {
+    tabsScrollEl = node
+    let ro: ResizeObserver | null = null
+    const onWinResize = () => updateTabScrollHints()
+
+    window.addEventListener('resize', onWinResize)
+    node.addEventListener('scroll', updateTabScrollHints, { passive: true })
+    ro = new ResizeObserver(updateTabScrollHints)
+    ro.observe(node)
+    
+    // Double-check after a frame to ensure accurate measurements
+    requestAnimationFrame(() => {
+      updateTabScrollHints()
+      // Multiple checks as fonts/layout settle
+      setTimeout(updateTabScrollHints, 50)
+      setTimeout(updateTabScrollHints, 150)
+      setTimeout(updateTabScrollHints, 300)
+    })
+
+    return {
+      destroy() {
+        window.removeEventListener('resize', onWinResize)
+        node.removeEventListener('scroll', updateTabScrollHints)
+        ro?.disconnect()
+        if (tabsScrollEl === node) tabsScrollEl = null
+      }
+    }
+  }
 
   async function refreshModelStatuses() {
     try {
@@ -266,7 +413,11 @@
       }
       if (cleared) engineDownloadProgress = nextEngine
 
-      if (config?.stt_config?.mode === 'Local' || config?.stt_config?.mode === 'Hybrid') {
+      if (
+        config?.stt_config?.mode === 'Local' ||
+        config?.stt_config?.mode === 'Hybrid' ||
+        config?.stt_config?.mode === 'Auto'
+      ) {
         const localModel = config.stt_config.local_model ?? 'sensevoice'
         try {
           sidecarInstalled = (await invoke('is_sidecar_installed_for_model', { modelId: localModel })) as boolean
@@ -293,11 +444,262 @@
 
   function selectSttModeCard(mode: string) {
     if (!config) return
-    if (mode === 'Cloud' || mode === 'Local' || mode === 'Hybrid') {
+    if (mode === 'Cloud' || mode === 'Local' || mode === 'Hybrid' || mode === 'Auto') {
       config.stt_config.mode = mode
       void onSttModeChange()
     }
   }
+
+  const STT_MODE_LABELS: Record<string, string> = {
+    Cloud: 'Fastest, requires internet',
+    Local: 'Private, runs on your device',
+    Hybrid: 'Combines both for best results',
+    Auto:
+      'Cloud when safe; switches to local STT when the focused app matches a pattern under Privacy → Sensitive apps',
+  }
+
+  // Sensitive Apps picker state
+  type AppListEntry = {
+    process_name: string
+    display_name: string
+    icon_base64?: string | null
+    exe_path?: string | null
+  }
+
+  let sensitiveAppPickerOpen = false
+  let sensitiveAppPickerTab: 'running' | 'installed' | 'browse' = 'running'
+  let runningApps: AppListEntry[] = []
+  let installedApps: AppListEntry[] = []
+  /** User must click "Load installed apps" — scan is slow on some systems. */
+  let installedAppsLoaded = false
+  let sensitiveAppsLoading = false
+  let sensitiveAppsSearch = ''
+  /** Match main shell theme when the picker is portaled to `document.body` (outside `.kalam-sleek`). */
+  let modalPickerDark = false
+
+  function updateModalTheme() {
+    if (typeof document !== 'undefined') {
+      const htmlTheme = document.documentElement.getAttribute('data-theme')
+      modalPickerDark = htmlTheme === 'dark'
+    }
+  }
+
+  /** Move overlay to `body` so `position: fixed` is viewport-relative (not trapped by `.page.fade-in` transform). */
+  function portalBody(node: HTMLElement) {
+    updateModalTheme()
+    document.body.appendChild(node)
+    return {
+      destroy() {
+        node.remove()
+      },
+    }
+  }
+
+  $: if (typeof document !== 'undefined') {
+    const lock = sensitiveAppPickerOpen ? 'hidden' : ''
+    document.documentElement.style.overflow = lock
+    document.body.style.overflow = lock
+    document.documentElement.classList.toggle('sensitive-app-picker-open', sensitiveAppPickerOpen)
+  }
+
+  function ensureSensitivePatternsArray() {
+    if (!config) return
+    if (!Array.isArray(config.privacy.sensitive_app_patterns)) {
+      config.privacy.sensitive_app_patterns = []
+    }
+  }
+
+  function removeSensitiveAppPattern(index: number) {
+    if (!config) return
+    ensureSensitivePatternsArray()
+    config.privacy.sensitive_app_patterns = config.privacy.sensitive_app_patterns.filter((_, i) => i !== index)
+    scheduleSave()
+  }
+
+  async function openSensitiveAppPicker() {
+    sensitiveAppPickerOpen = true
+    sensitiveAppPickerTab = 'running'
+    sensitiveAppsSearch = ''
+    await tick()
+    updateModalTheme()
+    void loadRunningApps()
+  }
+
+  function closeSensitiveAppPicker() {
+    sensitiveAppPickerOpen = false
+    runningApps = []
+    installedApps = []
+    installedAppsLoaded = false
+    sensitiveAppsSearch = ''
+  }
+
+  async function loadRunningApps() {
+    sensitiveAppsLoading = true
+    try {
+      runningApps = (await invoke('get_running_apps')) as AppListEntry[]
+    } catch (e) {
+      console.error('Failed to load running apps:', e)
+      runningApps = []
+    } finally {
+      sensitiveAppsLoading = false
+    }
+  }
+
+  async function loadInstalledApps() {
+    sensitiveAppsLoading = true
+    try {
+      installedApps = (await invoke('get_installed_apps')) as AppListEntry[]
+      installedAppsLoaded = true
+    } catch (e) {
+      console.error('Failed to load installed apps:', e)
+      installedApps = []
+      installedAppsLoaded = true
+    } finally {
+      sensitiveAppsLoading = false
+    }
+  }
+
+  async function pickExecutableFile() {
+    try {
+      const path = (await invoke('pick_executable_file')) as string | null
+      if (path) {
+        const processName = path.split(/[/\\]/).pop()?.toLowerCase() ?? ''
+        if (processName) {
+          addSensitiveAppFromPicker(processName, path)
+        }
+      }
+    } catch (e) {
+      console.error('Failed to pick executable:', e)
+    }
+  }
+
+  function switchSensitivePickerTab(tab: 'running' | 'installed' | 'browse') {
+    sensitiveAppPickerTab = tab
+    sensitiveAppsSearch = ''
+    if (tab === 'running' && runningApps.length === 0) {
+      void loadRunningApps()
+    }
+    // Installed: user triggers load via button (scan can take several seconds).
+  }
+
+  function escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+
+  function isAppAlreadyAdded(processName: string): boolean {
+    if (!config?.privacy.sensitive_app_patterns) return false
+    // Check if any pattern would match this exact process name
+    return config.privacy.sensitive_app_patterns.some((p) => {
+      if (p.pattern_type !== 'ProcessName') return false
+      // Simple check: if pattern is just the name or contains it as a whole word
+      const normalized = processName.toLowerCase()
+      const pattern = p.pattern.toLowerCase()
+      return pattern.includes(normalized) || normalized.includes(pattern.replace(/[^a-z0-9]/g, ''))
+    })
+  }
+
+  function addSensitiveAppFromPicker(processName: string, exePath?: string | null) {
+    if (!config) return
+    if (isAppAlreadyAdded(processName)) {
+      // Already added - just close picker
+      closeSensitiveAppPicker()
+      return
+    }
+
+    ensureSensitivePatternsArray()
+
+    // Create a regex that matches the process name (case-insensitive, exact match)
+    // If it's a simple name like "1password.exe", we create a pattern that matches it exactly
+    const baseName = processName.replace(/\.exe$/i, '').replace(/\.app$/i, '')
+    const pattern = `(?i)^${escapeRegex(baseName)}(\\.exe)?$`
+
+    const next: SensitiveAppPattern = {
+      pattern,
+      pattern_type: 'ProcessName',
+      action: 'ForceLocal',
+    }
+    config.privacy.sensitive_app_patterns = [...config.privacy.sensitive_app_patterns, next]
+    scheduleSave()
+    closeSensitiveAppPicker()
+  }
+
+  function getDisplayNameForPattern(pattern: SensitiveAppPattern): string {
+    // Try to extract a readable name from the regex pattern
+    if (pattern.pattern_type === 'ProcessName') {
+      const pl = pattern.pattern.toLowerCase()
+      if (
+        pl.includes('1password') &&
+        pl.includes('bitwarden') &&
+        pl.includes('nordpass')
+      ) {
+        return 'Password managers (default bundle)'
+      }
+      // Remove regex escaping and look for the core name
+      let simplified = pattern.pattern
+        .replace(/\(\?i\)/g, '') // Remove case-insensitive flag
+        .replace(/\^|\$/g, '') // Remove anchors
+        .replace(/\\\./g, '.') // Unescape dots
+        .replace(/\\/g, '') // Remove escape chars
+        .replace(/\(\.exe\)\?/gi, '') // Remove optional .exe
+        .replace(/\.exe$/i, '') // Remove .exe suffix
+        .trim()
+
+      // If it looks like a process name, capitalize it
+      if (simplified && !simplified.includes('|') && !simplified.includes('(')) {
+        return simplified
+          .split(/[-_]/)
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ')
+      }
+    }
+    return pattern.pattern
+  }
+
+  function getPatternIcon(pattern: SensitiveAppPattern): string {
+    // Return a relevant icon based on pattern content
+    const p = pattern.pattern.toLowerCase()
+    if (
+      p.includes('password') ||
+      p.includes('1password') ||
+      p.includes('bitwarden') ||
+      p.includes('keepass') ||
+      p.includes('lastpass') ||
+      p.includes('dashlane') ||
+      p.includes('nordpass')
+    ) {
+      return 'ph:key'
+    }
+    if (p.includes('bank') || p.includes('finance') || p.includes('crypto') || p.includes('wallet')) {
+      return 'ph:currency-dollar'
+    }
+    if (p.includes('mail') || p.includes('email') || p.includes('outlook') || p.includes('thunderbird')) {
+      return 'ph:envelope'
+    }
+    if (p.includes('chat') || p.includes('slack') || p.includes('teams') || p.includes('discord') || p.includes('signal') || p.includes('telegram') || p.includes('whatsapp')) {
+      return 'ph:chat-circle'
+    }
+    if (p.includes('browser') || p.includes('chrome') || p.includes('firefox') || p.includes('safari') || p.includes('edge')) {
+      return 'ph:globe'
+    }
+    if (p.includes('doc') || p.includes('word') || p.includes('excel') || p.includes('sheet') || p.includes('note')) {
+      return 'ph:file-text'
+    }
+    return 'ph:app-window'
+  }
+
+  $: filteredRunningApps = sensitiveAppsSearch
+    ? runningApps.filter((a) =>
+        a.display_name.toLowerCase().includes(sensitiveAppsSearch.toLowerCase()) ||
+        a.process_name.toLowerCase().includes(sensitiveAppsSearch.toLowerCase())
+      )
+    : runningApps
+
+  $: filteredInstalledApps = sensitiveAppsSearch
+    ? installedApps.filter((a) =>
+        a.display_name.toLowerCase().includes(sensitiveAppsSearch.toLowerCase()) ||
+        a.process_name.toLowerCase().includes(sensitiveAppsSearch.toLowerCase())
+      )
+    : installedApps
 
   async function onSttModeChange() {
     await saveSettingsImmediate()
@@ -454,6 +856,7 @@
       if ((config.command_config.provider as unknown as string) === '') config.command_config.provider = null
     }
     if (!Array.isArray(config.languages) || config.languages.length === 0) config.languages = ['en']
+    if (!Array.isArray(config.privacy.sensitive_app_patterns)) config.privacy.sensitive_app_patterns = []
 
     saveError = null
     try {
@@ -928,23 +1331,56 @@
       <p class="save-error" role="alert">{saveError}</p>
     {/if}
 
-    <div class="settings-tabs">
-      {#each tabs as tab}
+    <div class="settings-tabs-shell">
+      {#if canScrollTabsLeft}
         <button
           type="button"
-          class="settings-tab"
-          class:active={activeTab === tab.id}
-          on:click={() => {
-            activeTab = tab.id
-            if (tab.id !== 'advanced') logExportMessage = null
-            if (tab.id === 'advanced') checkLogEmpty()
-            if (tab.id === 'dictionary') loadDictionaryEntries()
-          }}
+          class="settings-tabs-edge-btn settings-tabs-edge-btn--left"
+          aria-label="Scroll settings tabs left"
+          on:click={() => scrollSettingsTabsBy(-Math.min(280, (tabsScrollEl?.clientWidth ?? 280) * 0.85))}
         >
-          <Icon icon={tab.icon} />
-          <span>{tab.label}</span>
+          <Icon icon="ph:caret-left" />
         </button>
-      {/each}
+      {/if}
+      {#if canScrollTabsRight}
+        <button
+          type="button"
+          class="settings-tabs-edge-btn settings-tabs-edge-btn--right"
+          aria-label="Scroll settings tabs right"
+          on:click={() => scrollSettingsTabsBy(Math.min(280, (tabsScrollEl?.clientWidth ?? 280) * 0.85))}
+        >
+          <Icon icon="ph:caret-right" />
+        </button>
+      {/if}
+      <div class="settings-tabs-fade settings-tabs-fade--left" class:visible={canScrollTabsLeft} aria-hidden="true"></div>
+      <div class="settings-tabs-fade settings-tabs-fade--right" class:visible={canScrollTabsRight} aria-hidden="true"></div>
+      <div
+        class="settings-tabs"
+        use:tabsScrollAction
+        role="tablist"
+        aria-label="Settings sections"
+      >
+        {#each tabs as tab}
+          <button
+            type="button"
+            class="settings-tab"
+            class:active={activeTab === tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            id="settings-tab-{tab.id}"
+            on:click={() => {
+              activeTab = tab.id
+              if (tab.id !== 'advanced') logExportMessage = null
+              if (tab.id === 'advanced') checkLogEmpty()
+              if (tab.id === 'dictionary') loadDictionaryEntries()
+              tick().then(updateTabScrollHints)
+            }}
+          >
+            <Icon icon={tab.icon} />
+            <span>{tab.label}</span>
+          </button>
+        {/each}
+      </div>
     </div>
 
     <div class="settings-content">
@@ -956,7 +1392,11 @@
               <Icon icon={collapsedSections.general_hotkeys ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
             {#if !collapsedSections.general_hotkeys}
-              <div class="section-content">
+              <!-- accordion-animated: override .settings-section.collapsed .section-content { display:none } during Svelte slide outro -->
+              <div
+                class="section-content accordion-animated"
+                transition:slide={{ duration: 180, easing: cubicOut, axis: 'y' }}
+              >
                 <div class="setting-row">
                   <div class="setting-label">
                     <span class="setting-name">Hold to Dictate</span>
@@ -1253,6 +1693,117 @@
                     </select>
                   </div>
                 </div>
+
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Audio filter</span>
+                    <span class="setting-desc"
+                      >High-pass, noise gate, light compression, and normalize — same chain as dictation and mic test
+                      playback. Off disables processing.</span
+                    >
+                  </div>
+                  <div class="setting-control">
+                    <select
+                      class="form-select"
+                      value={config.stt_config.audio_filter.preset}
+                      on:change={onAudioFilterPresetSelect}
+                    >
+                      <option value="Off">Off</option>
+                      <option value="Light">Light</option>
+                      <option value="Moderate">Moderate</option>
+                      <option value="Custom">Custom</option>
+                    </select>
+                  </div>
+                </div>
+
+                {#if config.stt_config.audio_filter.preset === 'Custom'}
+                    <div class="setting-row audio-filter-range-row">
+                      <div class="setting-label">
+                        <span class="setting-name">High-pass cutoff</span>
+                        <span class="setting-desc">{Math.round(config.stt_config.audio_filter.highpass_cutoff_hz)} Hz</span>
+                      </div>
+                      <div class="setting-control">
+                        <input
+                          type="range"
+                          min="40"
+                          max="200"
+                          step="1"
+                          bind:value={config.stt_config.audio_filter.highpass_cutoff_hz}
+                          on:change={markAudioFilterCustomAndSave}
+                        />
+                      </div>
+                    </div>
+                    <div class="setting-row audio-filter-range-row">
+                      <div class="setting-label">
+                        <span class="setting-name">Noise gate</span>
+                        <span class="setting-desc"
+                          >{Math.round(config.stt_config.audio_filter.noise_gate_threshold_db)} dB</span
+                        >
+                      </div>
+                      <div class="setting-control">
+                        <input
+                          type="range"
+                          min="-60"
+                          max="-20"
+                          step="1"
+                          bind:value={config.stt_config.audio_filter.noise_gate_threshold_db}
+                          on:change={markAudioFilterCustomAndSave}
+                        />
+                      </div>
+                    </div>
+                    <div class="setting-row audio-filter-range-row">
+                      <div class="setting-label">
+                        <span class="setting-name">Compressor ratio</span>
+                        <span class="setting-desc">{config.stt_config.audio_filter.compressor_ratio.toFixed(1)}:1</span>
+                      </div>
+                      <div class="setting-control">
+                        <input
+                          type="range"
+                          min="1.5"
+                          max="6"
+                          step="0.1"
+                          bind:value={config.stt_config.audio_filter.compressor_ratio}
+                          on:change={markAudioFilterCustomAndSave}
+                        />
+                      </div>
+                    </div>
+                    <div class="setting-row audio-filter-range-row">
+                      <div class="setting-label">
+                        <span class="setting-name">Normalize target</span>
+                        <span class="setting-desc"
+                          >{Math.round(config.stt_config.audio_filter.normalize_target_db)} dBFS peak</span
+                        >
+                      </div>
+                      <div class="setting-control">
+                        <input
+                          type="range"
+                          min="-12"
+                          max="-1"
+                          step="1"
+                          bind:value={config.stt_config.audio_filter.normalize_target_db}
+                          on:change={markAudioFilterCustomAndSave}
+                        />
+                      </div>
+                    </div>
+                    <div class="setting-row audio-filter-range-row">
+                      <div class="setting-label">
+                        <span class="setting-name">Compressor threshold</span>
+                        <span class="setting-desc"
+                          >{Math.round(config.stt_config.audio_filter.compressor_threshold_db)} dB</span
+                        >
+                      </div>
+                      <div class="setting-control">
+                        <input
+                          type="range"
+                          min="-40"
+                          max="-6"
+                          step="1"
+                          bind:value={config.stt_config.audio_filter.compressor_threshold_db}
+                          on:change={markAudioFilterCustomAndSave}
+                        />
+                      </div>
+                    </div>
+                  {/if}
               </div>
             {/if}
           </section>
@@ -1264,67 +1815,85 @@
             </button>
             {#if !collapsedSections.dictation_mode}
               <div class="section-content">
-                <div class="stt-mode-cards">
-                  {#each ['Cloud', 'Local', 'Hybrid'] as mode}
+                <div
+                  class="stt-mode-cards stt-mode-row"
+                  role="radiogroup"
+                  aria-label="Speech-to-text mode"
+                >
+                  {#each ['Auto', 'Hybrid', 'Cloud', 'Local'] as mode}
                     <button
                       type="button"
                       class="stt-mode-card"
                       class:active={config.stt_config.mode === mode}
+                      role="radio"
+                      aria-checked={config.stt_config.mode === mode}
+                      title={STT_MODE_LABELS[mode] ?? mode}
                       on:click={() => selectSttModeCard(mode)}
                     >
                       <div class="mode-icon">
-                        <Icon icon={mode === 'Cloud' ? 'ph:cloud' : mode === 'Local' ? 'ph:hard-drives' : 'ph:arrows-left-right'} />
-                      </div>
-                      <div class="mode-info">
-                        <span class="mode-name">{mode}</span>
-                        <span class="mode-desc">
-                          {mode === 'Cloud'
-                            ? 'Fastest, requires internet'
+                        <Icon
+                          icon={mode === 'Cloud'
+                            ? 'ph:cloud'
                             : mode === 'Local'
-                              ? 'Private, runs on your device'
-                              : 'Combines both for best results'}
-                        </span>
+                              ? 'ph:hard-drives'
+                              : mode === 'Hybrid'
+                                ? 'ph:arrows-left-right'
+                                : 'ph:magic-wand'}
+                        />
                       </div>
+                      <span class="mode-name">{mode}</span>
                     </button>
                   {/each}
                 </div>
+                <p class="stt-mode-selected-hint">
+                  {STT_MODE_LABELS[config.stt_config.mode] ?? ''}
+                </p>
 
-                {#if config.stt_config.mode === 'Cloud' || config.stt_config.mode === 'Hybrid'}
-                  <div class="setting-row sub-setting">
-                    <div class="setting-label">
-                      <span class="setting-name">Cloud Provider</span>
-                      <span class="setting-desc">API service for transcription</span>
+                {#if config.stt_config.mode === 'Cloud' || config.stt_config.mode === 'Hybrid' || config.stt_config.mode === 'Auto'}
+                  <div class="stt-cloud-group">
+                    <div class="setting-row">
+                      <div class="setting-label">
+                        <span class="setting-name">Cloud Provider</span>
+                        <span class="setting-desc">API service for transcription</span>
+                      </div>
+                      <div class="setting-control">
+                        <select class="form-select" bind:value={config.stt_config.provider} on:change={onCloudProviderChange}>
+                          <option value="groq">Groq (whisper-large-v3-turbo)</option>
+                          <option value="openai">OpenAI (whisper-1)</option>
+                        </select>
+                      </div>
                     </div>
-                    <div class="setting-control">
-                      <select class="form-select" bind:value={config.stt_config.provider} on:change={onCloudProviderChange}>
-                        <option value="groq">Groq (whisper-large-v3-turbo)</option>
-                        <option value="openai">OpenAI (whisper-1)</option>
-                      </select>
-                    </div>
-                  </div>
 
-                  <div class="api-key-section">
-                    <div class="api-key-row">
-                      <input
-                        type="password"
-                        class="api-key-input"
-                        bind:value={apiKeyInput}
-                        on:input={scheduleSave}
-                        placeholder={hasApiKey ? 'Enter new key to change' : 'Enter API key...'}
-                      />
-                      <button type="button" class="settings-secondary-btn" on:click={checkApiKey}>Validate</button>
-                      {#if hasApiKey && !apiKeyInput}
-                        <button type="button" class="settings-secondary-btn danger" on:click={clearApiKey}>Clear</button>
-                      {/if}
+                    <div class="setting-row">
+                      <div class="setting-label">
+                        <span class="setting-name">API key</span>
+                        {#if apiKeyValid !== null}
+                          <span class="validation-badge" class:valid={apiKeyValid}>
+                            {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
+                          </span>
+                        {:else if hasApiKey && !apiKeyInput}
+                          <span class="badge configured">✓ Configured</span>
+                        {:else if !hasApiKey}
+                          <span class="badge muted">Not set</span>
+                        {/if}
+                      </div>
+                      <div class="setting-control full-width">
+                        <div class="api-key-row">
+                          <input
+                            type="password"
+                            class="api-key-input"
+                            bind:value={apiKeyInput}
+                            on:input={scheduleSave}
+                            placeholder={hasApiKey ? 'Enter new key to change' : 'Enter API key...'}
+                            aria-label={hasApiKey ? 'Replace API key' : 'API key'}
+                          />
+                          <button type="button" class="settings-secondary-btn" on:click={checkApiKey}>Validate</button>
+                          {#if hasApiKey && !apiKeyInput}
+                            <button type="button" class="settings-secondary-btn danger" on:click={clearApiKey}>Clear</button>
+                          {/if}
+                        </div>
+                      </div>
                     </div>
-                    {#if apiKeyValid !== null}
-                      <span class="validation-badge" class:valid={apiKeyValid}>
-                        {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
-                      </span>
-                    {/if}
-                    {#if hasApiKey && !apiKeyInput}
-                      <span class="hint" style="display:block;margin-top:8px">API key on file</span>
-                    {/if}
                     <p class="api-key-hint">
                       {#if config.stt_config.provider === 'openai'}
                         <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">Get your API key from OpenAI →</a>
@@ -1335,7 +1904,7 @@
                   </div>
                 {/if}
 
-            {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid'}
+            {#if config.stt_config.mode === 'Local' || config.stt_config.mode === 'Hybrid' || config.stt_config.mode === 'Auto'}
               <div class="local-models-section">
                 <p class="local-models-hint">
                   Select one model; it is used when mode is Local. Download, start, or stop from the list.
@@ -1354,25 +1923,67 @@
                       {@const err = modelErrors[modelId]}
                       {@const isActive = (config.stt_config.local_model ?? 'sensevoice') === modelId}
                       <div class="model-item" class:active={isActive}>
-                        <div class="model-radio-row" role="button" tabindex="0" on:click={() => setActiveLocalModel(modelId)} on:keydown={(ev) => ev.key === 'Enter' && setActiveLocalModel(modelId)}>
-                          <span class="model-radio" aria-checked={isActive} role="radio">
-                            {#if isActive}
-                              <Icon icon="ph:radio-button-fill" />
+                        <div class="model-item-main">
+                          <div
+                            class="model-radio-row"
+                            role="button"
+                            tabindex="0"
+                            on:click={() => setActiveLocalModel(modelId)}
+                            on:keydown={(ev) => ev.key === 'Enter' && setActiveLocalModel(modelId)}
+                          >
+                            <span class="model-radio" aria-checked={isActive} role="radio">
+                              {#if isActive}
+                                <Icon icon="ph:radio-button-fill" />
+                              {:else}
+                                <Icon icon="ph:circle" />
+                              {/if}
+                            </span>
+                            <div class="model-info">
+                              <strong>{status?.label ?? modelId}</strong>
+                              <span>{status?.size_mb ?? 0} MB • {status?.quality ?? '—'} • {status?.languages ?? '—'}</span>
+                              {#if hardwareReqs[modelId] && !hardwareReqs[modelId].can_run}
+                                <span class="warning">⚠️ {hardwareReqs[modelId].reason}</span>
+                              {/if}
+                              {#if sidecarAvailable[modelId] === false}
+                                <span class="warning">Engine not available on this platform</span>
+                              {/if}
+                              {#if status}
+                                <span class="status-badge {status.status.toLowerCase()}">{status.status}</span>
+                              {/if}
+                              {#if status?.status === 'Running' && status.rss_bytes != null && status.rss_bytes > 0}
+                                <span class="model-ram">RAM ~{Math.round(status.rss_bytes / (1024 * 1024))} MB</span>
+                              {/if}
+                            </div>
+                          </div>
+                          <div class="model-actions">
+                            {#if !status?.installed}
+                              <button
+                                type="button"
+                                class="settings-secondary-btn"
+                                disabled={(hardwareReqs[modelId] && !hardwareReqs[modelId].can_run) ||
+                                  sidecarAvailable[modelId] === false}
+                                on:click|stopPropagation={() => downloadModel(modelId)}>Download</button>
                             {:else}
-                              <Icon icon="ph:circle" />
-                            {/if}
-                          </span>
-                          <div class="model-info">
-                            <strong>{status?.label ?? modelId}</strong>
-                            <span>{status?.size_mb ?? 0} MB • {status?.quality ?? '—'} • {status?.languages ?? '—'}</span>
-                            {#if hardwareReqs[modelId] && !hardwareReqs[modelId].can_run}
-                              <span class="warning">⚠️ {hardwareReqs[modelId].reason}</span>
-                            {/if}
-                            {#if sidecarAvailable[modelId] === false}
-                              <span class="warning">Engine not available on this platform</span>
-                            {/if}
-                            {#if status}
-                              <span class="status-badge {status.status.toLowerCase()}">{status.status}</span>
+                              {#if status.status === 'Stopped' || status.status === 'Error'}
+                                <button
+                                  type="button"
+                                  class="settings-secondary-btn"
+                                  disabled={sidecarAvailable[modelId] === false}
+                                  on:click|stopPropagation={() => startModel(modelId)}>Start</button>
+                              {:else if status.status === 'Running'}
+                                <button
+                                  type="button"
+                                  class="settings-secondary-btn"
+                                  on:click|stopPropagation={() => stopModel(modelId)}>Stop</button>
+                                <button
+                                  type="button"
+                                  class="settings-secondary-btn"
+                                  on:click|stopPropagation={() => restartModel(modelId)}>Restart</button>
+                              {/if}
+                              <button
+                                type="button"
+                                class="settings-secondary-btn danger"
+                                on:click|stopPropagation={() => deleteModel(modelId)}>Delete</button>
                             {/if}
                           </div>
                         </div>
@@ -1391,19 +2002,6 @@
                         {#if err}
                           <p class="model-error">{err}</p>
                         {/if}
-                        <div class="model-actions">
-                          {#if !status?.installed}
-                            <button type="button" class="settings-secondary-btn" disabled={(hardwareReqs[modelId] && !hardwareReqs[modelId].can_run) || sidecarAvailable[modelId] === false} on:click|stopPropagation={() => downloadModel(modelId)}>Download</button>
-                          {:else}
-                            {#if status.status === 'Stopped' || status.status === 'Error'}
-                              <button type="button" class="settings-secondary-btn" disabled={sidecarAvailable[modelId] === false} on:click|stopPropagation={() => startModel(modelId)}>Start</button>
-                            {:else if status.status === 'Running'}
-                              <button type="button" class="settings-secondary-btn" on:click|stopPropagation={() => stopModel(modelId)}>Stop</button>
-                              <button type="button" class="settings-secondary-btn" on:click|stopPropagation={() => restartModel(modelId)}>Restart</button>
-                            {/if}
-                            <button type="button" class="settings-secondary-btn danger" on:click|stopPropagation={() => deleteModel(modelId)}>Delete</button>
-                          {/if}
-                        </div>
                       </div>
                     {/each}
                   </div>
@@ -1740,7 +2338,9 @@
                 <div class="setting-row">
                   <div class="setting-label">
                     <span class="setting-name">Sensitive app detection</span>
-                    <span class="setting-desc">Automatically use local STT when a sensitive app is in focus</span>
+                    <span class="setting-desc"
+                      >For Hybrid and Auto STT modes, use local transcription when the focused app matches a pattern below</span
+                    >
                   </div>
                   <div class="setting-control">
                     <label class="toggle-switch">
@@ -1749,6 +2349,239 @@
                     </label>
                   </div>
                 </div>
+                <div class="sensitive-apps-panel">
+                  <div class="sensitive-apps-heading">
+                    <div class="sensitive-apps-title-row">
+                      <span class="setting-name">Sensitive apps</span>
+                      <button type="button" class="settings-secondary-btn" on:click={openSensitiveAppPicker}>
+                        <Icon icon="ph:plus" />
+                        Add app
+                      </button>
+                    </div>
+                    <span class="setting-desc">
+                      Dictation switches to local mode when these apps are in focus. Apps are matched by process name.
+                    </span>
+                  </div>
+
+                  {#if config.privacy.sensitive_app_patterns?.length > 0}
+                    <div class="sensitive-apps-list">
+                      {#each config.privacy.sensitive_app_patterns as p, i (i)}
+                        <div class="sensitive-app-card">
+                          <div class="sensitive-app-icon">
+                            <Icon icon={getPatternIcon(p)} />
+                          </div>
+                          <div class="sensitive-app-info">
+                            <span class="sensitive-app-name">{getDisplayNameForPattern(p)}</span>
+                            <span class="sensitive-app-type">{p.pattern_type}</span>
+                          </div>
+                          <button
+                            type="button"
+                            class="btn-icon remove"
+                            title="Remove app"
+                            aria-label="Remove app"
+                            on:click={() => removeSensitiveAppPattern(i)}
+                          >
+                            <Icon icon="ph:x" />
+                          </button>
+                        </div>
+                      {/each}
+                    </div>
+                  {:else}
+                    <div class="sensitive-apps-empty">
+                      <Icon icon="ph:shield-check" />
+                      <p>No sensitive apps configured. Click "Add app" to select apps that should trigger local mode.</p>
+                    </div>
+                  {/if}
+                </div>
+
+                {#if sensitiveAppPickerOpen}
+                  <!-- svelte-ignore a11y-click-events-have-key-events -->
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div
+                    class="modal-backdrop sensitive-picker-backdrop"
+                    use:portalBody
+                    on:click={closeSensitiveAppPicker}
+                    role="presentation"
+                  >
+                    <div
+                      class="modal sensitive-app-modal kalam-sleek"
+                      class:dark={modalPickerDark}
+                      class:light={!modalPickerDark}
+                      on:click|stopPropagation
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="sensitive-app-modal-title"
+                    >
+                      <div class="modal-header">
+                        <h3 id="sensitive-app-modal-title">Add sensitive app</h3>
+                        <button type="button" class="btn-icon" on:click={closeSensitiveAppPicker}>
+                          <Icon icon="ph:x" />
+                        </button>
+                      </div>
+
+                      <div class="modal-tabs" role="tablist">
+                        <button
+                          type="button"
+                          class="modal-tab"
+                          class:active={sensitiveAppPickerTab === 'running'}
+                          on:click={() => switchSensitivePickerTab('running')}
+                          role="tab"
+                          aria-selected={sensitiveAppPickerTab === 'running'}
+                        >
+                          <Icon icon="ph:activity" />
+                          <span class="modal-tab-label">Running now</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="modal-tab"
+                          class:active={sensitiveAppPickerTab === 'installed'}
+                          on:click={() => switchSensitivePickerTab('installed')}
+                          role="tab"
+                          aria-selected={sensitiveAppPickerTab === 'installed'}
+                        >
+                          <Icon icon="ph:package" />
+                          <span class="modal-tab-label">Installed apps</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="modal-tab"
+                          class:active={sensitiveAppPickerTab === 'browse'}
+                          on:click={() => switchSensitivePickerTab('browse')}
+                          role="tab"
+                          aria-selected={sensitiveAppPickerTab === 'browse'}
+                        >
+                          <Icon icon="ph:folder-open" />
+                          <span class="modal-tab-label">Browse file</span>
+                        </button>
+                      </div>
+
+                      {#if sensitiveAppPickerTab === 'running' || (sensitiveAppPickerTab === 'installed' && installedAppsLoaded)}
+                        <div class="modal-search">
+                          <Icon icon="ph:magnifying-glass" />
+                          <input
+                            type="text"
+                            placeholder={sensitiveAppPickerTab === 'running'
+                              ? 'Search running apps...'
+                              : 'Search installed apps...'}
+                            bind:value={sensitiveAppsSearch}
+                          />
+                        </div>
+                      {/if}
+
+                      <div class="modal-content-scroll">
+                        {#if sensitiveAppPickerTab === 'running'}
+                          {#if sensitiveAppsLoading}
+                            <div class="sensitive-apps-loading">
+                              <Icon icon="ph:spinner" class="spin" />
+                              <span>Loading running apps…</span>
+                            </div>
+                          {:else if filteredRunningApps.length > 0}
+                            <ul class="sensitive-apps-list-select">
+                              {#each filteredRunningApps as app}
+                                <li>
+                                  <button
+                                    type="button"
+                                    class="sensitive-app-select-row"
+                                    class:already-added={isAppAlreadyAdded(app.process_name)}
+                                    on:click={() => addSensitiveAppFromPicker(app.process_name, app.exe_path)}
+                                    disabled={isAppAlreadyAdded(app.process_name)}
+                                  >
+                                    {#if app.icon_base64}
+                                      <img
+                                        src="data:image/png;base64,{app.icon_base64}"
+                                        alt=""
+                                        class="sensitive-app-select-icon"
+                                      />
+                                    {:else}
+                                      <div class="sensitive-app-select-icon-placeholder">
+                                        <Icon icon="ph:app-window" />
+                                      </div>
+                                    {/if}
+                                    <span class="sensitive-app-select-name">{app.display_name}</span>
+                                    {#if isAppAlreadyAdded(app.process_name)}
+                                      <span class="sensitive-app-select-badge">Added</span>
+                                    {:else}
+                                      <Icon icon="ph:caret-right" class="sensitive-app-select-chevron" />
+                                    {/if}
+                                  </button>
+                                </li>
+                              {/each}
+                            </ul>
+                          {:else}
+                            <div class="sensitive-apps-empty-state">
+                              <Icon icon="ph:app-window" />
+                              <p>{sensitiveAppsSearch ? 'No running apps match your search.' : 'No running apps found.'}</p>
+                            </div>
+                          {/if}
+                        {:else if sensitiveAppPickerTab === 'installed'}
+                          {#if !installedAppsLoaded && !sensitiveAppsLoading}
+                            <div class="sensitive-apps-load-prompt">
+                              <Icon icon="ph:package" />
+                              <p>
+                                Scanning installed applications can take a few seconds on some systems. Load the list when
+                                you are ready.
+                              </p>
+                              <button type="button" class="settings-primary-btn compact" on:click={() => void loadInstalledApps()}>
+                                <Icon icon="ph:arrows-clockwise" />
+                                Load installed apps
+                              </button>
+                            </div>
+                          {:else if sensitiveAppsLoading}
+                            <div class="sensitive-apps-loading">
+                              <Icon icon="ph:spinner" class="spin" />
+                              <span>Scanning installed apps…</span>
+                            </div>
+                          {:else if filteredInstalledApps.length > 0}
+                            <ul class="sensitive-apps-list-select">
+                              {#each filteredInstalledApps as app}
+                                <li>
+                                  <button
+                                    type="button"
+                                    class="sensitive-app-select-row"
+                                    class:already-added={isAppAlreadyAdded(app.process_name)}
+                                    on:click={() => addSensitiveAppFromPicker(app.process_name, app.exe_path)}
+                                    disabled={isAppAlreadyAdded(app.process_name)}
+                                  >
+                                    {#if app.icon_base64}
+                                      <img
+                                        src="data:image/png;base64,{app.icon_base64}"
+                                        alt=""
+                                        class="sensitive-app-select-icon"
+                                      />
+                                    {:else}
+                                      <div class="sensitive-app-select-icon-placeholder">
+                                        <Icon icon="ph:app-window" />
+                                      </div>
+                                    {/if}
+                                    <span class="sensitive-app-select-name">{app.display_name}</span>
+                                    {#if isAppAlreadyAdded(app.process_name)}
+                                      <span class="sensitive-app-select-badge">Added</span>
+                                    {:else}
+                                      <Icon icon="ph:caret-right" class="sensitive-app-select-chevron" />
+                                    {/if}
+                                  </button>
+                                </li>
+                              {/each}
+                            </ul>
+                          {:else}
+                            <div class="sensitive-apps-empty-state">
+                              <Icon icon="ph:package" />
+                              <p>{sensitiveAppsSearch ? 'No installed apps match your search.' : 'No installed apps found.'}</p>
+                            </div>
+                          {/if}
+                        {:else if sensitiveAppPickerTab === 'browse'}
+                          <div class="sensitive-apps-browse">
+                            <p>Select an executable file (.exe, .app, .AppImage) to add to sensitive apps.</p>
+                            <button type="button" class="settings-primary-btn" on:click={pickExecutableFile}>
+                              <Icon icon="ph:folder-open" />
+                              Choose file…
+                            </button>
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                {/if}
                 <div class="setting-row">
                   <div class="setting-label">
                     <span class="setting-name">Telemetry</span>
@@ -1768,6 +2601,65 @@
                     immediately. Local mode keeps everything on your device.
                     <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy →</a>
                   </p>
+                </div>
+              </div>
+            {/if}
+          </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.privacy_notifications}>
+            <button type="button" class="section-header" on:click={() => toggleSection('privacy_notifications')}>
+              <h3>Notifications</h3>
+              <Icon icon={collapsedSections.privacy_notifications ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.privacy_notifications}
+              <div class="section-content">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Play sounds</span>
+                    <span class="setting-desc">Dictation start/end tones and background startup chime</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.notifications.sound_enabled} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Show error notifications</span>
+                    <span class="setting-desc">System notifications for update check failures and command-mode hints</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.notifications.show_errors} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Show completion notifications</span>
+                    <span class="setting-desc">Brief notice when dictated text is injected successfully</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.notifications.show_completion} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Notify when updates are available</span>
+                    <span class="setting-desc">Automatic check shortly after startup (Settings → About for install)</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.notifications.show_updates} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
                 </div>
               </div>
             {/if}
@@ -1924,13 +2816,101 @@
     font-size: 14px;
   }
 
+  .settings-tabs-shell {
+    position: relative;
+    margin-bottom: var(--space-xl);
+  }
+
+  /* Edge fades: wide multi-stop gradients so the mask blends into the page (no hard cutoff). */
+  .settings-tabs-fade {
+    position: absolute;
+    top: 0;
+    bottom: 1px;
+    width: 64px;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.28s ease-out;
+  }
+
+  .settings-tabs-fade.visible {
+    opacity: 1;
+  }
+
+  .settings-tabs-fade--left {
+    left: 0;
+    background: linear-gradient(
+      to right,
+      var(--bg) 0%,
+      color-mix(in srgb, var(--bg) 92%, transparent) 18%,
+      color-mix(in srgb, var(--bg) 55%, transparent) 48%,
+      color-mix(in srgb, var(--bg) 18%, transparent) 78%,
+      transparent 100%
+    );
+  }
+
+  .settings-tabs-fade--right {
+    right: 0;
+    background: linear-gradient(
+      to left,
+      var(--bg) 0%,
+      color-mix(in srgb, var(--bg) 92%, transparent) 18%,
+      color-mix(in srgb, var(--bg) 55%, transparent) 48%,
+      color-mix(in srgb, var(--bg) 18%, transparent) 78%,
+      transparent 100%
+    );
+  }
+
+  .settings-tabs-edge-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--bg-elevated) 94%, var(--border-subtle));
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  }
+
+  /* Use --bg-hover (sleek theme) — :root --bg-input-hover is light-only and breaks dark hover contrast. */
+  .settings-tabs-edge-btn:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+    border-color: color-mix(in srgb, var(--border-visible) 65%, transparent);
+    /* Removed shadow */
+  }
+
+  /* Match settings accordions: native button + Iconify SVG may not pick up parent color in WebView (dark mode). */
+  .settings-tabs-edge-btn :global(svg) {
+    display: block;
+    width: 1.25em;
+    height: 1.25em;
+    flex-shrink: 0;
+    color: inherit;
+  }
+
+  .settings-tabs-edge-btn--left {
+    left: 12px;
+  }
+
+  .settings-tabs-edge-btn--right {
+    right: 12px;
+  }
+
   .settings-tabs {
     display: flex;
     gap: 4px;
-    margin-bottom: var(--space-xl);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 1px;
     overflow-x: auto;
+    overflow-y: hidden;
+    scroll-padding-inline: 8px;
   }
 
   .settings-tab {
@@ -2009,6 +2989,488 @@
     display: none;
   }
 
+  /* Let height-based slide transition run while the block is still mounted on collapse */
+  .settings-section.collapsed .section-content.accordion-animated {
+    display: block;
+  }
+
+  .stt-mode-selected-hint {
+    margin: 0 0 var(--space-lg);
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+  }
+
+  .sensitive-apps-panel {
+    padding: var(--space-md) 0 var(--space-lg);
+    border-bottom: 1px solid var(--border-light);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .sensitive-apps-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .sensitive-apps-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .sensitive-apps-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .sensitive-app-card {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .sensitive-app-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 18px;
+  }
+
+  .sensitive-app-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .sensitive-app-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sensitive-app-type {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: lowercase;
+  }
+
+  .sensitive-apps-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xl);
+    color: var(--text-secondary);
+    text-align: center;
+  }
+
+  .sensitive-apps-empty :global(svg) {
+    font-size: 32px;
+    opacity: 0.5;
+  }
+
+  .sensitive-apps-empty p {
+    font-size: 13px;
+    max-width: 280px;
+    margin: 0;
+  }
+
+  /* While the picker is open, the real scroll container is `.page-content` — lock it (html class set in script). */
+  :global(html.sensitive-app-picker-open .kalam-sleek .page-content) {
+    overflow: hidden !important;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
+  /*
+   * Portaled to document.body: fixed = viewport, matches app-shell height.
+   * Inset padding uses --space-lg to match settings section spacing.
+   * Using :global() so these styles apply to the portaled modal (outside component scope).
+   */
+  :global(.modal-backdrop.sensitive-picker-backdrop) {
+    position: fixed;
+    inset: 0;
+    z-index: 10050;
+    box-sizing: border-box;
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    margin: 0;
+    padding: var(--space-lg);
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overscroll-behavior: none;
+  }
+
+  /* Modal inherits CSS vars from .kalam-sleek class on the element */
+  :global(.modal.sensitive-app-modal) {
+    background: var(--bg-elevated);
+    width: 100%;
+    max-width: 720px;
+    flex: 0 1 auto;
+    min-height: 0;
+    height: auto;
+    max-height: calc(100vh - var(--space-lg) * 2);
+    max-height: calc(100dvh - var(--space-lg) * 2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border);
+    font-family: var(--font-sleek, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif);
+  }
+
+  /* Modal header matches settings section header padding */
+  :global(.sensitive-app-modal .modal-header) {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-lg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  :global(.sensitive-app-modal .modal-header h3) {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    font-family: inherit;
+  }
+
+  /* Fixed-height tab bar: three equal segments, no inner scroll. */
+  :global(.sensitive-app-modal .modal-tabs) {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    height: 52px;
+    min-height: 52px;
+    max-height: 52px;
+    flex-shrink: 0;
+    padding: 0 var(--space-sm);
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  :global(.sensitive-app-modal .modal-tab) {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px 4px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    border-bottom: 3px solid transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    font-family: inherit;
+  }
+
+  :global(.sensitive-app-modal .modal-tab svg) {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  :global(.sensitive-app-modal .modal-tab-label) {
+    display: block;
+    text-align: center;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 2px;
+  }
+
+  :global(.sensitive-app-modal .modal-tab:hover) {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  :global(.sensitive-app-modal .modal-tab.active) {
+    background: transparent;
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* Modal search uses consistent spacing */
+  :global(.sensitive-app-modal .modal-search) {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  :global(.sensitive-app-modal .modal-search svg) {
+    color: var(--text-muted);
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  :global(.sensitive-app-modal .modal-search input) {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    font-family: inherit;
+  }
+
+  :global(.sensitive-app-modal .modal-search input:disabled) {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  :global(.sensitive-app-modal .modal-search input::placeholder) {
+    color: var(--text-muted);
+  }
+
+  /* Modal content matches settings section-content padding: 0 var(--space-lg) var(--space-lg) */
+  :global(.sensitive-app-modal .modal-content-scroll) {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0 var(--space-lg) var(--space-lg);
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-list-select) {
+    list-style: none;
+    margin: 0;
+    padding: var(--space-sm) 0 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-list-select li) {
+    margin: 0;
+    padding: 0;
+  }
+
+  :global(.sensitive-app-modal .sensitive-app-select-row) {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-md);
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+    text-align: left;
+    font-family: inherit;
+  }
+
+  :global(.sensitive-app-modal .sensitive-app-select-row:hover:not(:disabled)) {
+    border-color: var(--accent);
+    background: rgba(0, 122, 255, 0.04);
+  }
+
+  :global(.sensitive-app-modal .sensitive-app-select-row:disabled) {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  :global(.sensitive-app-modal .sensitive-app-select-row.already-added) {
+    border-color: var(--border-light);
+    background: var(--bg-hover);
+  }
+
+  :global(.sensitive-app-modal .sensitive-app-select-icon) {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+
+  :global(.sensitive-app-modal .sensitive-app-select-icon-placeholder) {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  :global(.sensitive-app-modal .sensitive-app-select-row .sensitive-app-select-name) {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 14px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: inherit;
+  }
+
+  :global(.sensitive-app-modal .sensitive-app-select-badge) {
+    font-size: 11px;
+    padding: 3px 8px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+
+  :global(.sensitive-app-modal .sensitive-app-select-chevron) {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    font-size: 18px;
+  }
+
+  /* Load prompt centered with consistent spacing */
+  :global(.sensitive-app-modal .sensitive-apps-load-prompt) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-lg) 0;
+    text-align: center;
+    max-width: 360px;
+    margin: 0 auto;
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-load-prompt svg:first-child) {
+    font-size: 40px;
+    color: var(--text-secondary);
+    opacity: 0.6;
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-load-prompt p) {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    font-family: inherit;
+  }
+
+  :global(.sensitive-app-modal .settings-primary-btn) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.1s ease;
+    font-family: inherit;
+  }
+
+  :global(.sensitive-app-modal .settings-primary-btn:hover) {
+    opacity: 0.92;
+  }
+
+  :global(.sensitive-app-modal .settings-primary-btn:active) {
+    transform: scale(0.98);
+  }
+
+  /* Compact variant for load prompt */
+  :global(.sensitive-app-modal .settings-primary-btn.compact) {
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-loading) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-lg) 0;
+    color: var(--text-secondary);
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-loading svg.spin) {
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-empty-state) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-lg) 0;
+    color: var(--text-secondary);
+    text-align: center;
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-empty-state svg) {
+    font-size: 48px;
+    opacity: 0.3;
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-browse) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-lg);
+    padding: var(--space-lg) 0;
+    text-align: center;
+  }
+
+  :global(.sensitive-app-modal .sensitive-apps-browse p) {
+    color: var(--text-secondary);
+    margin: 0;
+    font-family: inherit;
+  }
+
   .setting-row {
     display: flex;
     justify-content: space-between;
@@ -2026,6 +3488,17 @@
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-xs);
+  }
+
+  .setting-row.audio-filter-range-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-xs);
+  }
+
+  .setting-row.audio-filter-range-row .setting-control input[type='range'] {
+    width: 100%;
+    min-height: 1.5rem;
   }
 
   .setting-row.row-group {
@@ -2200,6 +3673,11 @@
     color: #34C759;
   }
 
+  .badge.muted {
+    background: var(--surface-elevated, rgba(128, 128, 128, 0.12));
+    color: var(--text-muted);
+  }
+
   .badge.success {
     background: rgba(52, 199, 89, 0.15);
     color: #34C759;
@@ -2297,11 +3775,21 @@
     border-color: var(--accent);
   }
 
+  /* One row: model details left, Start/Stop/Delete right (aligned to block, not below). */
+  .model-item-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
   .model-radio-row {
     display: flex;
     align-items: flex-start;
     gap: 12px;
     cursor: pointer;
+    flex: 1;
+    min-width: 0;
   }
 
   .model-radio {
@@ -2327,6 +3815,12 @@
   .model-info span {
     font-size: 13px;
     color: var(--text-secondary);
+  }
+
+  .model-info .model-ram {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
   }
 
   .model-info .warning {
@@ -2372,8 +3866,15 @@
 
   .model-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
-    margin-top: 12px;
+    align-items: center;
+    justify-content: flex-end;
+    flex-shrink: 0;
+  }
+
+  .model-item-main .model-actions {
+    margin-top: 0;
   }
 
   .local-engine-section {
@@ -2629,8 +4130,21 @@
       width: 100%;
     }
 
+    .settings-tabs-shell {
+      margin-bottom: var(--space-lg);
+    }
+
     .settings-tabs {
       gap: 0;
+    }
+
+    .settings-tabs-fade {
+      width: 52px;
+    }
+
+    .settings-tabs-edge-btn {
+      width: 40px;
+      height: 40px;
     }
 
     .settings-tab {

@@ -18,6 +18,15 @@ const BASE_ONBOARDING: Record<string, unknown> = {
     api_keys: {},
     local_model: 'sensevoice',
     vad_preset: 'Balanced',
+    audio_filter: {
+      enabled: true,
+      preset: 'Light',
+      highpass_cutoff_hz: 80,
+      noise_gate_threshold_db: -45,
+      compressor_ratio: 3,
+      compressor_threshold_db: -18,
+      normalize_target_db: -6,
+    },
   },
   formatting: {
     voice_commands: true,
@@ -90,6 +99,7 @@ function modelStatusEntry() {
     label: 'SenseVoice',
     quality: '',
     languages: '',
+    rss_bytes: null as number | null,
   }
 }
 

@@ -54,7 +54,16 @@
         provider: 'groq',
         api_keys: {},
         local_model: null,
-        vad_preset: 'Balanced'
+        vad_preset: 'Balanced',
+        audio_filter: {
+          enabled: false,
+          preset: 'Off',
+          highpass_cutoff_hz: 80,
+          noise_gate_threshold_db: -45,
+          compressor_ratio: 3,
+          compressor_threshold_db: -18,
+          normalize_target_db: -6,
+        },
       },
       formatting: {
         voice_commands: true,
@@ -543,7 +552,8 @@
   }
 
   /* === Sleek design system (match prototype) === */
-  .kalam-sleek {
+  /* Base variables - global so portaled modals can access them */
+  :global(.kalam-sleek) {
     --font-sleek: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     --font: var(--font-sleek);
     --transition: var(--transition-sleek);
@@ -559,16 +569,10 @@
     --radius-lg: 20px;
     --radius-full: 9999px;
     --transition-sleek: 200ms cubic-bezier(0.4, 0, 0.2, 1);
-    display: flex;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-    font-family: var(--font-sleek);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
   }
 
-  .kalam-sleek.light {
+  /* Light theme variables - global */
+  :global(.kalam-sleek.light) {
     --bg: #ffffff;
     --bg-elevated: #f5f5f7;
     --bg-card: #ffffff;
@@ -592,7 +596,8 @@
     --primary-alpha-subtle: rgba(0, 0, 0, 0.04);
   }
 
-  .kalam-sleek.dark {
+  /* Dark theme variables - global */
+  :global(.kalam-sleek.dark) {
     --bg: #000000;
     --bg-elevated: #1c1c1e;
     --bg-card: #1c1c1e;
@@ -616,7 +621,15 @@
     --primary-alpha-subtle: rgba(255, 255, 255, 0.06);
   }
 
+  /* Component-scoped kalam-sleek styles */
   .kalam-sleek {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    font-family: var(--font-sleek);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     background: var(--bg);
     color: var(--text);
     flex-direction: column;
@@ -1281,6 +1294,10 @@
     background: rgba(142, 142, 147, 0.12);
     color: var(--text-muted);
   }
+  :global(.kalam-sleek .page-content .chip.chip-lang) {
+    background: rgba(100, 210, 255, 0.12);
+    color: var(--text-secondary, #8e8e93);
+  }
   :global(.kalam-sleek .page-content .state-container) {
     display: flex;
     flex-direction: column;
@@ -1526,6 +1543,13 @@
     border-bottom-color: var(--accent);
     font-weight: 600;
   }
+  :global(.kalam-sleek .page-content .settings-tab :global(svg)) {
+    flex-shrink: 0;
+    display: block;
+    width: 1.1em;
+    height: 1.1em;
+    color: inherit;
+  }
   :global(.kalam-sleek .page-content .settings-content) {
     min-height: 400px;
   }
@@ -1551,6 +1575,20 @@
     cursor: pointer;
     transition: var(--transition-sleek);
     text-align: left;
+    /* WebView / native <button> often ignores inherited color; without this, Iconify carets stay dark on dark surfaces. */
+    color: var(--text);
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  :global(.kalam-sleek .page-content .settings-section .section-header :global(svg)) {
+    flex-shrink: 0;
+    display: block;
+    width: 1.15em;
+    height: 1.15em;
+    color: var(--text-secondary);
+  }
+  :global(.kalam-sleek .page-content .settings-section .section-header:hover :global(svg)) {
+    color: var(--text);
   }
   :global(.kalam-sleek .page-content .section-header:hover) {
     background: var(--bg-hover);
@@ -1830,29 +1868,28 @@
     background: var(--bg);
   }
 
-  :global(.kalam-sleek .page-content .stt-mode-cards) {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: var(--space-md);
-    margin-bottom: var(--space-lg);
-  }
-  @media (max-width: 700px) {
-    :global(.kalam-sleek .page-content .stt-mode-cards) {
-      grid-template-columns: 1fr;
-    }
-  }
-  :global(.kalam-sleek .page-content .stt-mode-card) {
+  :global(.kalam-sleek .page-content .stt-mode-cards.stt-mode-row) {
     display: flex;
-    flex-direction: column;
-    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
     gap: var(--space-sm);
-    padding: var(--space-lg);
+    margin-bottom: var(--space-sm);
+  }
+  :global(.kalam-sleek .page-content .stt-mode-row .stt-mode-card) {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex: 1 1 0;
+    min-width: 5.5rem;
+    padding: 10px 12px;
     background: var(--bg);
     border: 2px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     cursor: pointer;
     transition: var(--transition-sleek);
-    text-align: center;
+    text-align: left;
   }
   :global(.kalam-sleek .page-content .stt-mode-card:hover) {
     border-color: var(--text-muted);
@@ -1865,32 +1902,43 @@
   :global(.kalam-sleek.dark .page-content .stt-mode-card.active) {
     background: rgba(255, 255, 255, 0.06);
   }
-  :global(.kalam-sleek .page-content .mode-icon) {
-    width: 48px;
-    height: 48px;
+  :global(.kalam-sleek .page-content .stt-mode-row .mode-icon) {
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
     background: var(--bg-elevated);
     display: flex;
     align-items: center;
     justify-content: center;
     color: var(--accent);
-    font-size: 24px;
+    font-size: 18px;
+    flex-shrink: 0;
   }
-  :global(.kalam-sleek .page-content .mode-info) {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  :global(.kalam-sleek .page-content .mode-name) {
-    font-size: 14px;
+  :global(.kalam-sleek .page-content .stt-mode-row .mode-name) {
+    font-size: 13px;
     font-weight: 600;
     color: var(--text);
-  }
-  :global(.kalam-sleek .page-content .mode-desc) {
-    font-size: 12px;
-    color: var(--text-secondary);
+    white-space: nowrap;
   }
 
+  /* Settings: Cloud provider + API key share one left accent (see `.stt-cloud-group`). Prototype still uses `.api-key-section` alone. */
+  :global(.kalam-sleek .page-content .stt-cloud-group) {
+    margin-left: var(--space-md);
+    padding-left: var(--space-xl);
+    border-left: 2px solid var(--border);
+    margin-top: var(--space-md);
+    padding-bottom: var(--space-md);
+    border-bottom: 1px solid var(--border-light);
+  }
+  :global(.kalam-sleek .page-content .stt-cloud-group .setting-row) {
+    border-bottom: none;
+  }
+  :global(.kalam-sleek .page-content .stt-cloud-group .api-key-hint) {
+    margin: var(--space-xs) 0 0 0;
+  }
+  :global(.kalam-sleek .page-content .stt-cloud-group .api-key-row) {
+    margin-bottom: 0;
+  }
   :global(.kalam-sleek .page-content .api-key-section) {
     padding-left: var(--space-xl);
     border-left: 2px solid var(--border);
@@ -2083,12 +2131,12 @@
     background: rgba(255, 59, 48, 0.1);
   }
 
-  /* About tab inside settings (prototype) */
+  /* About tab inside settings: section spacing matches other settings tabs (.settings-section margin-bottom) */
   :global(.kalam-sleek .page-content .about-content) {
     display: flex;
     flex-direction: column;
-    gap: var(--space-xl);
-    padding: var(--space-lg) 0;
+    gap: 0;
+    padding: 0;
   }
   :global(.kalam-sleek .page-content .about-top-section) {
     background: var(--bg-elevated);

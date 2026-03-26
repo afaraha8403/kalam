@@ -27,6 +27,34 @@ impl LocalModelManager {
         }
     }
 
+    /// Resident set size (bytes) per model that has a live sidecar process (settings RAM readout).
+    pub async fn sidecar_rss_by_model_id(&self) -> HashMap<String, u64> {
+        let pairs: Vec<(String, u32)> = {
+            let mut guard = self.processes.lock().await;
+            let mut out = Vec::new();
+            for (id, child) in guard.iter_mut() {
+                if let Some(pid) = child.id() {
+                    out.push((id.clone(), pid));
+                }
+            }
+            out
+        };
+        if pairs.is_empty() {
+            return HashMap::new();
+        }
+        use sysinfo::{Pid, ProcessesToUpdate, System};
+        let mut sys = System::new();
+        let pids: Vec<Pid> = pairs.iter().map(|(_, p)| Pid::from_u32(*p)).collect();
+        sys.refresh_processes(ProcessesToUpdate::Some(&pids));
+        let mut map = HashMap::new();
+        for (id, pid) in pairs {
+            if let Some(p) = sys.process(Pid::from_u32(pid)) {
+                map.insert(id, p.memory());
+            }
+        }
+        map
+    }
+
     pub async fn get_status(&self, model_id: &str) -> ModelStatus {
         let statuses = self.statuses.lock().await;
         if let Some(status) = statuses.get(model_id) {

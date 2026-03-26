@@ -26,6 +26,8 @@
   let audioCtx: AudioContext | null = null
   let apiKey = ''
   let selectedProvider: 'groq' | 'openai' = 'groq'
+  let apiKeyValid: boolean | null = null
+  let validating = false
   let selectedMode: 'Cloud' | 'Hybrid' | 'Local' = 'Hybrid'
   let hotkey = ''
   let toggleHotkey = ''
@@ -200,6 +202,8 @@
       if (!termsAgreed || !isEmailValid(userEmail)) return
       await saveOnboardingState({ captureOsForEmailStep: true })
     }
+    // Save when leaving step 4 (Engine/API key step) so the key is persisted even if user doesn't finish
+    if (step === 4) await saveOnboardingState()
     if (step === 5) await saveOnboardingState()
     if (step < totalSteps) step++
   }
@@ -327,6 +331,28 @@
     if (text) {
       e.preventDefault()
       apiKey = text.trim()
+      // Reset validation state when key changes
+      apiKeyValid = null
+    }
+  }
+
+  /**
+   * Validate the API key with the provider.
+   */
+  async function checkApiKey() {
+    const keyToCheck = apiKey.trim()
+    if (!keyToCheck) return
+    validating = true
+    try {
+      apiKeyValid = await invoke('check_api_key', {
+        provider: selectedProvider,
+        apiKey: keyToCheck,
+      })
+    } catch (e) {
+      console.error('API key validation failed:', e)
+      apiKeyValid = false
+    } finally {
+      validating = false
     }
   }
 
@@ -867,18 +893,36 @@
                 <p class="provider-explainer">Paste your key now or add it later in Settings.</p>
                 <div class="api-key-row">
                   <input
-                    type="text"
+                    type="password"
                     autocomplete="off"
                     spellcheck="false"
                     placeholder={selectedProvider === 'openai' ? 'OpenAI API key' : 'Groq API key'}
                     bind:value={apiKey}
                     on:paste={onApiKeyPaste}
+                    on:input={() => (apiKeyValid = null)}
                   />
-                  <a
-                    href={selectedProvider === 'openai' ? 'https://platform.openai.com/api-keys' : 'https://console.groq.com'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >Get a key</a>
+                  <button
+                    type="button"
+                    class="btn-validate"
+                    disabled={!apiKey.trim() || validating}
+                    on:click={checkApiKey}
+                  >
+                    {validating ? 'Checking...' : 'Validate'}
+                  </button>
+                </div>
+                <div class="api-key-meta">
+                  {#if apiKeyValid !== null}
+                    <span class="validation-badge" class:valid={apiKeyValid}>
+                      {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
+                    </span>
+                  {/if}
+                  <p class="api-key-hint">
+                    {#if selectedProvider === 'openai'}
+                      <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">Get your API key from OpenAI →</a>
+                    {:else}
+                      <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">Get your API key from Groq →</a>
+                    {/if}
+                  </p>
                 </div>
               </div>
             {/if}
@@ -2209,8 +2253,60 @@
     white-space: nowrap;
   }
 
-  .api-key-row a:hover {
+  .btn-validate {
+    padding: 10px 18px;
+    background: var(--accent);
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--accent-fg);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--font-sleek, inherit);
+    cursor: pointer;
+    transition: var(--transition-sleek, 200ms ease);
+    white-space: nowrap;
+  }
+
+  .btn-validate:hover:not(:disabled) {
+    opacity: 0.92;
+  }
+
+  .btn-validate:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .api-key-meta {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .validation-badge {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--error);
+  }
+
+  .validation-badge.valid {
+    color: var(--success);
+  }
+
+  .api-key-hint {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0;
+  }
+
+  .api-key-hint a {
+    color: var(--text-secondary);
     text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .api-key-hint a:hover {
+    color: var(--text);
   }
 
   .provider-section {
@@ -2781,6 +2877,10 @@
       flex-direction: column;
       align-items: stretch;
       gap: 8px;
+    }
+
+    .btn-validate {
+      width: 100%;
     }
 
     .ctrl-section {

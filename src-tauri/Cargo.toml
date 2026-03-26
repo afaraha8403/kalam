@@ -17,6 +17,7 @@ tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-autostart = "2"
 
 # Audio
 cpal = "0.15"

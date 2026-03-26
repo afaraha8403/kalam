@@ -9,6 +9,7 @@
 
   let appVersion = ''
   let licenseOpen = false
+  let legalOpen = false
   let updateChecking = false
   let updateStatus: 'idle' | 'up-to-date' | 'available' | 'error' = 'idle'
   let updateVersion = ''
@@ -20,6 +21,10 @@
   let updateDownloadPercent: number | null = null
   /** Set after a successful "update on next start" download+install (no restart). */
   let updateStagedMessage: string | null = null
+
+  /** Embedded Settings → About: same collapsible sections as other settings tabs. */
+  let aboutUpdatesCollapsed = false
+  let aboutCommunityCollapsed = false
 
   const GITHUB_REPO_URL = 'https://github.com/afaraha8403/kalam'
 
@@ -160,254 +165,332 @@ maintainers to request a commercial license.`
 
 {#if embeddedInSettings}
   <div class="settings-tab-content about-content">
-    <section class="about-top-section">
-      <div class="about-top-content">
-        <div class="version-block">
-          <span class="version-label">Current version: <strong>{appVersion || '…'}</strong></span>
-        </div>
-        <div class="updates-block">
-          <select
-            class="channel-select"
-            bind:value={updateChannel}
-            on:change={onChannelChange}
-            aria-label="Update channel"
-          >
-            <option value="stable">Stable (Recommended)</option>
-            <option value="beta">Beta (Pre-releases)</option>
-          </select>
-          <button type="button" class="btn-check" disabled={updateChecking} on:click={checkUpdates}>
-            {#if updateChecking}
-              <Icon icon="ph:spinner-gap-duotone" class="spin" /> Checking…
-            {:else}
-              Check Now
+    <section class="settings-section" class:collapsed={aboutUpdatesCollapsed}>
+      <button
+        type="button"
+        class="section-header"
+        on:click={() => (aboutUpdatesCollapsed = !aboutUpdatesCollapsed)}
+        aria-expanded={!aboutUpdatesCollapsed}
+      >
+        <h3>Version &amp; updates</h3>
+        <Icon icon={aboutUpdatesCollapsed ? 'ph:caret-down' : 'ph:caret-up'} />
+      </button>
+      {#if !aboutUpdatesCollapsed}
+        <div class="section-content">
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="setting-name">Current version</span>
+              <span class="setting-desc">{appVersion || '…'}</span>
+            </div>
+            <div class="setting-control">
+              <button type="button" class="btn-check" disabled={updateChecking} on:click={checkUpdates}>
+                {#if updateChecking}
+                  <Icon icon="ph:spinner-gap-duotone" class="spin" /> Checking…
+                {:else}
+                  <Icon icon="ph:magnifying-glass-duotone" /> Check now
+                {/if}
+              </button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="setting-name">Channel</span>
+              <span class="setting-desc">Stable or Beta releases</span>
+            </div>
+            <div class="setting-control">
+              <select
+                class="form-select"
+                bind:value={updateChannel}
+                on:change={onChannelChange}
+                aria-label="Update channel"
+              >
+                <option value="stable">Stable</option>
+                <option value="beta">Beta</option>
+              </select>
+            </div>
+          </div>
+
+          {#if updateStatus === 'up-to-date'}
+            <div class="status-msg success about-status"><Icon icon="ph:check-circle-duotone" /> Up to date</div>
+            {#if updateStagedMessage}
+              <div class="status-msg success staged-hint"><Icon icon="ph:info-duotone" /> {updateStagedMessage}</div>
             {/if}
-          </button>
+          {:else if updateStatus === 'available'}
+            <div class="status-msg available about-status"><Icon icon="ph:sparkle-duotone" /> Update {updateVersion} available!</div>
+            <div class="update-install-actions update-install-actions--split about-actions">
+              <button
+                type="button"
+                class="btn-install"
+                disabled={updateInstalling}
+                on:click={() => downloadAndInstall(true)}
+              >
+                {#if updateInstalling && !updateInstallingDeferred}
+                  {#if updateDownloadPercent != null}
+                    <Icon icon="ph:spinner-gap-duotone" class="spin" /> Updating… {updateDownloadPercent}%
+                  {:else}
+                    <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading &amp; installing…
+                  {/if}
+                {:else}
+                  <Icon icon="ph:arrow-clockwise-duotone" /> Update now
+                {/if}
+              </button>
+              <button
+                type="button"
+                class="btn-install-secondary"
+                disabled={updateInstalling}
+                on:click={() => downloadAndInstall(false)}
+                title="Download and install in the background; apply when you quit and open Kalam again"
+              >
+                {#if updateInstalling && updateInstallingDeferred}
+                  {#if updateDownloadPercent != null}
+                    <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading… {updateDownloadPercent}%
+                  {:else}
+                    <Icon icon="ph:spinner-gap-duotone" class="spin" /> Preparing…
+                  {/if}
+                {:else}
+                  <Icon icon="ph:moon-stars-duotone" /> Update on next start
+                {/if}
+              </button>
+            </div>
+          {:else if updateStatus === 'error'}
+            <div class="status-msg error about-status"><Icon icon="ph:warning-circle-duotone" /> {updateError}</div>
+          {/if}
         </div>
-      </div>
-      {#if updateStatus === 'up-to-date'}
-        <div class="status-msg success"><Icon icon="ph:check-circle-duotone" /> Up to date</div>
-        {#if updateStagedMessage}
-          <div class="status-msg success staged-hint"><Icon icon="ph:info-duotone" /> {updateStagedMessage}</div>
-        {/if}
-      {:else if updateStatus === 'available'}
-        <div class="status-msg available"><Icon icon="ph:sparkle-duotone" /> Update {updateVersion} available!</div>
-        <div class="update-install-actions update-install-actions--split">
-          <button
-            type="button"
-            class="btn-install"
-            disabled={updateInstalling}
-            on:click={() => downloadAndInstall(true)}
-          >
-            {#if updateInstalling && !updateInstallingDeferred}
-              {#if updateDownloadPercent != null}
-                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Updating… {updateDownloadPercent}%
-              {:else}
-                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading &amp; installing…
-              {/if}
-            {:else}
-              <Icon icon="ph:arrow-clockwise-duotone" /> Update now
-            {/if}
-          </button>
-          <button
-            type="button"
-            class="btn-install-secondary"
-            disabled={updateInstalling}
-            on:click={() => downloadAndInstall(false)}
-            title="Download and install in the background; apply when you quit and open Kalam again"
-          >
-            {#if updateInstalling && updateInstallingDeferred}
-              {#if updateDownloadPercent != null}
-                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading… {updateDownloadPercent}%
-              {:else}
-                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Preparing…
-              {/if}
-            {:else}
-              <Icon icon="ph:moon-stars-duotone" /> Update on next start
-            {/if}
-          </button>
-        </div>
-      {:else if updateStatus === 'error'}
-        <div class="status-msg error"><Icon icon="ph:warning-circle-duotone" /> {updateError}</div>
       {/if}
     </section>
 
-    <div class="about-grid two-col">
-      <section class="about-card">
-        <div class="card-icon"><Icon icon="ph:users-three-duotone" /></div>
-        <h3>Community</h3>
-        <p class="byline">
-          Created by <a href="https://github.com/afaraha8403" target="_blank" rel="noopener noreferrer">Ali Farahat</a
-          >, founder of <a href="https://balacode.io" target="_blank" rel="noopener noreferrer">Balacode.io</a>.
-        </p>
-        <div class="action-group">
-          <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" class="action-link">
-            <Icon icon="ph:github-logo-duotone" />
-            <span>GitHub Repository</span>
-          </a>
-          <a href="https://kalam.stream/terms.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
-            <Icon icon="ph:file-text-duotone" />
-            <span>Terms &amp; Conditions</span>
-          </a>
-          <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
-            <Icon icon="ph:shield-check-duotone" />
-            <span>Privacy Policy</span>
-          </a>
+    <section class="settings-section" class:collapsed={aboutCommunityCollapsed}>
+      <button
+        type="button"
+        class="section-header"
+        on:click={() => (aboutCommunityCollapsed = !aboutCommunityCollapsed)}
+        aria-expanded={!aboutCommunityCollapsed}
+      >
+        <h3>Community &amp; support</h3>
+        <Icon icon={aboutCommunityCollapsed ? 'ph:caret-down' : 'ph:caret-up'} />
+      </button>
+      {#if !aboutCommunityCollapsed}
+        <div class="section-content">
+          <p class="byline about-byline-embedded">
+            Brought to you by <a href="https://github.com/afaraha8403" target="_blank" rel="noopener noreferrer">Ali Farahat</a>
+            at <a href="https://balacode.io" target="_blank" rel="noopener noreferrer">Balacode.io</a>.
+          </p>
+          <div class="action-grid two-col about-action-grid-embedded">
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" class="action-link">
+              <Icon icon="ph:github-logo-duotone" />
+              <span>GitHub Repository</span>
+            </a>
+            <a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener noreferrer" class="action-link highlight-link">
+              <Icon icon="ph:heart-straight-duotone" />
+              <span>Sponsor on GitHub</span>
+            </a>
+          </div>
+          <div class="setting-row about-commercial-row">
+            <div class="setting-label">
+              <span class="setting-name">Commercial license</span>
+              <span class="setting-desc">Licensing for businesses and resale</span>
+            </div>
+            <div class="setting-control">
+              <a
+                href="https://kalam.stream/business.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn-check about-commercial-link"
+              >
+                <Icon icon="ph:briefcase-duotone" />
+                Open
+                <Icon icon="ph:arrow-up-right-duotone" class="about-external-inline" />
+              </a>
+            </div>
+          </div>
         </div>
-      </section>
+      {/if}
+    </section>
 
-      <section class="about-card highlight">
-        <div class="card-icon"><Icon icon="ph:heart-duotone" /></div>
-        <h3>Support Kalam</h3>
-        <p class="card-text">Keep Kalam sustainable and free. Commercial use requires a separate license.</p>
-        <div class="action-group">
-          <a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener noreferrer" class="btn-primary about-btn-primary">
-            <Icon icon="ph:heart-straight-fill" /> Sponsor
-          </a>
-          <a href="https://kalam.stream/business.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
-            Commercial License
-          </a>
-        </div>
-      </section>
-    </div>
-
-    <section class="license-section">
-      <button type="button" class="accordion" on:click={() => (licenseOpen = !licenseOpen)} aria-expanded={licenseOpen}>
-        <span class="accordion-title"><Icon icon="ph:file-text-duotone" /> License Information</span>
+    <section class="settings-section" class:collapsed={!licenseOpen}>
+      <button type="button" class="section-header" on:click={() => (licenseOpen = !licenseOpen)} aria-expanded={licenseOpen}>
+        <h3>License</h3>
         <Icon icon={licenseOpen ? 'ph:caret-up' : 'ph:caret-down'} />
       </button>
       {#if licenseOpen}
-        <div class="license-content">
+        <div class="section-content">
           <pre class="license-text">{LICENSE_TEXT}</pre>
+        </div>
+      {/if}
+    </section>
+
+    <section class="settings-section" class:collapsed={!legalOpen}>
+      <button type="button" class="section-header" on:click={() => (legalOpen = !legalOpen)} aria-expanded={legalOpen}>
+        <h3>Legal</h3>
+        <Icon icon={legalOpen ? 'ph:caret-up' : 'ph:caret-down'} />
+      </button>
+      {#if legalOpen}
+        <div class="section-content">
+          <div class="legal-links">
+            <a href="https://kalam.stream/terms.html" target="_blank" rel="noopener noreferrer" class="legal-link">
+              <Icon icon="ph:file-text-duotone" />
+              <span>Terms &amp; Conditions</span>
+            </a>
+            <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer" class="legal-link">
+              <Icon icon="ph:lock-key-duotone" />
+              <span>Privacy Policy</span>
+            </a>
+          </div>
         </div>
       {/if}
     </section>
   </div>
 {:else}
 <div class="about-container">
-  <header class="about-header animate-in" style="--delay: 0.1s">
-    <span class="version-label">Current version: <strong>{appVersion || '…'}</strong></span>
-  </header>
-
-  <div class="about-grid">
-    <!-- Creator & Community Card -->
-    <section class="about-card animate-in" style="--delay: 0.2s">
-      <div class="card-icon"><Icon icon="ph:users-three-duotone" /></div>
-      <h3>Community</h3>
-      <p class="byline">Created by <a href="https://github.com/afaraha8403" target="_blank" rel="noopener noreferrer">Ali Farahat</a>, founder of <a href="https://balacode.io" target="_blank" rel="noopener noreferrer">Balacode.io</a>.</p>
-      
-      {#if GITHUB_REPO_URL}
-        <div class="action-group" style="margin-top: auto;">
-          <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" class="action-link">
-            <Icon icon="ph:github-logo-duotone" />
-            <span>GitHub Repository</span>
-          </a>
-          <a href="https://kalam.stream/terms.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
-            <Icon icon="ph:file-text-duotone" />
-            <span>Terms &amp; Conditions</span>
-          </a>
-          <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
-            <Icon icon="ph:shield-check-duotone" />
-            <span>Privacy Policy</span>
-          </a>
-        </div>
-      {/if}
-    </section>
-
-    <!-- Support & Business Card -->
-    <section class="about-card highlight animate-in" style="--delay: 0.3s">
-      <div class="card-icon"><Icon icon="ph:heart-duotone" /></div>
-      <h3>Support Kalam</h3>
-      <p class="card-text">Keep Kalam sustainable and free. Commercial use requires a separate license.</p>
-      
-      <div class="action-group">
-        <a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener noreferrer" class="btn-primary">
-          <Icon icon="ph:heart-straight-fill" /> Sponsor
-        </a>
-        <a href="https://kalam.stream/business.html" target="_blank" rel="noopener noreferrer" class="action-link secondary">
-          Commercial License
-        </a>
+  <!-- Updates Section -->
+  <section class="about-header animate-in" style="--delay: 0.1s">
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">Current version</span>
+        <span class="setting-desc">{appVersion || '…'}</span>
       </div>
-    </section>
-
-    <!-- Updates Card -->
-    <section class="about-card animate-in" style="--delay: 0.4s">
-      <div class="card-icon"><Icon icon="ph:arrows-clockwise-duotone" /></div>
-      <h3>Updates</h3>
-      
-      <div class="update-controls">
-        <div class="channel-selector">
-          <label for="about-update-channel">Channel</label>
-          <select id="about-update-channel" class="channel-select" bind:value={updateChannel} on:change={onChannelChange}>
-            <option value="stable">Stable (Recommended)</option>
-            <option value="beta">Beta (Pre-releases)</option>
-          </select>
-        </div>
-        
+      <div class="setting-control">
         <button type="button" class="btn-check" disabled={updateChecking} on:click={checkUpdates}>
           {#if updateChecking}
             <Icon icon="ph:spinner-gap-duotone" class="spin" /> Checking…
           {:else}
-            <Icon icon="ph:arrow-square-in-duotone" /> Check Now
+            <Icon icon="ph:magnifying-glass-duotone" /> Check now
           {/if}
         </button>
       </div>
+    </div>
 
-      {#if updateStatus === 'up-to-date'}
-        <div class="status-msg success"><Icon icon="ph:check-circle-duotone" /> Up to date</div>
-        {#if updateStagedMessage}
-          <div class="status-msg success staged-hint"><Icon icon="ph:info-duotone" /> {updateStagedMessage}</div>
-        {/if}
-      {:else if updateStatus === 'available'}
-        <div class="status-msg available"><Icon icon="ph:sparkle-duotone" /> Update {updateVersion} available!</div>
-        <div class="update-install-actions update-install-actions--split">
-          <button
-            type="button"
-            class="btn-install"
-            disabled={updateInstalling}
-            on:click={() => downloadAndInstall(true)}
-          >
-            {#if updateInstalling && !updateInstallingDeferred}
-              {#if updateDownloadPercent != null}
-                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Updating… {updateDownloadPercent}%
-              {:else}
-                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading &amp; installing…
-              {/if}
-            {:else}
-              <Icon icon="ph:arrow-clockwise-duotone" /> Update now
-            {/if}
-          </button>
-          <button
-            type="button"
-            class="btn-install-secondary"
-            disabled={updateInstalling}
-            on:click={() => downloadAndInstall(false)}
-            title="Download and install in the background; apply when you quit and open Kalam again"
-          >
-            {#if updateInstalling && updateInstallingDeferred}
-              {#if updateDownloadPercent != null}
-                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading… {updateDownloadPercent}%
-              {:else}
-                <Icon icon="ph:spinner-gap-duotone" class="spin" /> Preparing…
-              {/if}
-            {:else}
-              <Icon icon="ph:moon-stars-duotone" /> Update on next start
-            {/if}
-          </button>
-        </div>
-      {:else if updateStatus === 'error'}
-        <div class="status-msg error"><Icon icon="ph:warning-circle-duotone" /> {updateError}</div>
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">Channel</span>
+        <span class="setting-desc">Stable or Beta releases</span>
+      </div>
+      <div class="setting-control">
+        <select
+          class="form-select"
+          bind:value={updateChannel}
+          on:change={onChannelChange}
+          aria-label="Update channel"
+        >
+          <option value="stable">Stable</option>
+          <option value="beta">Beta</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Status messages -->
+    {#if updateStatus === 'up-to-date'}
+      <div class="status-msg success standalone-status"><Icon icon="ph:check-circle-duotone" /> Up to date</div>
+      {#if updateStagedMessage}
+        <div class="status-msg success staged-hint"><Icon icon="ph:info-duotone" /> {updateStagedMessage}</div>
       {/if}
-    </section>
-  </div>
+    {:else if updateStatus === 'available'}
+      <div class="status-msg available standalone-status"><Icon icon="ph:sparkle-duotone" /> Update {updateVersion} available!</div>
+      <div class="update-install-actions update-install-actions--split standalone-actions">
+        <button
+          type="button"
+          class="btn-install"
+          disabled={updateInstalling}
+          on:click={() => downloadAndInstall(true)}
+        >
+          {#if updateInstalling && !updateInstallingDeferred}
+            {#if updateDownloadPercent != null}
+              <Icon icon="ph:spinner-gap-duotone" class="spin" /> Updating… {updateDownloadPercent}%
+            {:else}
+              <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading &amp; installing…
+            {/if}
+          {:else}
+            <Icon icon="ph:arrow-clockwise-duotone" /> Update now
+          {/if}
+        </button>
+        <button
+          type="button"
+          class="btn-install-secondary"
+          disabled={updateInstalling}
+          on:click={() => downloadAndInstall(false)}
+          title="Download and install in the background; apply when you quit and open Kalam again"
+        >
+          {#if updateInstalling && updateInstallingDeferred}
+            {#if updateDownloadPercent != null}
+              <Icon icon="ph:spinner-gap-duotone" class="spin" /> Downloading… {updateDownloadPercent}%
+            {:else}
+              <Icon icon="ph:spinner-gap-duotone" class="spin" /> Preparing…
+            {/if}
+          {:else}
+            <Icon icon="ph:moon-stars-duotone" /> Update on next start
+          {/if}
+        </button>
+      </div>
+    {:else if updateStatus === 'error'}
+      <div class="status-msg error standalone-status"><Icon icon="ph:warning-circle-duotone" /> {updateError}</div>
+    {/if}
+  </section>
 
-  <section class="license-section animate-in" style="--delay: 0.5s">
+  <!-- Community & Support Section -->
+  <section class="about-community-section animate-in" style="--delay: 0.2s">
+    <div class="about-section-header standalone-header">
+      <Icon icon="ph:users-three-duotone" />
+      <h3>Community &amp; Support</h3>
+    </div>
+    <div class="section-content standalone-content">
+      <p class="byline">
+        Brought to you by <a href="https://github.com/afaraha8403" target="_blank" rel="noopener noreferrer">Ali Farahat</a>
+        at <a href="https://balacode.io" target="_blank" rel="noopener noreferrer">Balacode.io</a>.
+      </p>
+      <div class="action-grid two-col">
+        <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" class="action-link">
+          <Icon icon="ph:github-logo-duotone" />
+          <span>GitHub Repository</span>
+        </a>
+        <a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener noreferrer" class="action-link highlight-link">
+          <Icon icon="ph:heart-straight-duotone" />
+          <span>Sponsor on GitHub</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Commercial License Button -->
+  <a href="https://kalam.stream/business.html" target="_blank" rel="noopener noreferrer" class="commercial-license-btn animate-in" style="--delay: 0.3s">
+    <span class="commercial-license-content">
+      <Icon icon="ph:briefcase-duotone" />
+      <span>Commercial License</span>
+    </span>
+    <Icon icon="ph:arrow-up-right-duotone" class="external-icon" />
+  </a>
+
+  <!-- License Section -->
+  <section class="license-section animate-in" style="--delay: 0.4s">
     <button type="button" class="accordion" class:open={licenseOpen} on:click={() => (licenseOpen = !licenseOpen)} aria-expanded={licenseOpen}>
-      <span class="accordion-title"><Icon icon="ph:file-text-duotone" /> License Information</span>
+      <span class="accordion-title"><Icon icon="ph:scroll-duotone" /> License</span>
       <Icon icon="ph:caret-down-bold" class="accordion-caret" />
     </button>
     {#if licenseOpen}
       <div class="license-content">
         <pre class="license-text">{LICENSE_TEXT}</pre>
+      </div>
+    {/if}
+  </section>
+
+  <!-- Legal Section -->
+  <section class="legal-section animate-in" style="--delay: 0.5s">
+    <button type="button" class="accordion" class:open={legalOpen} on:click={() => (legalOpen = !legalOpen)} aria-expanded={legalOpen}>
+      <span class="accordion-title"><Icon icon="ph:shield-check-duotone" /> Legal</span>
+      <Icon icon="ph:caret-down-bold" class="accordion-caret" />
+    </button>
+    {#if legalOpen}
+      <div class="legal-content">
+        <div class="legal-links">
+          <a href="https://kalam.stream/terms.html" target="_blank" rel="noopener noreferrer" class="legal-link">
+            <Icon icon="ph:file-text-duotone" />
+            <span>Terms &amp; Conditions</span>
+          </a>
+          <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer" class="legal-link">
+            <Icon icon="ph:lock-key-duotone" />
+            <span>Privacy Policy</span>
+          </a>
+        </div>
       </div>
     {/if}
   </section>
@@ -437,12 +520,26 @@ maintainers to request a commercial license.`
 
   .about-header {
     display: flex;
-    align-items: center;
-    padding: 24px 32px;
-    background: linear-gradient(135deg, var(--bg-card), var(--bg-app));
+    flex-direction: column;
+    padding: var(--space-md) var(--space-lg) var(--space-lg);
+    background: var(--bg-card);
     border-radius: var(--radius-lg);
     border: 1px solid var(--border-subtle);
     box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+
+  .about-header .setting-row:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .standalone-status {
+    margin: var(--space-md) 0 0;
+  }
+
+  .standalone-actions {
+    margin: var(--space-md) 0 0;
   }
 
   .version-label {
@@ -502,6 +599,175 @@ maintainers to request a commercial license.`
   .highlight .card-icon {
     background: var(--primary);
     color: var(--white);
+    box-shadow: 0 4px 12px var(--primary-alpha);
+  }
+
+  /* Settings → About (embedded): spacing comes from global .settings-section margins + .section-content padding */
+  .about-content {
+    padding: 0;
+  }
+
+  .about-content .section-content > .about-byline-embedded {
+    margin: 0 0 var(--space-md);
+  }
+
+  /* Primary action link row sits above the commercial license setting-row */
+  .about-content .section-content > .about-action-grid-embedded {
+    margin-bottom: 0;
+  }
+
+  .about-commercial-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    text-decoration: none;
+  }
+
+  .about-commercial-link :global(.about-external-inline) {
+    font-size: 1em;
+    opacity: 0.85;
+  }
+
+  .about-status {
+    margin: var(--space-md) 0 0;
+  }
+
+  .about-actions {
+    margin: var(--space-md) 0 0;
+  }
+
+  /* Standalone About page: card-style community header + body */
+  .about-section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .about-section-header :global(svg) {
+    font-size: 20px;
+    color: var(--primary);
+  }
+
+  .about-section-header h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
+  }
+
+  .standalone-header {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border: 1px solid var(--border-subtle);
+    border-bottom: none;
+  }
+
+  .standalone-content {
+    background: var(--bg-card);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    border-top: none;
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Commercial License Button */
+  .commercial-license-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    color: var(--text-primary);
+    text-decoration: none;
+    font-size: 15px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .commercial-license-btn:hover {
+    background: var(--bg-input);
+    border-color: var(--border-visible);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+
+  .commercial-license-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .commercial-license-content :global(svg) {
+    font-size: 20px;
+    color: var(--primary);
+  }
+
+  .external-icon {
+    font-size: 18px;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+  }
+
+  .commercial-license-btn:hover .external-icon {
+    transform: translate(2px, -2px);
+    color: var(--primary);
+  }
+
+  /* Community & Support combined card */
+  .community-support-card {
+    grid-column: 1 / -1;
+    background: linear-gradient(135deg, var(--bg-card) 0%, var(--primary-alpha-light) 100%);
+    border-color: var(--primary-alpha);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+
+  .card-header .card-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 24px;
+    background: var(--primary);
+    color: var(--white);
+    box-shadow: 0 4px 14px var(--primary-alpha);
+  }
+
+  .card-header h3 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--navy-deep);
+    margin: 0;
+  }
+
+  .action-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-top: auto;
+  }
+
+  .action-grid.two-col {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .action-link.highlight-link {
+    background: linear-gradient(135deg, var(--primary-alpha-light), var(--bg-card));
+    border-color: var(--primary-alpha);
+    color: var(--primary-dark);
+  }
+
+  .action-link.highlight-link:hover {
+    background: var(--primary-alpha);
+    border-color: var(--primary);
     box-shadow: 0 4px 12px var(--primary-alpha);
   }
 
@@ -680,6 +946,12 @@ maintainers to request a commercial license.`
     cursor: not-allowed;
   }
 
+  /* Embedded About: control-column link should not stretch like full-width “Check now” */
+  .about-commercial-link.btn-check {
+    width: auto;
+    white-space: nowrap;
+  }
+
   .spin {
     animation: spin 1s linear infinite;
   }
@@ -788,6 +1060,54 @@ maintainers to request a commercial license.`
     color: var(--error, #ef4444);
   }
 
+  /* Legal Section */
+  .legal-section {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-subtle);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .legal-content {
+    border-top: 1px solid var(--border-subtle);
+    padding: 20px 24px;
+    background: var(--bg-input);
+  }
+
+  .legal-links {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
+
+  .legal-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    text-decoration: none;
+    padding: 14px 16px;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    transition: all 0.2s ease;
+  }
+
+  .legal-link:hover {
+    background: var(--bg-input);
+    border-color: var(--border-visible);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .legal-link :global(svg) {
+    font-size: 18px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+
   /* License Section */
   .license-section {
     background: var(--bg-card);
@@ -868,9 +1188,23 @@ maintainers to request a commercial license.`
       align-items: flex-start;
       gap: 16px;
     }
-    
+
     .about-grid {
       grid-template-columns: 1fr;
+    }
+
+    .action-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .legal-links {
+      grid-template-columns: 1fr;
+    }
+
+    .card-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
     }
   }
 </style>

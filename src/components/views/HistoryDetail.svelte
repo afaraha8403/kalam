@@ -3,12 +3,14 @@
   import Icon from '@iconify/svelte'
   import { getEntry, createEntry, deleteEntry, newEntry } from '../../lib/api/db'
   import { getAppIcon } from '../../lib/api/appInfo'
-  import type { Entry } from '../../types'
+  import { invoke, listenSafe } from '../../lib/backend'
+  import type { AppConfig, Entry, SensitiveAppPattern } from '../../types'
   import { selectedHistoryId } from '../../lib/historyDetailStore'
   import { selectedNoteId } from '../../lib/noteDetailStore'
   import { selectedTaskId } from '../../lib/taskDetailStore'
   import { noteDetailReturnTo, taskDetailReturnTo } from '../../lib/detailReturnStore'
   import { recognitionDisplay, sttChipKind } from '../../lib/historySttChip'
+  import { historyLanguageLabel } from '../../lib/languages'
 
   export let navigate: (page: string) => void = () => {}
 
@@ -19,18 +21,102 @@
   let loading = true
   let loadError: string | null = null
   let busy = false
+  /** Process name from the open history row; kept in sync for `settings_updated` (closure-safe). */
+  let targetProcessForPrivacy = ''
+  let inSensitiveList = false
+  let privacyBusy = false
+  /** Matches History feed: check icon + label after a successful clipboard write. */
+  let transcriptCopied = false
+  let copyResetTimer: ReturnType<typeof setTimeout> | undefined
+
+  function escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+
+  /** Align with Settings → sensitive apps picker (`isAppAlreadyAdded`). */
+  function sensitiveProcessPatternMatches(processName: string, p: SensitiveAppPattern): boolean {
+    if (p.pattern_type !== 'ProcessName') return false
+    const normalized = processName.toLowerCase()
+    const pattern = p.pattern.toLowerCase()
+    return pattern.includes(normalized) || normalized.includes(pattern.replace(/[^a-z0-9]/g, ''))
+  }
+
+  function isProcessInSensitiveList(patterns: SensitiveAppPattern[] | undefined, processName: string): boolean {
+    if (!patterns?.length) return false
+    return patterns.some((p) => sensitiveProcessPatternMatches(processName, p))
+  }
+
+  /** Same regex shape as `addSensitiveAppFromPicker` in Settings. */
+  function buildSensitivePatternForProcess(processName: string): SensitiveAppPattern {
+    const baseName = processName.replace(/\.exe$/i, '').replace(/\.app$/i, '')
+    const pattern = `(?i)^${escapeRegex(baseName)}(\\.exe)?$`
+    return { pattern, pattern_type: 'ProcessName', action: 'ForceLocal' }
+  }
+
+  async function syncTargetAppChrome(processName: string) {
+    const [icon, cfg] = await Promise.all([
+      getAppIcon(processName).catch(() => null),
+      invoke('get_settings').catch(() => null) as Promise<AppConfig | null>
+    ])
+    // Ignore late results if the user switched to another history row.
+    if (targetProcessForPrivacy !== processName) return
+    appIconUrl = icon
+    inSensitiveList = isProcessInSensitiveList(cfg?.privacy?.sensitive_app_patterns, processName)
+  }
+
+  async function toggleSensitiveApp() {
+    const proc = targetProcessForPrivacy
+    if (!proc || privacyBusy) return
+    privacyBusy = true
+    try {
+      const cfg = (await invoke('get_settings')) as AppConfig
+      const patterns = [...(cfg.privacy?.sensitive_app_patterns ?? [])]
+      const next = isProcessInSensitiveList(patterns, proc)
+        ? patterns.filter((p) => !sensitiveProcessPatternMatches(proc, p))
+        : [...patterns, buildSensitivePatternForProcess(proc)]
+      await invoke('save_settings', {
+        newConfig: { ...cfg, privacy: { ...cfg.privacy, sensitive_app_patterns: next } }
+      })
+      inSensitiveList = isProcessInSensitiveList(next, proc)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      privacyBusy = false
+    }
+  }
 
   onMount(() => {
-    return selectedHistoryId.subscribe((id) => {
+    const unsub = selectedHistoryId.subscribe((id) => {
       historyId = id ?? null
       loadEntry(historyId)
     })
+    let unlisten: (() => void) | undefined
+    void listenSafe<AppConfig>('settings_updated', (ev) => {
+      const proc = targetProcessForPrivacy
+      if (!proc || !ev.payload?.privacy) return
+      inSensitiveList = isProcessInSensitiveList(ev.payload.privacy.sensitive_app_patterns, proc)
+    }).then((fn) => {
+      unlisten = fn
+    })
+    return () => {
+      unsub()
+      unlisten?.()
+      if (copyResetTimer !== undefined) clearTimeout(copyResetTimer)
+    }
   })
 
   async function loadEntry(id: string | null) {
+    transcriptCopied = false
+    if (copyResetTimer !== undefined) {
+      clearTimeout(copyResetTimer)
+      copyResetTimer = undefined
+    }
     loading = true
     loadError = null
     entry = null
+    targetProcessForPrivacy = ''
+    appIconUrl = null
+    inSensitiveList = false
     if (!id) {
       loading = false
       return
@@ -39,11 +125,25 @@
       const e = await getEntry(id)
       if (e && e.entry_type === 'history') {
         entry = e
+        const proc = e.target_app?.trim() ?? ''
+        targetProcessForPrivacy = proc
+        if (proc) {
+          void syncTargetAppChrome(proc)
+        } else {
+          appIconUrl = null
+          inSensitiveList = false
+        }
       } else {
         loadError = 'This dictation could not be found.'
+        targetProcessForPrivacy = ''
+        appIconUrl = null
+        inSensitiveList = false
       }
     } catch (e) {
       loadError = e instanceof Error ? e.message : String(e)
+      targetProcessForPrivacy = ''
+      appIconUrl = null
+      inSensitiveList = false
     } finally {
       loading = false
     }
@@ -96,8 +196,14 @@
     try {
       await navigator.clipboard.writeText(entry.content)
     } catch {
-      /* ignore */
+      return
     }
+    transcriptCopied = true
+    if (copyResetTimer !== undefined) clearTimeout(copyResetTimer)
+    copyResetTimer = setTimeout(() => {
+      transcriptCopied = false
+      copyResetTimer = undefined
+    }, 1600)
   }
 
   async function convertToNote() {
@@ -190,8 +296,14 @@
       >
         <Icon icon="ph:check-square" />
       </button>
-      <button type="button" class="sleek-save" on:click={copyTranscript} disabled={!entry}>
-        Copy
+      <button
+        type="button"
+        class="sleek-save"
+        class:copied={transcriptCopied}
+        on:click={copyTranscript}
+        disabled={!entry}
+      >
+        {transcriptCopied ? 'Copied' : 'Copy'}
       </button>
     </div>
   </header>
@@ -230,59 +342,128 @@
         </span>
       </div>
 
-      <dl class="history-stats">
-        <div class="history-stat">
-          <dt>Words</dt>
-          <dd>{wordCountFromEntry(entry).toLocaleString()}</dd>
+      <div class="history-stats">
+        <!-- Row 1: numeric/session metrics — equal-width cells when they share a row -->
+        <div class="history-stats-metrics">
+          <dl class="history-stat">
+            <dt>Words</dt>
+            <dd>{wordCountFromEntry(entry).toLocaleString()}</dd>
+          </dl>
+          {#if wpm != null}
+            <dl class="history-stat">
+              <dt>Words / min</dt>
+              <dd>~{wpm} <span class="history-stat-hint">(vs recording length)</span></dd>
+            </dl>
+          {/if}
+          <dl class="history-stat">
+            <dt>Recording length</dt>
+            <dd>
+              {#if entry.duration_ms != null && entry.duration_ms > 0}
+                {(entry.duration_ms / 1000).toFixed(1)}s
+              {:else}
+                —
+              {/if}
+            </dd>
+          </dl>
+          <dl class="history-stat">
+            <dt>STT latency</dt>
+            <dd>{entry.stt_latency_ms != null ? `${entry.stt_latency_ms} ms` : '—'}</dd>
+          </dl>
         </div>
-        {#if wpm != null}
+
+        <!-- Row 2: same height, fills width (fixes lone Recognition cell) -->
+        <div class="history-stats-meta">
           <div class="history-stat">
-            <dt>Words / min</dt>
-            <dd>~{wpm} <span class="history-stat-hint">(vs recording length)</span></dd>
+            <dt>Recognition</dt>
+            <dd>{recognitionDisplay(entry.stt_provider, entry.stt_mode)}</dd>
           </div>
-        {/if}
-        <div class="history-stat">
-          <dt>Recording length</dt>
-          <dd>
-            {#if entry.duration_ms != null && entry.duration_ms > 0}
-              {(entry.duration_ms / 1000).toFixed(1)}s
-            {:else}
-              —
-            {/if}
-          </dd>
+          <div class="history-stat">
+            <dt>Language</dt>
+            <dd>{historyLanguageLabel(entry.dictation_language)}</dd>
+          </div>
         </div>
-        <div class="history-stat">
-          <dt>STT latency</dt>
-          <dd>{entry.stt_latency_ms != null ? `${entry.stt_latency_ms} ms` : '—'}</dd>
+
+        <!-- Row 3: target + privacy needs full width -->
+        <div class="history-stats-target">
+          <dl class="history-stat">
+            <dt>Target app</dt>
+            <dd class="history-target-app-shell">
+              <div class="history-target-app">
+                {#if appIconUrl}
+                  <img
+                    src={appIconUrl}
+                    alt=""
+                    class="history-target-app-icon"
+                    width="18"
+                    height="18"
+                  />
+                {/if}
+                <span title={entry.target_app?.trim() || undefined}>
+                  {entry.target_app_name?.trim() || entry.target_app?.trim() || '—'}
+                </span>
+              </div>
+              {#if targetProcessForPrivacy}
+                <div class="history-privacy-block">
+                  <div class="history-privacy-text">
+                    <div class="history-privacy-title-row">
+                      <span class="history-privacy-title" id="history-detail-privacy-toggle-label">
+                        Include in Sensitive apps
+                      </span>
+                      <button
+                        type="button"
+                        class="history-privacy-info-btn"
+                        popovertarget="history-sensitive-help-popover"
+                        aria-label="More about Sensitive apps"
+                      >
+                        <Icon icon="ph:info" />
+                      </button>
+                    </div>
+                    <p class="history-privacy-desc" id="history-detail-privacy-toggle-desc">
+                      Same list as <strong>Settings → Sensitive apps</strong>; with detection on and
+                      <strong>Hybrid</strong> or <strong>Auto</strong> STT, Kalam uses <strong>local</strong> recognition
+                      while this app is focused.
+                    </p>
+                  </div>
+                  <label class="toggle-switch history-sensitive-toggle" for="history-detail-privacy-toggle">
+                    <input
+                      id="history-detail-privacy-toggle"
+                      type="checkbox"
+                      checked={inSensitiveList}
+                      disabled={privacyBusy}
+                      aria-labelledby="history-detail-privacy-toggle-label"
+                      aria-describedby="history-detail-privacy-toggle-desc"
+                      on:click|preventDefault={() => void toggleSensitiveApp()}
+                    />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              {/if}
+            </dd>
+          </dl>
         </div>
-        <div class="history-stat">
-          <dt>Recognition</dt>
-          <dd>{recognitionDisplay(entry.stt_provider, entry.stt_mode)}</dd>
-        </div>
-        <div class="history-stat">
-          <dt>Target app</dt>
-          <dd class="history-target-app">
-            {#if appIconUrl}
-              <img
-                src={appIconUrl}
-                alt=""
-                class="history-target-app-icon"
-                width="18"
-                height="18"
-              />
-            {/if}
-            <span title={entry.target_app?.trim() || undefined}>
-              {entry.target_app_name?.trim() || entry.target_app?.trim() || '—'}
-            </span>
-          </dd>
-        </div>
-      </dl>
+      </div>
+
+      <div id="history-sensitive-help-popover" popover class="history-sensitive-help-popover">
+        <p>
+          The toggle updates the same list as <strong>Settings → Data &amp; Privacy → Sensitive apps</strong> (open
+          Settings to confirm). When <strong>Sensitive app detection</strong> is on and STT mode is
+          <strong>Hybrid</strong> or <strong>Auto</strong>, Kalam uses <strong>local</strong> transcription while this
+          app is in the foreground.
+        </p>
+      </div>
 
       <div class="history-transcript-head">
         <h3 class="section-title history-transcript-title">Transcript</h3>
         <div class="history-transcript-head-actions">
-          <button type="button" class="sleek-icon-btn" on:click={copyTranscript} title="Copy transcript" aria-label="Copy transcript">
-            <Icon icon="ph:copy" />
+          <button
+            type="button"
+            class="sleek-icon-btn"
+            class:copied={transcriptCopied}
+            on:click={copyTranscript}
+            title={transcriptCopied ? 'Copied' : 'Copy transcript'}
+            aria-label={transcriptCopied ? 'Copied' : 'Copy transcript'}
+          >
+            <Icon icon={transcriptCopied ? 'ph:check' : 'ph:copy'} />
           </button>
         </div>
       </div>
@@ -335,6 +516,29 @@
     height: 18px;
   }
 
+  @keyframes history-detail-copy-pop {
+    0% {
+      transform: scale(1);
+    }
+    40% {
+      transform: scale(1.14);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  /* Same feedback as History list rows (App.svelte `.icon-btn.small.copied`). */
+  .history-transcript-head-actions :global(.sleek-icon-btn.copied) {
+    animation: history-detail-copy-pop 0.38s cubic-bezier(0.34, 1.2, 0.64, 1);
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+
+  .history-detail-page :global(.sleek-save.copied) {
+    animation: history-detail-copy-pop 0.38s cubic-bezier(0.34, 1.2, 0.64, 1);
+  }
+
   .history-transcript-head {
     display: flex;
     align-items: center;
@@ -365,13 +569,32 @@
   }
 
   .history-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    display: flex;
+    flex-direction: column;
     gap: var(--space-md, 16px);
     margin-bottom: var(--space-xl, 32px);
   }
 
+  .history-stats-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    gap: var(--space-md, 16px);
+  }
+
+  .history-stats-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md, 16px);
+  }
+
+  @media (max-width: 420px) {
+    .history-stats-meta {
+      grid-template-columns: 1fr;
+    }
+  }
+
   .history-stat {
+    margin: 0;
     padding: var(--space-md, 16px);
     border-radius: var(--radius-md, 12px);
     background: var(--bg-elevated, rgba(255, 255, 255, 0.06));
@@ -398,12 +621,127 @@
     color: var(--text-muted, #86868b);
   }
 
+  .history-privacy-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .history-privacy-title-row .history-privacy-title {
+    margin-bottom: 0;
+  }
+
+  .history-privacy-info-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 2px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted, #86868b);
+    cursor: pointer;
+    line-height: 0;
+    flex-shrink: 0;
+  }
+
+  .history-privacy-info-btn:hover {
+    color: var(--text, inherit);
+    background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  }
+
+  .history-privacy-info-btn :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
+
+  .history-sensitive-help-popover {
+    margin: 0;
+    max-width: min(360px, 92vw);
+    padding: var(--space-md, 16px);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+    border-radius: var(--radius-md, 12px);
+    background: var(--bg-elevated);
+    color: var(--text);
+    box-shadow: var(--shadow-lg, 0 12px 40px rgba(0, 0, 0, 0.35));
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .history-sensitive-help-popover p {
+    margin: 0;
+  }
+
+  .history-sensitive-help-popover :global(strong) {
+    font-weight: 600;
+  }
+
+  :global(.kalam-sleek.light) .history-sensitive-help-popover {
+    box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.12));
+  }
+
+  .history-target-app-shell {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+
   .history-target-app {
     display: flex;
     align-items: center;
     gap: 8px;
     font-size: 15px;
     font-weight: 600;
+    min-width: 0;
+  }
+
+  .history-privacy-block {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 20px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  }
+
+  :global(.kalam-sleek.light) .history-privacy-block {
+    border-top-color: rgba(0, 0, 0, 0.08);
+  }
+
+  .history-privacy-text {
+    flex: 1;
+    min-width: min(100%, 240px);
+  }
+
+  .history-privacy-title {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text, inherit);
+  }
+
+  .history-privacy-desc {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    color: var(--text-muted, #86868b);
+  }
+
+  .history-privacy-desc :global(strong) {
+    font-weight: 600;
+    color: var(--text, inherit);
+  }
+
+  .history-sensitive-toggle {
+    flex-shrink: 0;
   }
 
   .history-target-app-icon {

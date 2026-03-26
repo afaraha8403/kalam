@@ -9,6 +9,7 @@
   import { noteDetailReturnTo, taskDetailReturnTo } from '../lib/detailReturnStore'
   import { selectedHistoryId } from '../lib/historyDetailStore'
   import { recognitionDisplay, sttChipKind } from '../lib/historySttChip'
+  import { historyLanguageLabel } from '../lib/languages'
   import type { HistoryEntry, DashboardStats, Entry } from '../types'
 
   export let navigate: (page: string) => void = () => {}
@@ -628,6 +629,7 @@
                     class:auto={sttChipKind(entry.stt_mode, entry.stt_provider) === 'auto'}
                     class:unknown={sttChipKind(entry.stt_mode, entry.stt_provider) === 'unknown'}
                   >{recognitionDisplay(entry.stt_provider, entry.stt_mode)}</span>
+                  <span class="chip chip-lang small">{historyLanguageLabel(entry.language)}</span>
                   <span class="item-meta">{formatTime(entry.created_at)}</span>
                   {#if entry.duration_ms != null}
                     <span class="entry-duration">{Math.round(entry.duration_ms / 1000)}s</span>

@@ -1,6 +1,6 @@
-//! Sensitive app detection for Hybrid mode: force Local STT when foreground app matches patterns.
+//! Sensitive app detection for Hybrid and Auto modes: force Local STT when the foreground app matches patterns.
 
-use super::settings::{AppConfig, PatternType, PrivacyAction, STTConfig, STTMode};
+use super::settings::{AppConfig, PatternType, STTConfig, STTMode};
 use regex::Regex;
 
 #[cfg(windows)]
@@ -52,9 +52,8 @@ pub fn get_foreground_app() -> Option<(String, String)> {
     Some((process_name, title))
 }
 
-/// If Hybrid mode is on and sensitive app detection is enabled, check whether the
-/// foreground app matches any ForceLocal pattern. Returns an STTConfig that uses
-/// Local mode when a match is found.
+/// If mode is Hybrid or Auto, sensitive app detection is enabled, and patterns exist, check whether the
+/// foreground app matches any pattern. Returns an STTConfig that uses Local mode when a match is found.
 pub fn effective_stt_config(config: &AppConfig) -> STTConfig {
     let stt = &config.stt_config;
     if stt.mode != STTMode::Hybrid && stt.mode != STTMode::Auto {
@@ -67,10 +66,8 @@ pub fn effective_stt_config(config: &AppConfig) -> STTConfig {
         Some(x) => x,
         None => return stt.clone(),
     };
+    // All patterns use ForceLocal semantics (`PrivacyAction` only exposes ForceLocal; legacy JSON maps here).
     for pattern in &config.privacy.sensitive_app_patterns {
-        if pattern.action != PrivacyAction::ForceLocal {
-            continue;
-        }
         let re = match Regex::new(&pattern.pattern) {
             Ok(r) => r,
             Err(_) => continue,

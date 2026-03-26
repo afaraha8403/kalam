@@ -282,6 +282,8 @@ pub struct STTConfig {
     pub local_model: Option<String>,
     pub vad_preset: VADPreset,
     #[serde(default)]
+    pub audio_filter: crate::audio::filter::AudioFilterConfig,
+    #[serde(default)]
     pub transcription_timeout: TranscriptionTimeoutConfig,
 }
 
@@ -294,6 +296,7 @@ impl Default for STTConfig {
             api_key: None,
             local_model: None,
             vad_preset: VADPreset::Balanced,
+            audio_filter: crate::audio::filter::AudioFilterConfig::default(),
             transcription_timeout: TranscriptionTimeoutConfig::default(),
         }
     }
@@ -403,7 +406,7 @@ impl Default for PrivacyConfig {
             telemetry_enabled: false,
             sensitive_app_detection: true,
             sensitive_app_patterns: vec![SensitiveAppPattern {
-                pattern: r"(?i)(1password|bitwarden|keepass|lastpass|dashlane)".to_string(),
+                pattern: r"(?i)(1password|bitwarden|keepass|lastpass|dashlane|nordpass)".to_string(),
                 pattern_type: PatternType::ProcessName,
                 action: PrivacyAction::ForceLocal,
             }],
@@ -425,11 +428,27 @@ pub enum PatternType {
     BundleId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Only `ForceLocal` is implemented. Legacy `Block` / `RequireConfirmation` in JSON map to `ForceLocal` on load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PrivacyAction {
+    #[default]
     ForceLocal,
-    Block,
-    RequireConfirmation,
+}
+
+impl Serialize for PrivacyAction {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str("ForceLocal")
+    }
+}
+
+impl<'de> Deserialize<'de> for PrivacyAction {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "ForceLocal" | "Block" | "RequireConfirmation" => Self::ForceLocal,
+            _ => Self::ForceLocal,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
