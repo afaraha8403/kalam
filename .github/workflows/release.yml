@@ -111,12 +111,16 @@ jobs:
         include:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
+            macos_arch: aarch64
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
+            macos_arch: x86_64
           - platform: 'ubuntu-22.04'
             args: ''
+            macos_arch: ''
           - platform: 'windows-latest'
             args: '--bundles nsis'
+            macos_arch: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -165,3 +169,34 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           assetNamePattern: '[name]-[version]-[platform]-[arch][ext]'
           args: ${{ matrix.args }}
+
+      # Tauri does not emit a .pkg; build one from the bundled .app so users can install to /Applications with installer scripts (see scripts/macos-postinstall.sh).
+      - name: Build macOS pkg installer
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -e
+          PKG_VERSION=$(awk -F'"' '/^version/ {print $2; exit}' src-tauri/Cargo.toml)
+          # pkgbuild --version expects a simple dotted triplet; strip prerelease labels (e.g. 0.1.0-beta.1 -> 0.1.0).
+          PKG_VERSION=$(echo "$PKG_VERSION" | sed -E 's/^([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+          APP_PATH=$(find src-tauri/target -name "Kalam.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Kalam.app not found under src-tauri/target"
+            exit 1
+          fi
+          mkdir -p pkg_scripts
+          cp src-tauri/scripts/macos-postinstall.sh pkg_scripts/postinstall
+          chmod +x pkg_scripts/postinstall
+          OUT_NAME="kalam_${{ github.ref_name }}_macos_${{ matrix.macos_arch }}.pkg"
+          pkgbuild --component "$APP_PATH" \
+            --install-location /Applications \
+            --identifier com.kalam.voice \
+            --version "$PKG_VERSION" \
+            --scripts pkg_scripts \
+            "$OUT_NAME"
+
+      - name: Upload macOS pkg to release
+        if: matrix.platform == 'macos-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" "kalam_${{ github.ref_name }}_macos_${{ matrix.macos_arch }}.pkg" --clobber

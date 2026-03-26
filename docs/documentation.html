@@ -922,6 +922,7 @@
                     <a href="#build" class="doc-nav-link" data-section="build">Build from source</a>
                     <a href="#privacy" class="doc-nav-link" data-section="privacy">Privacy</a>
                     <a href="#contributing" class="doc-nav-link" data-section="contributing">Contributing</a>
+                    <a href="#uninstalling" class="doc-nav-link" data-section="uninstalling">Uninstalling</a>
 
                     <div class="doc-nav-group-title doc-nav-group--manual" style="margin-top: 1.25rem;">User manual</div>
                     <div class="doc-nav-group doc-nav-group--manual">
@@ -1014,6 +1015,18 @@ cd kalam
                         <ul>
                             <li>Open an <strong>issue</strong> or <strong>pull request</strong> at <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer">GitHub</a>.</li>
                         </ul>
+
+                        <h2 id="uninstalling">Uninstalling Kalam</h2>
+                        <p>Kalam stores data in two places on your machine:</p>
+                        <ul>
+                            <li><strong>Profile folder</strong> — <code>~/.kalam</code> (Windows: <code>%USERPROFILE%\.kalam</code>): config, database, history, attachments, debug logs.</li>
+                            <li><strong>App support / XDG data</strong> — downloaded models, STT sidecars, and VAD files. On Windows: under <code>%LOCALAPPDATA%\Kalam</code>; on macOS: <code>~/Library/Application Support/com.Kalam.Kalam</code>; on Linux: <code>~/.local/share/kalam</code>.</li>
+                        </ul>
+                        <p><strong>Windows (NSIS installer):</strong> Run the uninstaller from <strong>Settings → Apps</strong> or <code>Uninstall.exe</code> in the install folder. Check <strong>Delete the application data</strong> to remove Tauri app data plus the folders above.</p>
+                        <p><strong>macOS:</strong> Drag <strong>Kalam</strong> from <strong>Applications</strong> to the Trash, or remove the app installed from a <code>.pkg</code> via the installer receipt if you use one. To remove leftover data, delete <code>~/.kalam</code> and the <code>Library/Application Support/com.Kalam.Kalam</code> folder under your home directory.</p>
+                        <p><strong>Linux (.deb):</strong> <code>sudo apt remove &lt;package&gt;</code> removes the package (find the name with <code>dpkg -l | grep -i kalam</code>). <code>sudo apt purge &lt;package&gt;</code> also runs the maintainer script that deletes <code>~/.kalam</code> and <code>~/.local/share/kalam</code> for the user who ran <code>sudo</code> when <code>SUDO_USER</code> is set. AppImage users can delete the file and remove those folders manually.</p>
+                        <p><strong>Without uninstalling:</strong> Use <strong>Settings → About</strong> (or the danger zone in Settings, if available) to reset app data inside Kalam.</p>
+                        <p><strong>Updates:</strong> <strong>Settings → About → Check for updates</strong> uses the built-in updater (signed builds). It downloads the same installer types published on GitHub; keep using the channel (stable/beta) you selected in About.</p>
                     </div>
                 </section>
 
@@ -1286,6 +1299,7 @@ cd kalam
             <a href="#build" class="doc-nav-link">Build from source</a>
             <a href="#privacy" class="doc-nav-link">Privacy</a>
             <a href="#contributing" class="doc-nav-link">Contributing</a>
+            <a href="#uninstalling" class="doc-nav-link">Uninstalling</a>
             <div class="doc-nav-group-title doc-nav-group--manual" style="margin-top: 1.25rem;">User manual</div>
             <a href="#user-manual" class="doc-nav-link">Overview</a>
             <a href="#getting-started" class="doc-nav-link">Getting started</a>

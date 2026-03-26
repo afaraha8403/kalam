@@ -1440,7 +1440,7 @@ document.querySelectorAll('.md\\:hidden details .nav-link').forEach(function(lin
         var os = osInfo.os, arch = osInfo.arch;
         var platform = os === 'mac' ? 'darwin' : os === 'windows' ? 'windows' : os === 'linux' ? 'linux' : null;
         var winExt = ['.msi', '.exe'];
-        var macExt = ['.dmg', '.app.tar.gz'];
+        var macExt = ['.pkg', '.dmg', '.app.tar.gz'];
         var linuxExt = ['.AppImage', '.deb'];
         var byOs = { windows: winExt, mac: macExt, linux: linuxExt };
         var exts = os ? byOs[os] : [].concat(winExt, macExt, linuxExt);

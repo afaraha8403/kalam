@@ -74,12 +74,18 @@
       "signingIdentity": null,
       "providerShortName": null
     },
+    "linux": {
+      "deb": {
+        "postRemoveScript": "scripts/postrm.sh"
+      }
+    },
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
       "timestampUrl": "",
       "nsis": {
-        "installMode": "both"
+        "installMode": "both",
+        "installerHooks": "nsis-hooks.nsh"
       }
     }
   },

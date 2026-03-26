@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Features
+- **New MacOS Build:** added a new MacOS build to the GitHub Releases. It is a `.pkg` file that can be installed using the standard installer. It is built for the following architectures: `arm64`, `x86_64`, `universal2`.
+
 ## [0.1.0-beta.1]
 
 ### Features

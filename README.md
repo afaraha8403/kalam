@@ -52,6 +52,18 @@ Use a **separate hotkey** from dictation. When you press it and speak, Kalam cre
 
 For setup details, API keys, and the full user manual, see the [**documentation**](https://kalam.stream/documentation.html).
 
+## Uninstalling
+
+Kalam keeps data in **`~/.kalam`** (on Windows: **`%USERPROFILE%\.kalam`**) and, separately, downloaded models and sidecars under your OS app data directory (e.g. **`%LOCALAPPDATA%\Kalam`** on Windows, **`~/Library/Application Support/com.Kalam.Kalam`** on macOS, **`~/.local/share/kalam`** on Linux).
+
+| OS | What to do |
+|----|------------|
+| **Windows** | Run the uninstaller (NSIS). Enable **Delete the application data** to remove both Tauri’s app data and the folders above. |
+| **macOS** | Remove **Kalam** from **Applications** (or use the **.pkg** installer flow). To clear data, delete `~/.kalam` and `~/Library/Application Support/com.Kalam.Kalam` if you want a full wipe. |
+| **Linux (.deb)** | `sudo apt purge <kalam-package>` removes the package and, on purge, user data for the account that ran `sudo` (when `SUDO_USER` is set). The exact package name matches the published `.deb` (often `kalam`-related—check `dpkg -l \| grep -i kalam`). **AppImage:** delete the file and remove `~/.kalam` and `~/.local/share/kalam` manually. |
+
+**Updates:** In the app, use **Settings → About → Check for updates** (signed releases). That uses the same artifacts as GitHub Releases.
+
 ## Building from source
 
 For development or when pre-built binaries aren’t available for your platform:
