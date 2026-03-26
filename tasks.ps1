@@ -72,6 +72,92 @@ function Update-Version {
 }
 
 # ------------------------------------------------------------------------------
+# Confirm-ChangelogUpdated
+# ------------------------------------------------------------------------------
+# Checks if CHANGELOG.md contains a section for the target version.
+# Prompts the user to confirm/update the changelog before releasing.
+# The GitHub release workflow extracts release notes from this section.
+# ------------------------------------------------------------------------------
+function Confirm-ChangelogUpdated {
+    param([string]$Version)
+    
+    # Check if CHANGELOG.md exists and has the version section
+    $changelogPath = "CHANGELOG.md"
+    $hasSection = $false
+    $hasGroupedFormat = $false
+    
+    if (Test-Path $changelogPath) {
+        $content = Get-Content $changelogPath -Raw
+        # Check for section with or without 'v' prefix (e.g., [0.1.0-beta.1] or [v0.1.0-beta.1])
+        $sectionPattern = "## \[$Version\]"
+        $sectionPatternWithV = "## \[v$Version\]"
+        $hasSection = $content -match $sectionPattern -or $content -match $sectionPatternWithV
+        
+        # Check if the section uses the new grouped format (Features/Fixes/Changes)
+        if ($hasSection) {
+            # Find the section and check for grouped subsections
+            $sectionMatch = [regex]::Match($content, "(?s)$sectionPattern.*?((?=## \[)|$)")
+            if (-not $sectionMatch.Success) {
+                $sectionMatch = [regex]::Match($content, "(?s)$sectionPatternWithV.*?((?=## \[)|$)")
+            }
+            if ($sectionMatch.Success) {
+                $sectionContent = $sectionMatch.Value
+                $hasGroupedFormat = $sectionContent -match "### Features" -or 
+                                    $sectionContent -match "### Fixes" -or 
+                                    $sectionContent -match "### Changes"
+            }
+        }
+    }
+    
+    if (-not $hasSection) {
+        Write-Host ""
+        Write-Host "  ⚠ Warning: CHANGELOG.md does not contain section ## [$Version]" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  How to update CHANGELOG.md before releasing:" -ForegroundColor Cyan
+        Write-Host "  -----------------------------------------------" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "  1. Open CHANGELOG.md" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  2. Under ## [Unreleased], add a new version section:" -ForegroundColor White
+        Write-Host "     ## [$Version]" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  3. Organize entries into three subsections:" -ForegroundColor White
+        Write-Host "     ### Features" -ForegroundColor Yellow
+        Write-Host "     - Description of new feature..." -ForegroundColor Gray
+        Write-Host "     - Another feature..." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "     ### Fixes" -ForegroundColor Yellow
+        Write-Host "     - Bug fix description..." -ForegroundColor Gray
+        Write-Host "     - Another fix..." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "     ### Changes" -ForegroundColor Yellow
+        Write-Host "     - Refactor or UX change..." -ForegroundColor Gray
+        Write-Host "     - Another change..." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  4. Save and commit the changelog changes" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  Note: The GitHub release workflow extracts release notes" -ForegroundColor Gray
+        Write-Host "  from this section to populate the release description." -ForegroundColor Gray
+        Write-Host ""
+        
+        $response = Read-Host "  Have you updated CHANGELOG.md for v$Version? (y/N)"
+        if ($response -ne "y" -and $response -ne "Y") {
+            Write-Host ""
+            Write-Host "  ✗ Release aborted. Update CHANGELOG.md and run again." -ForegroundColor Red
+            Write-Host ""
+            exit 1
+        }
+    } else {
+        Write-Host ""
+        Write-Host "  ✓ Found changelog section [$Version]" -ForegroundColor Green
+        if (-not $hasGroupedFormat) {
+            Write-Host "  ⚠ Warning: Section does not use grouped format (### Features/Fixes/Changes)" -ForegroundColor Yellow
+        }
+        Write-Host ""
+    }
+}
+
+# ------------------------------------------------------------------------------
 # Show-Help
 # ------------------------------------------------------------------------------
 function Show-Help {
@@ -214,6 +300,7 @@ switch ($Command) {
             exit 1
         }
         
+        Confirm-ChangelogUpdated $Version
         Update-Version $Version
         
         git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml
@@ -245,6 +332,7 @@ switch ($Command) {
             exit 1
         }
         
+        Confirm-ChangelogUpdated $Version
         Update-Version $Version
         
         git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml
@@ -275,6 +363,7 @@ switch ($Command) {
             exit 1
         }
         
+        Confirm-ChangelogUpdated $Version
         Update-Version $Version
         
         git add src-tauri/tauri.conf.json package.json src-tauri/Cargo.toml

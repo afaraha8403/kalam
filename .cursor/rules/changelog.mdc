@@ -1,5 +1,5 @@
 ---
-description: Maintain CHANGELOG.md for significant changes; version-grouped with Unreleased at top; source for GitHub release notes
+description: Maintain CHANGELOG.md for significant changes; grouped by type (Features, Fixes, Changes); source for GitHub release notes
 alwaysApply: true
 ---
 
@@ -16,12 +16,14 @@ Update `CHANGELOG.md` (at project root) whenever you or the user:
 
 Do **not** add trivial edits (typos, comment-only, formatting-only) unless the user asks.
 
-## Format (version-based)
+## Format (grouped by type)
 
-- **Unreleased at top.** The first section is `## [Unreleased]` for changes not yet in a release. Add new entries under `[Unreleased]`.
+- **Unreleased at top.** The first section is `## [Unreleased]` for changes not yet in a release.
 - **Released versions below.** Each release has a section `## [vX.Y.Z]` or `## [X.Y.Z]` (e.g. `## [v0.0.1-beta.7]`, `## [1.0.0]`). Use the exact version string that will be tagged (with or without leading `v`).
-- **Newest release first** under Unreleased. When you cut a release, the previous `[Unreleased]` content can be moved under a new `## [vX.Y.Z]` section (or left in Unreleased if you prefer to document only in the release step).
-- Use exactly these labels: **Feature**, **Fix**, **Change**. One line per item; keep text concise.
+- **Newest release first** under Unreleased. When you cut a release, the previous `[Unreleased]` content can be moved under a new `## [vX.Y.Z]` section.
+- **Group by type.** Within each version section, organize entries under three subsections: `### Features`, `### Fixes`, `### Changes`.
+- **No type prefix.** Items do not need `**Feature:**`, `**Fix:**`, or `**Change:**` prefixes since they are grouped by section.
+- One line per item; keep text concise.
 
 Structure:
 
@@ -29,13 +31,25 @@ Structure:
 # Changelog
 
 ## [Unreleased]
-- **Feature:** Short description.
-- **Fix:** Short description.
-- **Change:** Short description.
+
+### Features
+- Short description of new feature.
+- Another feature.
+
+### Fixes
+- Bug fix description.
+- Another fix.
+
+### Changes
+- Refactor or UX change description.
 
 ## [v0.0.1-beta.7]
-- **Feature:** Something shipped in this version.
-- **Change:** Another change.
+
+### Features
+- Something shipped in this version.
+
+### Changes
+- Another change.
 
 ## [v0.0.1-beta.6]
 - ...
