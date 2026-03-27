@@ -170,6 +170,27 @@ jobs:
           assetNamePattern: '[name]-[version]-[platform]-[arch][ext]'
           args: ${{ matrix.args }}
 
+      - name: Verify macOS microphone usage description in bundled app
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -e
+          APP_PATH=$(find src-tauri/target -name "Kalam.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Kalam.app not found under src-tauri/target"
+            exit 1
+          fi
+          PLIST="$APP_PATH/Contents/Info.plist"
+          if [ ! -f "$PLIST" ]; then
+            echo "Info.plist not found at $PLIST"
+            exit 1
+          fi
+          VALUE=$(/usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$PLIST" 2>/dev/null || true)
+          if [ -z "$VALUE" ]; then
+            echo "Missing NSMicrophoneUsageDescription in bundled app Info.plist"
+            exit 1
+          fi
+          echo "NSMicrophoneUsageDescription: $VALUE"
+
       # Tauri does not emit a .pkg; build one from the bundled .app so users can install to /Applications with installer scripts (see scripts/macos-postinstall.sh).
       - name: Build macOS pkg installer
         if: matrix.platform == 'macos-latest'

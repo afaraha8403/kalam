@@ -70,6 +70,9 @@ pub struct AppConfig {
     /// Update channel: stable (latest release) or beta (pre-releases).
     #[serde(default)]
     pub update_channel: UpdateChannel,
+    /// When true, do not auto-switch update channel to Beta on pre-release app builds (user set channel in About).
+    #[serde(default)]
+    pub update_channel_locked: bool,
     /// When true, the left sidebar is collapsed to icon-only width; persisted across restarts.
     #[serde(default)]
     pub sidebar_collapsed: bool,
@@ -223,6 +226,7 @@ impl Default for AppConfig {
             onboarding_os_version: None,
             command_config: CommandConfig::default(),
             update_channel: UpdateChannel::Stable,
+            update_channel_locked: false,
             sidebar_collapsed: false,
             theme_preference: ThemePreference::default(),
         }

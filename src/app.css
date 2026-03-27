@@ -154,6 +154,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* Speaking-time heatmap: custom tooltip body (Apex custom HTML skips default text nodes). */
+.kalam-heatmap-tip {
+  padding: 8px 12px;
+}
 [data-theme='dark'] .kalam-dash-tooltip .kalam-heatmap-tip-day {
   color: #f5f5f7 !important;
   font-size: 13px;

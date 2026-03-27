@@ -30,7 +30,7 @@
     if (t) {
       try {
         const list = await invoke<Snippet[]>('get_snippets')
-        const found = list.find((s: Snippet) => s.trigger === t)
+        const found = list.find((s: Snippet) => s.trigger.toLowerCase() === t.toLowerCase())
         if (found) {
           trigger = found.trigger
           expansion = found.expansion
@@ -134,7 +134,7 @@
           bind:value={trigger}
           placeholder="e.g. @@email or my signature phrase"
         />
-        <p class="snippet-field-hint">Must match the transcript exactly (what speech-to-text writes).</p>
+        <p class="snippet-field-hint">Must match exactly what Kalam transcribes (same spelling and spacing).</p>
       </div>
 
       <div class="snippet-form-row">

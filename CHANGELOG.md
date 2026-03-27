@@ -3,7 +3,35 @@
 ## [Unreleased]
 
 ### Features
+- **Public site (`docs/index.html`):** **App Showcase** — 3D floating scene of real Kalam screenshots at varying perspectives, depths, and angles (Product Hunt-style eye candy); **Light / Dark toggle** swaps all 8 image sets; **click-to-zoom lightbox** with blur backdrop; screenshots cropped to remove Windows 11 chrome (title bar, borders, status bar). 8 views: Overview, History, Notes, Tasks, Reminders, Snippets, Settings General, Settings Privacy.
+- **Public site (`docs/index.html`):** design-system **comparison table** (Kalam vs Wispr Flow vs Superwhisper) highlighting **open source**, Linux, BYOK, and offline STT; footnotes link to vendor sites for pricing accuracy.
+- **Overlay:** when **Hybrid** or **Auto** uses **sensitive app** patterns, focusing a matching app **without dictating** briefly expands the pill (**Sensitive app detected**, lock, **amber**); dictation in that context still uses the same hint and **amber** waveform.
+- **History → Clear all:** more reliable SQLite clear (transaction + vec rows first); emits **`history-cleared`** so list and overview refresh; dev bridge implements the flow for browser/Cypress.
+- **Local STT first-time install:** **`download_model`** downloads the **engine (sidecar) before model weights** so start/retry is less likely to need a second attempt.
+- **Windows:** local STT sidecar processes use **`CREATE_NO_WINDOW`** and null stdio so a console window does not stay visible.
+- **Settings → Test microphone:** **Record** / **Play** for the last capture (no forced auto-playback).
+- **Settings → Audio cleanup:** preset descriptions, illustrative **frequency sketch** (`FilterPreview`), friendlier custom labels.
+- **Dictionary:** edit existing terms inline (**`update_dictionary_entry`**).
+- **Pre-release builds:** update channel defaults to **beta** until the user explicitly chooses a channel in About (**`update_channel_locked`**).
+- **Overlay:** transcription errors stay **longer**, with **Dismiss** and **Retry** (focuses main window); **`focus_main_window`** IPC.
+- **Command mode — online search:** say **“online search”** followed by your query to open the system default browser with a DuckDuckGo search (no note/task entry). Uses `tauri-plugin-opener`.
 - **New MacOS Build:** added a new MacOS build to the GitHub Releases. It is a `.pkg` file that can be installed using the standard installer. It is built for the following architectures: `arm64`, `x86_64`, `universal2`.
+
+### Fixes
+- **History detail → Sensitive apps:** the toggle now reflects whether the target process is already listed (regex match aligned with the backend), removes the correct pattern when turned off, and no longer appends duplicate patterns when the app was added from Settings.
+- **History → Clear all:** the confirmation dialog is no longer clipped or unclickable — the page intro animation now ends with **`transform: none`** so `position: fixed` overlays attach to the viewport (a lingering transform on `.page.fade-in` had pinned them to the scroll container).
+- **macOS:** bundle **Info.plist** includes **`NSMicrophoneUsageDescription`** so the installed app can appear under **Microphone** privacy and receive the system prompt (was missing in beta builds).
+- **History row meta:** action chips wrap and respect narrow layouts (**`.entry-actions`** / **`.item-meta-row`**).
+- **Snippets:** expansion matching is **case-insensitive** (Rust + snippet detail route).
+- **Settings header:** **Saving…** reserves space so the layout does not jump.
+- **Status bar / history detail / snippets:** more **consumer-friendly** labels (e.g. Storage, response time, transcription wording).
+
+### Changes
+- **Public site (`docs/index.html`):** Review Wall uses three columns with **opposing vertical marquees**, **top/bottom fade masks** (transparent → opaque → transparent), staggered durations, and **hover to pause**; respects **`prefers-reduced-motion`**.
+- **Public site (`docs/`):** removed the previous static marketing pages and related assets ahead of a redesign; kept **`docs/marketing/`** screenshots, **`docs/CNAME`**, the **`docs/kalam-stream-site-backup-2026-03-27.zip`** snapshot, and **`docs/WEBSITE_BACKUP_REFERENCE.txt`**. **GitHub Pages** will serve an empty root until a new `index` (or equivalent) is added.
+- **Overview dashboard:** reworked charts to be value-first, with a new hero chart that combines 7-day words and estimated time saved vs 40 WPM typing (single chart, dual-series), plus clearer value-oriented labels across all overview tiles.
+- **Permissions UX (macOS/Windows/Linux):** onboarding and Settings now show explicit capability status (microphone, text insertion, global hotkey), OS-specific guidance, and clearer remediation actions instead of one-size-fits-all prompts.
+- **Cloud STT prompt leakage:** dictation now strips leading dictionary/prompt echoes per chunk and chains only sanitized text, preventing custom dictionary keywords from being injected at the start of transcripts.
 
 ## [0.1.0-beta.1]
 

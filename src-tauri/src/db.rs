@@ -480,6 +480,18 @@ pub fn delete_dictionary_entry(conn: &Connection, id: &str) -> anyhow::Result<()
     Ok(())
 }
 
+/// Update an existing dictionary term by id.
+pub fn update_dictionary_entry(conn: &Connection, id: &str, term: &str) -> anyhow::Result<()> {
+    let n = conn.execute(
+        "UPDATE dictionary SET term = ?1 WHERE id = ?2",
+        rusqlite::params![term, id],
+    )?;
+    if n == 0 {
+        anyhow::bail!("Dictionary entry not found");
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Daily stats (one row per calendar day)
 // ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ use chrono::TimeZone;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::{oneshot, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -34,6 +35,7 @@ const WINDOW_ICON: tauri::image::Image<'static> = tauri::include_image!("icons/3
 use crate::audio::vad::VADConfig;
 use crate::audio::{play_sound, AudioState};
 use crate::config::STTConfig;
+use crate::config::STTMode;
 use crate::config::{AppConfig, ConfigManager, UpdateChannel};
 use crate::hotkey::{parse_rdev_hotkey, start_listener, HotkeyRegistration};
 use crate::notifications::NotificationManager;
@@ -222,6 +224,8 @@ pub struct AppState {
     pub overlay_expanded: Arc<AtomicBool>,
     /// Cancellation token for the current transcription run. Replaced at start of each run; cancel_transcription cancels it.
     pub transcription_cancel: Arc<RwLock<CancellationToken>>,
+    /// Hybrid/Auto forced Local due to sensitive app patterns; drives overlay amber UI for this dictation session.
+    pub is_sensitive_app_active: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -280,6 +284,7 @@ impl AppState {
             recording_type: Arc::new(Mutex::new(RecordingType::Dictation)),
             overlay_expanded: Arc::new(AtomicBool::new(false)),
             transcription_cancel: Arc::new(RwLock::new(CancellationToken::new())),
+            is_sensitive_app_active: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -299,6 +304,9 @@ async fn cancel_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<A
     }
 
     is_recording.store(false, Ordering::SeqCst);
+    state
+        .is_sensitive_app_active
+        .store(false, Ordering::SeqCst);
     let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Idle);
     // Stop active stream only when recording was fully started. During Starting, start_dictation
     // performs cleanup if cancellation happened after stream startup but before final transition.
@@ -685,6 +693,7 @@ pub fn run() {
             .plugin(tauri_plugin_notification::init())
             .plugin(tauri_plugin_updater::Builder::new().build())
             .plugin(tauri_plugin_shell::init())
+            .plugin(tauri_plugin_opener::init())
             .plugin(
                 tauri_plugin_autostart::Builder::new()
                     .app_name("Kalam")
@@ -751,6 +760,23 @@ pub fn run() {
             // Manage state
             app.manage(state);
 
+            // Pre-release builds: default update channel to Beta until the user picks a channel in About.
+            {
+                let state = app.state::<AppState>();
+                if !app.package_info().version.pre.is_empty() {
+                    let mut mgr = state.config.blocking_lock();
+                    let mut cfg = mgr.get_all();
+                    if !cfg.update_channel_locked && cfg.update_channel == UpdateChannel::Stable {
+                        cfg.update_channel = UpdateChannel::Beta;
+                        if let Err(e) = mgr.save(cfg) {
+                            log::warn!("Failed to set default beta update channel: {}", e);
+                        } else {
+                            log::info!("Update channel set to Beta (pre-release build)");
+                        }
+                    }
+                }
+            }
+
             let retention_startup = app
                 .state::<AppState>()
                 .config
@@ -783,6 +809,36 @@ pub fn run() {
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                     let _ = update_overlay_position(&cursor_tracking_handle);
+                }
+            });
+
+            // When focus enters a sensitive app (Hybrid/Auto + patterns), expand the pill briefly with a lock hint.
+            let sensitive_peek_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut last_idle_sensitive: Option<bool> = None;
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(450)).await;
+                    let state = sensitive_peek_handle.state::<AppState>();
+                    let audio = *state.audio_state.lock().await;
+                    if !matches!(audio, crate::audio::AudioState::Idle) {
+                        continue;
+                    }
+                    let cfg = match state.config.try_lock() {
+                        Ok(g) => g.get_all(),
+                        Err(_) => continue,
+                    };
+                    if !cfg.dictation_enabled {
+                        continue;
+                    }
+                    let now = crate::config::privacy::foreground_matches_sensitive_app(&cfg);
+                    let prev = last_idle_sensitive.unwrap_or(false);
+                    if now && !prev {
+                        emit_overlay_event(
+                            &sensitive_peek_handle,
+                            OverlayEvent::SensitiveAppPeek,
+                        );
+                    }
+                    last_idle_sensitive = Some(now);
                 }
             });
 
@@ -888,6 +944,8 @@ pub fn run() {
             download_and_install_update,
             request_system_permission,
             open_system_permission_page,
+            get_permission_status,
+            get_runtime_capabilities,
             get_settings,
             save_settings,
             skip_onboarding_with_defaults,
@@ -942,6 +1000,8 @@ pub fn run() {
             commands::get_dictionary_entries,
             commands::add_dictionary_entry,
             commands::delete_dictionary_entry,
+            commands::update_dictionary_entry,
+            focus_main_window,
             reset_application,
             check_model_requirements,
             start_local_model,
@@ -1550,6 +1610,234 @@ fn request_system_permission(permission: &str) -> Result<(), String> {
     open_system_permission_page(permission)
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+struct PermissionStatusItem {
+    /// granted | needs_action | unknown
+    state: String,
+    actionable: bool,
+    message: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct PermissionStatusPayload {
+    platform: String,
+    microphone: PermissionStatusItem,
+    accessibility: PermissionStatusItem,
+    input_monitoring: PermissionStatusItem,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct RuntimeCapabilitiesPayload {
+    /// Whether audio capture appears available right now.
+    can_capture_audio: bool,
+    /// Whether text injection into other apps is expected to work.
+    can_text_inject: bool,
+    /// Whether global hotkeys are expected to work.
+    can_global_hotkey: bool,
+    /// granted | needs_action | unknown
+    capture_audio_state: String,
+    /// granted | needs_action | unknown
+    text_inject_state: String,
+    /// granted | needs_action | unknown
+    global_hotkey_state: String,
+    /// Actionable guidance to unblock the user.
+    next_steps: Vec<String>,
+    permission_status: PermissionStatusPayload,
+}
+
+fn has_any_audio_input_device() -> bool {
+    use cpal::traits::HostTrait;
+    let host = cpal::default_host();
+    if let Ok(mut devices) = host.input_devices() {
+        if devices.next().is_some() {
+            return true;
+        }
+    }
+    host.default_input_device().is_some()
+}
+
+#[cfg(target_os = "macos")]
+fn is_macos_accessibility_trusted() -> bool {
+    use std::ffi::c_void;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> i32;
+    }
+
+    let _ = std::mem::size_of::<*const c_void>();
+    unsafe { AXIsProcessTrusted() != 0 }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[allow(dead_code)] // Called by macOS-only status checks; non-mac builds keep a stub for shared call sites.
+fn is_macos_accessibility_trusted() -> bool {
+    false
+}
+
+#[tauri::command]
+fn get_permission_status() -> PermissionStatusPayload {
+    #[cfg(target_os = "macos")]
+    {
+        let has_mic_device = has_any_audio_input_device();
+        let accessibility_trusted = is_macos_accessibility_trusted();
+        return PermissionStatusPayload {
+            platform: "macos".to_string(),
+            microphone: PermissionStatusItem {
+                state: if has_mic_device {
+                    "unknown".to_string()
+                } else {
+                    "needs_action".to_string()
+                },
+                actionable: true,
+                message: if has_mic_device {
+                    "macOS shows the microphone prompt when recording starts. Run a mic test to confirm access."
+                        .to_string()
+                } else {
+                    "No input device detected. Connect or enable a microphone, then retry.".to_string()
+                },
+            },
+            accessibility: PermissionStatusItem {
+                state: if accessibility_trusted {
+                    "granted".to_string()
+                } else {
+                    "needs_action".to_string()
+                },
+                actionable: !accessibility_trusted,
+                message: if accessibility_trusted {
+                    "Accessibility is enabled.".to_string()
+                } else {
+                    "Enable Accessibility so Kalam can insert text into other apps.".to_string()
+                },
+            },
+            input_monitoring: PermissionStatusItem {
+                state: "unknown".to_string(),
+                actionable: true,
+                message: "Input Monitoring is usually prompted when global shortcuts are captured. Test your hotkey in another app to confirm."
+                    .to_string(),
+            },
+        };
+    }
+
+    #[cfg(windows)]
+    {
+        let has_mic_device = has_any_audio_input_device();
+        return PermissionStatusPayload {
+            platform: "windows".to_string(),
+            microphone: PermissionStatusItem {
+                state: if has_mic_device {
+                    "unknown".to_string()
+                } else {
+                    "needs_action".to_string()
+                },
+                actionable: true,
+                message: if has_mic_device {
+                    "If recording fails, check Windows Privacy > Microphone access for this app."
+                        .to_string()
+                } else {
+                    "No input device detected. Connect or enable a microphone, then retry.".to_string()
+                },
+            },
+            accessibility: PermissionStatusItem {
+                state: "granted".to_string(),
+                actionable: false,
+                message: "No separate accessibility toggle is usually required on Windows."
+                    .to_string(),
+            },
+            input_monitoring: PermissionStatusItem {
+                state: "granted".to_string(),
+                actionable: false,
+                message: "No separate Input Monitoring permission is required on Windows."
+                    .to_string(),
+            },
+        };
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let has_mic_device = has_any_audio_input_device();
+        PermissionStatusPayload {
+            platform: "linux".to_string(),
+            microphone: PermissionStatusItem {
+                state: if has_mic_device {
+                    "unknown".to_string()
+                } else {
+                    "needs_action".to_string()
+                },
+                actionable: true,
+                message: if has_mic_device {
+                    "Linux permissions vary by distribution and audio stack. Run mic test to confirm capture."
+                        .to_string()
+                } else {
+                    "No input device detected. Check PipeWire/PulseAudio and device settings.".to_string()
+                },
+            },
+            accessibility: PermissionStatusItem {
+                state: "unknown".to_string(),
+                actionable: true,
+                message: "Linux accessibility/injection support varies by desktop environment."
+                    .to_string(),
+            },
+            input_monitoring: PermissionStatusItem {
+                state: "unknown".to_string(),
+                actionable: true,
+                message: "Global hotkey support varies by desktop environment and compositor."
+                    .to_string(),
+            },
+        }
+    }
+}
+
+#[tauri::command]
+fn get_runtime_capabilities() -> RuntimeCapabilitiesPayload {
+    let status = get_permission_status();
+
+    let can_capture_audio = status.microphone.state != "needs_action";
+    let can_text_inject = if cfg!(target_os = "macos") {
+        status.accessibility.state == "granted"
+    } else {
+        true
+    };
+    // We cannot reliably determine this across all OSes without active runtime probes;
+    // keep unknown as advisory and let onboarding/settings provide explicit test actions.
+    let can_global_hotkey = if cfg!(target_os = "macos") {
+        status.input_monitoring.state == "granted"
+    } else {
+        true
+    };
+
+    let mut next_steps: Vec<String> = Vec::new();
+    if status.microphone.actionable {
+        next_steps.push(
+            "Run the microphone test first; if it fails, open microphone settings and retry."
+                .to_string(),
+        );
+    }
+    if status.accessibility.actionable {
+        next_steps.push(
+            "Enable accessibility/text-control permission so Kalam can insert text into other apps."
+                .to_string(),
+        );
+    }
+    if status.input_monitoring.actionable {
+        next_steps.push(
+            "Test the global shortcut in another app; if it fails, enable Input Monitoring for Kalam."
+                .to_string(),
+        );
+    }
+
+    RuntimeCapabilitiesPayload {
+        can_capture_audio,
+        can_text_inject,
+        can_global_hotkey,
+        capture_audio_state: status.microphone.state.clone(),
+        text_inject_state: status.accessibility.state.clone(),
+        global_hotkey_state: status.input_monitoring.state.clone(),
+        next_steps,
+        permission_status: status,
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn request_macos_accessibility() -> Result<(), String> {
     use core_foundation::base::TCFType;
@@ -2115,8 +2403,20 @@ struct DbStatus {
 }
 
 #[tauri::command]
-async fn clear_history() -> Result<(), String> {
-    history::clear().await.map_err(|e| e.to_string())
+async fn clear_history(app: tauri::AppHandle) -> Result<(), String> {
+    history::clear().await.map_err(|e| e.to_string())?;
+    let _ = app.emit("history-cleared", ());
+    Ok(())
+}
+
+/// Bring the main window forward so the user can retry dictation after an overlay error.
+#[tauri::command]
+fn focus_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2255,6 +2555,16 @@ async fn download_model(
     state: tauri::State<'_, AppState>,
     model_type: String,
 ) -> Result<(), String> {
+    // Install the local engine (sidecar) before model weights so first-time setup can start the model once.
+    if let Some(sidecar_id) = crate::stt::sidecars::model_id_to_sidecar_id(&model_type) {
+        if crate::stt::sidecars::sidecar_download_info(sidecar_id).is_some()
+            && !crate::stt::sidecars::sidecar_is_installed(sidecar_id)
+        {
+            crate::stt::sidecars::download_sidecar_with_progress(sidecar_id, &state.app_handle)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
     crate::stt::models::download_model_with_progress(&model_type, &state.app_handle)
         .await
         .map_err(|e| e.to_string())?;
@@ -2307,11 +2617,14 @@ const OVERLAY_BOTTOM_MARGIN: i32 = 24;
 enum OverlayEvent {
     Hidden,
     Collapsed,
-    Listening,
+    Listening {
+        sensitive_app: bool,
+    },
     ShortPress,
     Recording {
         level: f32,
         is_command: bool,
+        sensitive_app: bool,
     },
     /// Processing with progress: elapsed/expected for timeout hint, attempt for retry badge.
     Processing {
@@ -2331,6 +2644,8 @@ enum OverlayEvent {
     },
     /// User clicked cancel; show briefly then return to idle.
     Cancelling,
+    /// Focus moved to a sensitive app (Hybrid/Auto): brief expanded pill with lock; no dictation yet.
+    SensitiveAppPeek,
 }
 
 #[tauri::command]
@@ -2705,6 +3020,16 @@ fn get_foreground_exe_info(hwnd: usize) -> Option<(String, String)> {
     Some((short, path))
 }
 
+/// True when Hybrid/Auto mode forces Local STT due to sensitive app patterns (overlay amber state).
+fn sensitive_app_forces_local(config: &AppConfig) -> bool {
+    let effective = crate::config::privacy::effective_stt_config(config);
+    matches!(effective.mode, STTMode::Local)
+        && matches!(
+            config.stt_config.mode,
+            STTMode::Hybrid | STTMode::Auto
+        )
+}
+
 async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<AtomicBool>) {
     if is_recording.load(Ordering::SeqCst) {
         log::debug!("Already recording, ignoring start request");
@@ -2729,31 +3054,6 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     latency_trace_write("T2_before_resize");
     let _ = resize_overlay(state.app_handle.clone(), true);
     latency_trace_write("T2_after_resize");
-    let run = LISTENING_EMIT_RUN.fetch_add(1, Ordering::SeqCst) + 1;
-    latency_trace_write(&format!("listening_emit_run_{}", run));
-    latency_trace_write("T4_before_emit");
-    emit_overlay_event(&state.app_handle, OverlayEvent::Listening);
-    latency_trace_write("after_emit_listening");
-    let app_handle = state.app_handle.clone();
-    latency_trace_write("T3_before_play_sound");
-    let sound_enabled = state
-        .config
-        .lock()
-        .await
-        .get_all()
-        .notifications
-        .sound_enabled;
-    if sound_enabled {
-        if let Err(e) = play_sound(&app_handle, "dictation-started") {
-            log::warn!("Failed to play dictation start sound: {}", e);
-        }
-    }
-    latency_trace_write("T3_after_play_sound");
-    latency_trace_write("after_play_sound");
-
-    latency_trace_write("before_update_overlay_position");
-    let _ = update_overlay_position(&state.app_handle);
-    latency_trace_write("after_update_overlay_position");
 
     #[cfg(windows)]
     {
@@ -2800,12 +3100,52 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
         }
     }
 
+    let cfg_for_sensitive = state.config.lock().await.get_all();
+    let sensitive_app = sensitive_app_forces_local(&cfg_for_sensitive);
+    state
+        .is_sensitive_app_active
+        .store(sensitive_app, Ordering::SeqCst);
+
+    let run = LISTENING_EMIT_RUN.fetch_add(1, Ordering::SeqCst) + 1;
+    latency_trace_write(&format!("listening_emit_run_{}", run));
+    latency_trace_write("T4_before_emit");
+    emit_overlay_event(
+        &state.app_handle,
+        OverlayEvent::Listening {
+            sensitive_app,
+        },
+    );
+    latency_trace_write("after_emit_listening");
+    let app_handle = state.app_handle.clone();
+    latency_trace_write("T3_before_play_sound");
+    let sound_enabled = state
+        .config
+        .lock()
+        .await
+        .get_all()
+        .notifications
+        .sound_enabled;
+    if sound_enabled {
+        if let Err(e) = play_sound(&app_handle, "dictation-started") {
+            log::warn!("Failed to play dictation start sound: {}", e);
+        }
+    }
+    latency_trace_write("T3_after_play_sound");
+    latency_trace_write("after_play_sound");
+
+    latency_trace_write("before_update_overlay_position");
+    let _ = update_overlay_position(&state.app_handle);
+    latency_trace_write("after_update_overlay_position");
+
     // Start actual audio recording
     if let Err(e) = state.audio_capture.lock().await.start_recording().await {
         log::error!("Failed to start recording: {}", e);
         let mut audio_state = state.audio_state.lock().await;
         *audio_state = AudioState::Idle;
         is_recording.store(false, Ordering::SeqCst);
+        state
+            .is_sensitive_app_active
+            .store(false, Ordering::SeqCst);
         return;
     }
 
@@ -2815,6 +3155,9 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
         if !matches!(*audio_state, AudioState::Starting) {
             let _ = state.audio_capture.lock().await.stop_recording().await;
             is_recording.store(false, Ordering::SeqCst);
+            state
+                .is_sensitive_app_active
+                .store(false, Ordering::SeqCst);
             return;
         }
         *audio_state = AudioState::Recording;
@@ -2826,13 +3169,18 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     let app_handle_level = state.app_handle.clone();
     let audio_capture = state.audio_capture.clone();
     let is_recording_level = is_recording.clone();
+    let is_sensitive_app_active = state.is_sensitive_app_active.clone();
     let is_command = *state.recording_type.lock().await == RecordingType::Command;
     tauri::async_runtime::spawn(async move {
         while is_recording_level.load(Ordering::SeqCst) {
             let level = audio_capture.lock().await.get_current_recording_level();
             emit_overlay_event(
                 &app_handle_level,
-                OverlayEvent::Recording { level, is_command },
+                OverlayEvent::Recording {
+                    level,
+                    is_command,
+                    sensitive_app: is_sensitive_app_active.load(Ordering::SeqCst),
+                },
             );
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         }
@@ -2857,6 +3205,24 @@ enum TranscribeJob {
     },
 }
 
+/// Build a DuckDuckGo search URL (`q` query param) so the OS default browser opens a normal web search.
+fn command_mode_web_search_url(query: &str) -> Result<String, String> {
+    let mut u = url::Url::parse("https://duckduckgo.com/")
+        .map_err(|e| format!("Invalid search URL: {}", e))?;
+    u.query_pairs_mut().append_pair("q", query);
+    Ok(u.to_string())
+}
+
+/// Open the given web search in the user's default browser (tauri-plugin-opener).
+fn open_command_mode_web_search(app_handle: &tauri::AppHandle, query: &str) -> Result<(), String> {
+    let url = command_mode_web_search_url(query)?;
+    app_handle
+        .opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("Could not open browser: {}", e))?;
+    Ok(())
+}
+
 /// Command mode: parse "new note/task/reminder" from transcribed text, or use LLM to infer type and extract fields.
 async fn run_command_pipeline(
     text: &str,
@@ -2868,6 +3234,37 @@ async fn run_command_pipeline(
         return Err("No speech detected.".to_string());
     }
     let lower = trimmed.to_lowercase();
+
+    // Same idea as "new note …": fixed prefix, then the rest is the payload (here: search terms).
+    const ONLINE_SEARCH_PREFIX: &str = "online search";
+    if lower.starts_with(ONLINE_SEARCH_PREFIX) {
+        let query = trimmed[ONLINE_SEARCH_PREFIX.len()..].trim();
+        if query.is_empty() {
+            if config.notifications.show_errors {
+                let state = app_handle.state::<AppState>();
+                let _ = state.notification_manager.warning(
+                    "Say \"online search\" followed by what you want to look up.",
+                );
+            }
+            return Err(
+                "Say \"online search\" followed by what you want to look up.".to_string(),
+            );
+        }
+        open_command_mode_web_search(app_handle, query)?;
+        let preview = if query.chars().count() > 50 {
+            format!("{}...", query.chars().take(47).collect::<String>())
+        } else {
+            query.to_string()
+        };
+        emit_overlay_event(
+            app_handle,
+            OverlayEvent::Status {
+                message: format!("Search opened: {}", preview),
+                highlight: None,
+            },
+        );
+        return Ok(());
+    }
 
     let cmd = &config.command_config;
     let provider = cmd.provider.as_deref().unwrap_or("");
@@ -2901,10 +3298,10 @@ async fn run_command_pipeline(
             if config.notifications.show_errors {
                 let state = app_handle.state::<AppState>();
                 let _ = state.notification_manager.warning(
-                    "Say \"new note\", \"new task\", or \"new reminder\" followed by your content.",
+                    "Say \"new note\", \"new task\", \"new reminder\", or \"online search\" followed by your content.",
                 );
             }
-            return Err("Could not detect command. Say 'new note', 'new task', or 'new reminder' followed by your content.".to_string());
+            return Err("Could not detect command. Say 'new note', 'new task', 'new reminder', or 'online search' followed by your content.".to_string());
         };
         if p.is_empty() {
             return Err("Command content is empty.".to_string());
@@ -3279,6 +3676,9 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         log::info!("Stopping dictation...");
         *audio_state = AudioState::Processing;
         is_recording.store(false, Ordering::SeqCst);
+        state
+            .is_sensitive_app_active
+            .store(false, Ordering::SeqCst);
         emit_overlay_event(
             &state.app_handle,
             OverlayEvent::Processing {

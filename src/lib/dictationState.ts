@@ -80,6 +80,7 @@ export function applyOverlayBroadcast(payload: unknown): void {
     case 'Collapsed':
     case 'Success':
     case 'ShortPress':
+    case 'SensitiveAppPeek':
       clearRecordingWallClock()
       dictationRuntimeStore.set(baseSnapshot())
       return

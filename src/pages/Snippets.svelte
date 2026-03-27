@@ -92,7 +92,7 @@
           </li>
           <li>
             There is <strong>no special prefix</strong>: whatever you save as the trigger is the exact substring that
-            must appear in the transcript (same words, symbols, and spacing as speech-to-text produces).
+            must appear in the transcript (same words, symbols, and spacing as Kalam transcribes; matching ignores case).
           </li>
           <li>
             If one trigger appears inside another, <strong>longer triggers are applied first</strong> so a short code

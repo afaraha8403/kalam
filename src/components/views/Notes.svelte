@@ -80,13 +80,19 @@
     const rect = el?.getBoundingClientRect()
     if (!rect || !el) return
 
-    // An ancestor with a CSS transform (e.g. .page.fade-in { animation: fadeInPage … })
-    // makes position:fixed relative to that ancestor instead of the viewport.
-    // Measure the offset so we can compensate in the inline left/top.
+    // A non-`none` transform on an ancestor makes position:fixed relative to that element
+    // (fadeInPage ends with `transform: none` so this offset is usually 0 after the intro animation).
     const page = el.closest('.page.fade-in') as HTMLElement | null
-    const pageRect = page?.getBoundingClientRect()
-    const containerOffsetX = pageRect ? pageRect.left : 0
-    const containerOffsetY = pageRect ? pageRect.top : 0
+    let containerOffsetX = 0
+    let containerOffsetY = 0
+    if (page) {
+      const xf = getComputedStyle(page).transform
+      if (xf && xf !== 'none') {
+        const pageRect = page.getBoundingClientRect()
+        containerOffsetX = pageRect.left
+        containerOffsetY = pageRect.top
+      }
+    }
 
     pointerReorderPending = {
       id,

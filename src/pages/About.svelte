@@ -105,7 +105,9 @@ maintainers to request a commercial license.`
   async function onChannelChange() {
     try {
       const config = (await invoke('get_settings')) as import('../types').AppConfig
-      await invoke('save_settings', { newConfig: { ...config, update_channel: updateChannel } })
+      await invoke('save_settings', {
+        newConfig: { ...config, update_channel: updateChannel, update_channel_locked: true },
+      })
     } catch (e) {
       console.error('Failed to save update channel:', e)
     }

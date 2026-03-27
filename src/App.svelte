@@ -1025,7 +1025,10 @@
   }
   @keyframes fadeInPage {
     from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+    /* Final frame must be `transform: none` (not translateY(0)): any non-none transform on an
+       ancestor makes position:fixed relative to that ancestor and clips inside overflow:auto
+       (.page-content), which broke the History “Clear all” modal in the main window. */
+    to { opacity: 1; transform: none; }
   }
   :global(.kalam-sleek .page-content .page-header) {
     margin-bottom: var(--space-2xl);
@@ -1206,6 +1209,8 @@
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
   }
   /* When meta row has copy button, use entry-actions spacing (12px) even if class is missing in DOM */
   :global(.kalam-sleek .page-content .item-meta-row:has(.icon-btn)) {
@@ -1429,7 +1434,10 @@
   :global(.kalam-sleek .page-content .entry-actions) {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 12px;
+    min-width: 0;
+    overflow: hidden;
   }
   :global(.kalam-sleek .page-content .entry-duration) {
     font-size: 12px;

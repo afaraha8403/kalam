@@ -16,7 +16,9 @@
     ThemePreference,
   } from '../types'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
+  import FilterPreview from '../components/FilterPreview.svelte'
   import About from './About.svelte'
+  import { isProcessInSensitiveList } from '../lib/sensitiveAppPatterns'
 
   let config: AppConfig | null = null
   let audioDevices: AudioDevice[] = []
@@ -24,6 +26,9 @@
   let saving = false
   let micLevel = 0
   let testingMic = false
+  /** Last mic test capture for optional replay (Play). */
+  let micTestSamples: number[] = []
+  let micTestSampleRate = 0
   let levelPollIntervalId: ReturnType<typeof setInterval> | null = null
   let audioCtx: AudioContext | null = null
   let apiKeyValid: boolean | null = null
@@ -223,9 +228,64 @@
 
   let dictionaryEntries: DictionaryEntry[] = []
   let dictionaryNewTerm = ''
+  let editingDictionaryId: string | null = null
+  let editingDictionaryValue = ''
   let dictionaryLoading = false
   /** `get_platform`: windows | macos | linux — for hotkey Meta label (Win / Cmd / Super). */
   let appPlatform = ''
+
+  type PermissionStatusItem = { state: string; actionable: boolean; message: string }
+  type PermissionStatusPayload = {
+    platform: string
+    microphone: PermissionStatusItem
+    accessibility: PermissionStatusItem
+    input_monitoring: PermissionStatusItem
+  }
+  type RuntimeCapabilitiesPayload = {
+    can_capture_audio: boolean
+    can_text_inject: boolean
+    can_global_hotkey: boolean
+    capture_audio_state: string
+    text_inject_state: string
+    global_hotkey_state: string
+    next_steps: string[]
+    permission_status: PermissionStatusPayload
+  }
+
+  let runtimeCaps: RuntimeCapabilitiesPayload | null = null
+  let permCapsLoading = false
+  let micTestStartError: string | null = null
+  let micTestStarting = false
+
+  function badgeLabelForState(state: string): string {
+    if (state === 'granted') return 'Granted'
+    if (state === 'needs_action') return 'Needs action'
+    return 'Unknown'
+  }
+
+  async function loadRuntimeCapabilities() {
+    permCapsLoading = true
+    try {
+      runtimeCaps = (await invoke('get_runtime_capabilities')) as RuntimeCapabilitiesPayload
+    } catch (e) {
+      console.error('get_runtime_capabilities failed:', e)
+      runtimeCaps = null
+    } finally {
+      permCapsLoading = false
+    }
+  }
+
+  function openPermissionPage(permission: 'microphone' | 'accessibility') {
+    invoke('open_system_permission_page', { permission }).catch((e) => console.error(e))
+  }
+
+  function requestPermission(permission: 'microphone' | 'accessibility') {
+    invoke('request_system_permission', { permission }).catch((e) => console.error(e))
+  }
+
+  $: if (activeTab === 'dictation') {
+    void loadRuntimeCapabilities()
+  }
 
   function toggleSection(section: string) {
     collapsedSections[section] = !collapsedSections[section]
@@ -587,15 +647,7 @@
   }
 
   function isAppAlreadyAdded(processName: string): boolean {
-    if (!config?.privacy.sensitive_app_patterns) return false
-    // Check if any pattern would match this exact process name
-    return config.privacy.sensitive_app_patterns.some((p) => {
-      if (p.pattern_type !== 'ProcessName') return false
-      // Simple check: if pattern is just the name or contains it as a whole word
-      const normalized = processName.toLowerCase()
-      const pattern = p.pattern.toLowerCase()
-      return pattern.includes(normalized) || normalized.includes(pattern.replace(/[^a-z0-9]/g, ''))
-    })
+    return isProcessInSensitiveList(config?.privacy.sensitive_app_patterns, processName)
   }
 
   function addSensitiveAppFromPicker(processName: string, exePath?: string | null) {
@@ -961,6 +1013,8 @@
   }
 
   async function startTestRecording() {
+    micTestStartError = null
+    micTestStarting = true
     try {
       audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
       await audioCtx.resume()
@@ -977,11 +1031,15 @@
       }, 100)
     } catch (e) {
       console.error('Failed to start test:', e)
+      micTestStartError = e instanceof Error ? e.message : String(e)
+    } finally {
+      micTestStarting = false
     }
   }
 
   async function stopTestRecording() {
     if (!testingMic) return
+    micTestStartError = null
     if (levelPollIntervalId != null) {
       clearInterval(levelPollIntervalId)
       levelPollIntervalId = null
@@ -990,13 +1048,19 @@
       const result = await invoke('test_microphone_stop') as { level: number; samples: number[]; sample_rate: number }
       micLevel = result.level
       if (result.samples?.length && result.sample_rate) {
-        await playTestAudio(result.samples, result.sample_rate)
+        micTestSamples = result.samples
+        micTestSampleRate = result.sample_rate
       }
     } catch (e) {
       micLevel = 0
     } finally {
       testingMic = false
     }
+  }
+
+  async function playMicTestRecording() {
+    if (!micTestSamples.length || !micTestSampleRate) return
+    await playTestAudio(micTestSamples, micTestSampleRate)
   }
 
   async function checkApiKey() {
@@ -1031,6 +1095,9 @@
       })
       .catch((e) => {
         console.error('Failed to refresh audio devices:', e)
+      })
+      .finally(() => {
+        if (activeTab === 'dictation') void loadRuntimeCapabilities()
       })
   }
 
@@ -1300,9 +1367,34 @@
   async function deleteDictionaryEntry(id: string) {
     try {
       await invoke('delete_dictionary_entry', { id })
+      editingDictionaryId = null
       await loadDictionaryEntries()
     } catch (e) {
       console.error('Failed to delete dictionary entry:', e)
+    }
+  }
+
+  function startEditDictionary(entry: DictionaryEntry) {
+    editingDictionaryId = entry.id
+    editingDictionaryValue = entry.term
+  }
+
+  function cancelEditDictionary() {
+    editingDictionaryId = null
+    editingDictionaryValue = ''
+  }
+
+  async function saveEditDictionary() {
+    if (!editingDictionaryId) return
+    const term = editingDictionaryValue.trim()
+    if (!term) return
+    try {
+      await invoke('update_dictionary_entry', { id: editingDictionaryId, term })
+      editingDictionaryId = null
+      editingDictionaryValue = ''
+      await loadDictionaryEntries()
+    } catch (e) {
+      console.error('Failed to update dictionary entry:', e)
     }
   }
 
@@ -1320,11 +1412,20 @@
   <div class="page fade-in settings-page">
     <header class="page-header settings-header">
       <h1 class="page-title">Settings</h1>
-      {#if saving}
-        <span class="save-status">Saving…</span>
-      {:else if saveError}
-        <span class="save-status error">Save failed</span>
-      {/if}
+      <span
+        class="save-status"
+        class:visible={saving || !!saveError}
+        class:error={!!saveError}
+        aria-live="polite"
+      >
+        {#if saving}
+          Saving…
+        {:else if saveError}
+          Save failed
+        {:else}
+          &#8203;
+        {/if}
+      </span>
     </header>
 
     {#if saveError}
@@ -1616,6 +1717,85 @@
             </button>
             {#if !collapsedSections.dictation_audio}
               <div class="section-content">
+                <div class="perm-cap-panel" aria-live="polite">
+                  <p class="perm-cap-panel-title">Permissions &amp; capabilities</p>
+                  {#if permCapsLoading}
+                    <p class="hint">Checking permissions…</p>
+                  {:else if runtimeCaps}
+                    <div class="perm-cap-row">
+                      <div class="perm-cap-row-head">
+                        <span class="perm-cap-name">Microphone</span>
+                        <span
+                          class="perm-cap-badge"
+                          class:perm-cap-badge--granted={runtimeCaps.capture_audio_state === 'granted'}
+                          class:perm-cap-badge--needs={runtimeCaps.capture_audio_state === 'needs_action'}
+                          class:perm-cap-badge--unknown={runtimeCaps.capture_audio_state === 'unknown'}
+                          >{badgeLabelForState(runtimeCaps.capture_audio_state)}</span
+                        >
+                      </div>
+                      <p class="hint perm-cap-msg">{runtimeCaps.permission_status.microphone.message}</p>
+                      <div class="perm-cap-actions">
+                        {#if appPlatform === 'macos'}
+                          <button type="button" class="settings-secondary-btn" on:click={() => openPermissionPage('microphone')}>
+                            Open Microphone settings
+                          </button>
+                          <span class="perm-cap-inline-hint">Use <strong>Record</strong> below to trigger the prompt if needed.</span>
+                        {:else if appPlatform === 'windows'}
+                          {#if runtimeCaps.permission_status.microphone.actionable}
+                            <button type="button" class="settings-secondary-btn" on:click={() => openPermissionPage('microphone')}>
+                              Open microphone privacy settings
+                            </button>
+                          {/if}
+                        {:else}
+                          <span class="perm-cap-inline-hint">Use the mic test below; Linux audio permissions vary by distro.</span>
+                        {/if}
+                      </div>
+                    </div>
+                    <div class="perm-cap-row">
+                      <div class="perm-cap-row-head">
+                        <span class="perm-cap-name">Text insertion</span>
+                        <span
+                          class="perm-cap-badge"
+                          class:perm-cap-badge--granted={runtimeCaps.text_inject_state === 'granted'}
+                          class:perm-cap-badge--needs={runtimeCaps.text_inject_state === 'needs_action'}
+                          class:perm-cap-badge--unknown={runtimeCaps.text_inject_state === 'unknown'}
+                          >{badgeLabelForState(runtimeCaps.text_inject_state)}</span
+                        >
+                      </div>
+                      <p class="hint perm-cap-msg">{runtimeCaps.permission_status.accessibility.message}</p>
+                      <div class="perm-cap-actions">
+                        {#if appPlatform === 'macos'}
+                          {#if runtimeCaps.text_inject_state !== 'granted'}
+                            <button type="button" class="settings-secondary-btn" on:click={() => requestPermission('accessibility')}>
+                              Request accessibility prompt
+                            </button>
+                            <button type="button" class="settings-secondary-btn" on:click={() => openPermissionPage('accessibility')}>
+                              Open Accessibility settings
+                            </button>
+                          {/if}
+                        {:else if appPlatform === 'windows'}
+                          <span class="perm-cap-inline-hint">No separate accessibility toggle is usually required on Windows.</span>
+                        {:else}
+                          <p class="hint perm-cap-linux">Text injection depends on your desktop; there isn’t one universal Linux settings link.</p>
+                        {/if}
+                      </div>
+                    </div>
+                    <div class="perm-cap-row">
+                      <div class="perm-cap-row-head">
+                        <span class="perm-cap-name">Global hotkey</span>
+                        <span
+                          class="perm-cap-badge"
+                          class:perm-cap-badge--granted={runtimeCaps.global_hotkey_state === 'granted'}
+                          class:perm-cap-badge--needs={runtimeCaps.global_hotkey_state === 'needs_action'}
+                          class:perm-cap-badge--unknown={runtimeCaps.global_hotkey_state === 'unknown'}
+                          >{badgeLabelForState(runtimeCaps.global_hotkey_state)}</span
+                        >
+                      </div>
+                      <p class="hint perm-cap-msg">{runtimeCaps.permission_status.input_monitoring.message}</p>
+                    </div>
+                  {/if}
+                </div>
+
                 <div class="setting-row">
                   <div class="setting-label">
                     <span class="setting-name">Microphone</span>
@@ -1645,8 +1825,8 @@
 
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Minimum Hold Time</span>
-                    <span class="setting-desc">Minimum milliseconds to hold the dictation hotkey</span>
+                    <span class="setting-name">Minimum press duration</span>
+                    <span class="setting-desc">How long you need to hold the dictation hotkey</span>
                   </div>
                   <div class="setting-control">
                     <div class="number-input">
@@ -1658,14 +1838,30 @@
 
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Test Microphone</span>
-                    <span class="setting-desc">Record a sample and hear playback</span>
+                    <span class="setting-name">Test microphone</span>
+                    <span class="setting-desc">Record a short sample, then play it back to check levels</span>
                   </div>
-                  <div class="setting-control">
+                  <div class="setting-control mic-test-actions">
                     {#if testingMic}
                       <button type="button" class="settings-secondary-btn" on:click={stopTestRecording}>Stop</button>
                     {:else}
-                      <button type="button" class="settings-secondary-btn" on:click={startTestRecording}>Start</button>
+                      <button
+                        type="button"
+                        class="settings-secondary-btn"
+                        disabled={micTestStarting}
+                        aria-busy={micTestStarting}
+                        on:click={startTestRecording}
+                        >{micTestStarting ? 'Starting…' : 'Record'}</button
+                      >
+                      <button
+                        type="button"
+                        class="settings-secondary-btn"
+                        disabled={micTestSamples.length === 0}
+                        on:click={playMicTestRecording}
+                        title="Play last recording"
+                      >
+                        Play
+                      </button>
                     {/if}
                   </div>
                 </div>
@@ -1680,10 +1876,24 @@
                   {/if}
                 </div>
 
+                {#if micTestStartError}
+                  <p class="hint error" role="alert">{micTestStartError}</p>
+                  <div class="mic-test-remediation">
+                    {#if appPlatform === 'windows' || appPlatform === 'macos'}
+                      <button type="button" class="settings-secondary-btn" on:click={() => openPermissionPage('microphone')}>
+                        Open microphone settings
+                      </button>
+                    {/if}
+                    <button type="button" class="settings-secondary-btn" on:click={refreshAudioDevices}>
+                      Refresh device list
+                    </button>
+                  </div>
+                {/if}
+
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">VAD Sensitivity</span>
-                    <span class="setting-desc">Voice activity detection (silence before end)</span>
+                    <span class="setting-name">Listening sensitivity</span>
+                    <span class="setting-desc">How long Kalam waits for silence before stopping the recording</span>
                   </div>
                   <div class="setting-control">
                     <select class="form-select" bind:value={config.stt_config.vad_preset} on:change={scheduleSave}>
@@ -1696,10 +1906,10 @@
 
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Audio filter</span>
+                    <span class="setting-name">Audio cleanup</span>
                     <span class="setting-desc"
-                      >High-pass, noise gate, light compression, and normalize — same chain as dictation and mic test
-                      playback. Off disables processing.</span
+                      >Reduces rumble, background noise, and uneven volume before transcription — same as dictation and
+                      mic test. Off uses raw input.</span
                     >
                   </div>
                   <div class="setting-control">
@@ -1708,19 +1918,33 @@
                       value={config.stt_config.audio_filter.preset}
                       on:change={onAudioFilterPresetSelect}
                     >
-                      <option value="Off">Off</option>
-                      <option value="Light">Light</option>
-                      <option value="Moderate">Moderate</option>
-                      <option value="Custom">Custom</option>
+                      <option value="Off">Off — no processing</option>
+                      <option value="Light">Light — gentle cleanup for most rooms</option>
+                      <option value="Moderate">Moderate — stronger noise reduction</option>
+                      <option value="Custom">Custom — tune each step</option>
                     </select>
                   </div>
                 </div>
 
+                {#if config.stt_config.audio_filter.preset !== 'Off'}
+                  <p class="hint audio-filter-hint">
+                    {#if config.stt_config.audio_filter.preset === 'Light'}
+                      Best default for most microphones: trims low rumble, light compression, consistent volume.
+                    {:else if config.stt_config.audio_filter.preset === 'Moderate'}
+                      Use in noisier environments; may sound more “processed” than Light.
+                    {:else if config.stt_config.audio_filter.preset === 'Custom'}
+                      Adjust sliders below; the chart shows an approximate shape (illustration, not a lab measurement).
+                    {/if}
+                    Long passages and quiet speech often benefit from Light or Moderate so levels stay even.
+                  </p>
+                  <FilterPreview filter={config.stt_config.audio_filter} />
+                {/if}
+
                 {#if config.stt_config.audio_filter.preset === 'Custom'}
                     <div class="setting-row audio-filter-range-row">
                       <div class="setting-label">
-                        <span class="setting-name">High-pass cutoff</span>
-                        <span class="setting-desc">{Math.round(config.stt_config.audio_filter.highpass_cutoff_hz)} Hz</span>
+                        <span class="setting-name">Bass roll-off</span>
+                        <span class="setting-desc">{Math.round(config.stt_config.audio_filter.highpass_cutoff_hz)} Hz — removes low rumble</span>
                       </div>
                       <div class="setting-control">
                         <input
@@ -1735,9 +1959,9 @@
                     </div>
                     <div class="setting-row audio-filter-range-row">
                       <div class="setting-label">
-                        <span class="setting-name">Noise gate</span>
+                        <span class="setting-name">Background noise reduction</span>
                         <span class="setting-desc"
-                          >{Math.round(config.stt_config.audio_filter.noise_gate_threshold_db)} dB</span
+                          >{Math.round(config.stt_config.audio_filter.noise_gate_threshold_db)} dB (quieter = cut more noise)</span
                         >
                       </div>
                       <div class="setting-control">
@@ -1753,7 +1977,7 @@
                     </div>
                     <div class="setting-row audio-filter-range-row">
                       <div class="setting-label">
-                        <span class="setting-name">Compressor ratio</span>
+                        <span class="setting-name">Volume leveling (ratio)</span>
                         <span class="setting-desc">{config.stt_config.audio_filter.compressor_ratio.toFixed(1)}:1</span>
                       </div>
                       <div class="setting-control">
@@ -1769,9 +1993,9 @@
                     </div>
                     <div class="setting-row audio-filter-range-row">
                       <div class="setting-label">
-                        <span class="setting-name">Normalize target</span>
+                        <span class="setting-name">Output loudness (normalize)</span>
                         <span class="setting-desc"
-                          >{Math.round(config.stt_config.audio_filter.normalize_target_db)} dBFS peak</span
+                          >Peak target {Math.round(config.stt_config.audio_filter.normalize_target_db)} dBFS</span
                         >
                       </div>
                       <div class="setting-control">
@@ -1787,7 +2011,7 @@
                     </div>
                     <div class="setting-row audio-filter-range-row">
                       <div class="setting-label">
-                        <span class="setting-name">Compressor threshold</span>
+                        <span class="setting-name">Volume leveling (threshold)</span>
                         <span class="setting-desc"
                           >{Math.round(config.stt_config.audio_filter.compressor_threshold_db)} dB</span
                         >
@@ -2008,7 +2232,7 @@
 
                   {#if sidecarInstalled}
                     <div class="local-engine-section">
-                      <span class="setting-desc">Local STT engine is installed</span>
+                      <span class="setting-desc">Local speech engine is installed</span>
                       <button type="button" class="settings-secondary-btn danger" on:click={() => uninstallEngine(config?.stt_config?.local_model ?? 'sensevoice')}>Uninstall engine</button>
                     </div>
                   {/if}
@@ -2104,8 +2328,8 @@
             </div>
             <div class="setting-row">
               <div class="setting-label">
-                <span class="setting-name">Text Injection</span>
-                <span class="setting-desc">How to insert text into applications</span>
+                <span class="setting-name">How text is typed</span>
+                <span class="setting-desc">Paste from clipboard or simulate keystrokes</span>
               </div>
               <div class="setting-control">
                 <select class="form-select" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
@@ -2160,10 +2384,37 @@
                       <ul class="dictionary-list">
                         {#each dictionaryEntries as entry (entry.id)}
                           <li>
-                            <span class="dictionary-term">{entry.term}</span>
-                            <button type="button" class="btn-icon remove" on:click={() => deleteDictionaryEntry(entry.id)}>
-                              <Icon icon="ph:trash" />
-                            </button>
+                            {#if editingDictionaryId === entry.id}
+                              <input
+                                type="text"
+                                class="dictionary-edit-input"
+                                bind:value={editingDictionaryValue}
+                                on:keydown={(e) => {
+                                  if (e.key === 'Enter') saveEditDictionary()
+                                  if (e.key === 'Escape') cancelEditDictionary()
+                                }}
+                              />
+                              <div class="dictionary-edit-actions">
+                                <button type="button" class="settings-secondary-btn small" on:click={saveEditDictionary}>Save</button>
+                                <button type="button" class="btn-ghost small" on:click={cancelEditDictionary}>Cancel</button>
+                              </div>
+                            {:else}
+                              <span class="dictionary-term">{entry.term}</span>
+                              <div class="dictionary-row-actions">
+                                <button
+                                  type="button"
+                                  class="btn-icon"
+                                  title="Edit term"
+                                  aria-label="Edit term"
+                                  on:click={() => startEditDictionary(entry)}
+                                >
+                                  <Icon icon="ph:pencil-simple" />
+                                </button>
+                                <button type="button" class="btn-icon remove" title="Remove term" aria-label="Remove term" on:click={() => deleteDictionaryEntry(entry.id)}>
+                                  <Icon icon="ph:trash" />
+                                </button>
+                              </div>
+                            {/if}
                           </li>
                         {/each}
                       </ul>
@@ -2185,7 +2436,7 @@
             {#if !collapsedSections.command}
               <div class="section-content">
                 <p class="hint">
-                  Use the command hotkey (General → Dictation Hotkeys) to create notes, tasks, or reminders by voice.
+                  Use the command hotkey (General → Dictation Hotkeys) to create notes, tasks, or reminders by voice. Say <strong>online search</strong> and your query to open the default browser with a web search.
                 </p>
                 <div class="setting-row">
                   <div class="setting-label">
@@ -2799,11 +3050,37 @@
     padding: 6px 12px;
     background: var(--bg-elevated);
     border-radius: var(--radius-full);
+    min-height: 32px;
+    min-width: 7rem;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease;
+  }
+
+  .save-status.visible {
+    opacity: 1;
+    visibility: visible;
   }
 
   .save-status.error {
-    color: #FF3B30;
+    color: #ff3b30;
     background: rgba(255, 59, 48, 0.1);
+  }
+
+  .mic-test-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .audio-filter-hint {
+    margin-top: var(--space-sm, 8px);
+    margin-bottom: 0;
   }
 
   .save-error {
@@ -3751,6 +4028,110 @@
     display: block;
   }
 
+  .perm-cap-panel {
+    margin-bottom: var(--space-lg, 20px);
+    padding: 16px;
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-md);
+  }
+
+  .perm-cap-panel-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 0 0 12px;
+  }
+
+  .perm-cap-row {
+    padding-bottom: 14px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .perm-cap-row:last-child {
+    padding-bottom: 0;
+    margin-bottom: 0;
+    border-bottom: none;
+  }
+
+  .perm-cap-row-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+
+  .perm-cap-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .perm-cap-badge {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: var(--radius-full);
+    background: var(--surface-elevated, rgba(128, 128, 128, 0.12));
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .perm-cap-badge.perm-cap-badge--granted {
+    background: rgba(52, 199, 89, 0.15);
+    color: #34c759;
+    border-color: rgba(52, 199, 89, 0.35);
+  }
+
+  .perm-cap-badge.perm-cap-badge--needs {
+    background: rgba(255, 149, 0, 0.12);
+    color: #ff9500;
+    border-color: rgba(255, 149, 0, 0.35);
+  }
+
+  .perm-cap-badge.perm-cap-badge--unknown {
+    color: var(--text-secondary);
+  }
+
+  .perm-cap-msg {
+    margin: 0 0 8px !important;
+    color: var(--text-secondary) !important;
+  }
+
+  .perm-cap-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .perm-cap-inline-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    flex: 1 1 200px;
+    line-height: 1.4;
+  }
+
+  .perm-cap-linux {
+    margin: 0 !important;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .mic-test-remediation {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 16px;
+  }
+
   /* Model list styles */
   .model-list {
     display: flex;
@@ -3995,6 +4376,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
     padding: 12px 16px;
     background: var(--bg);
     border-radius: var(--radius-md);
@@ -4004,6 +4387,44 @@
   .dictionary-term {
     font-size: 14px;
     color: var(--text);
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+  }
+
+  .dictionary-edit-input {
+    flex: 1 1 180px;
+    min-width: 0;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text);
+    font-size: 14px;
+  }
+
+  .dictionary-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .dictionary-edit-actions {
+    display: flex;
+    width: 100%;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .settings-secondary-btn.small {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+
+  .btn-ghost.small {
+    padding: 6px 12px;
+    font-size: 13px;
   }
 
   /* Combobox styles */

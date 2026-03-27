@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { invoke } from '$lib/backend'
-  import { listen } from '@tauri-apps/api/event'
+  import { invoke, listenSafe } from '$lib/backend'
   import Icon from '@iconify/svelte'
   import type { HistoryEntry } from '../../types'
   import { selectedHistoryId } from '../../lib/historyDetailStore'
   import { recognitionDisplay, sttChipKind } from '../../lib/historySttChip'
+  import ConfirmDestructiveDialog from '../ConfirmDestructiveDialog.svelte'
 
   export let navigate: (page: string) => void = () => {}
 
@@ -29,14 +29,6 @@
     if (clearing) return
     clearConfirmOpen = false
     clearConfirmError = null
-  }
-
-  function onClearDialogKeydown(e: KeyboardEvent) {
-    if (!clearConfirmOpen || clearing) return
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      closeClearConfirm()
-    }
   }
 
   /** Timeline order within each day (matches Notes / Tasks sort control pattern). */
@@ -97,11 +89,22 @@
 
   onMount(() => {
     load()
-    let unlisten: (() => void) | null = null
-    listen('transcription-saved', () => {
+    let unlistenSaved: (() => void) | null = null
+    let unlistenCleared: (() => void) | null = null
+    void listenSafe('transcription-saved', () => {
       load()
-    }).then((fn) => { unlisten = fn })
-    return () => { unlisten?.() }
+    }).then((fn) => {
+      unlistenSaved = fn
+    })
+    void listenSafe('history-cleared', () => {
+      load()
+    }).then((fn) => {
+      unlistenCleared = fn
+    })
+    return () => {
+      unlistenSaved?.()
+      unlistenCleared?.()
+    }
   })
 
   let searchTimeout: ReturnType<typeof setTimeout>
@@ -217,8 +220,6 @@
     return acc
   }, {} as Record<string, { entries: HistoryEntry[]; sub: string }>)
 </script>
-
-<svelte:window on:keydown={onClearDialogKeydown} />
 
 <!-- Prototype structure: page, page-header, search-bar, timeline, day-group, entry-row -->
 <div class="page fade-in">
@@ -342,129 +343,15 @@
     </div>
   {/if}
 
-  {#if clearConfirmOpen}
-    <div class="history-clear-root" aria-live="polite">
-      <button
-        type="button"
-        class="history-clear-backdrop"
-        aria-label="Cancel and close"
-        disabled={clearing}
-        on:click={closeClearConfirm}
-      />
-      <div
-        class="history-clear-panel"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="history-clear-title"
-        aria-describedby="history-clear-desc"
-        on:click|stopPropagation
-      >
-        <h2 id="history-clear-title" class="history-clear-title">Clear all history?</h2>
-        <p id="history-clear-desc" class="history-clear-desc">
-          This removes every dictation from history. You cannot undo this.
-        </p>
-        {#if clearConfirmError}
-          <p class="history-clear-error" role="alert">{clearConfirmError}</p>
-        {/if}
-        <div class="history-clear-actions">
-          <button type="button" class="btn-ghost" disabled={clearing} on:click={closeClearConfirm}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="btn-danger-outline"
-            disabled={clearing}
-            on:click={runClearHistory}
-          >
-            {#if clearing}
-              <span class="history-clear-spin" aria-hidden="true">
-                <Icon icon="ph:spinner-gap-duotone" />
-              </span>
-              Clearing…
-            {:else}
-              <Icon icon="ph:trash" />
-              Clear all
-            {/if}
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
+  <ConfirmDestructiveDialog
+    bind:open={clearConfirmOpen}
+    title="Clear all history?"
+    description="This removes every dictation from history. You cannot undo this."
+    confirmLabel="Clear all"
+    busy={clearing}
+    busyLabel="Clearing…"
+    error={clearConfirmError}
+    on:confirm={runClearHistory}
+    on:cancel={closeClearConfirm}
+  />
 </div>
-
-<style>
-  .history-clear-root {
-    position: fixed;
-    inset: 0;
-    z-index: 4000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: var(--space-md, 1rem);
-    pointer-events: none;
-  }
-  .history-clear-root > * {
-    pointer-events: auto;
-  }
-  .history-clear-backdrop {
-    position: absolute;
-    inset: 0;
-    margin: 0;
-    padding: 0;
-    border: none;
-    cursor: pointer;
-    background: rgba(7, 16, 41, 0.45);
-  }
-  .history-clear-backdrop:disabled {
-    cursor: not-allowed;
-    opacity: 0.85;
-  }
-  .history-clear-panel {
-    position: relative;
-    z-index: 1;
-    width: 100%;
-    max-width: 22rem;
-    padding: var(--space-lg, 1.25rem);
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-lg);
-  }
-  .history-clear-title {
-    margin: 0 0 0.5rem;
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-  .history-clear-desc {
-    margin: 0 0 1rem;
-    font-size: 0.9375rem;
-    line-height: 1.45;
-    color: var(--text-secondary);
-  }
-  .history-clear-error {
-    margin: 0 0 1rem;
-    font-size: 0.875rem;
-    color: var(--error);
-  }
-  .history-clear-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    justify-content: flex-end;
-  }
-  .history-clear-spin {
-    display: inline-flex;
-    vertical-align: middle;
-    margin-right: 0.35rem;
-    animation: history-clear-spin 0.85s linear infinite;
-  }
-  .history-clear-spin :global(svg) {
-    display: block;
-  }
-  @keyframes history-clear-spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-</style>

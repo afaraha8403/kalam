@@ -4,6 +4,7 @@
  */
 
 export type MockProfile = 'onboarding' | 'main'
+type MockPlatform = 'windows' | 'macos' | 'linux'
 
 const BASE_ONBOARDING: Record<string, unknown> = {
   onboarding_complete: false,
@@ -85,9 +86,127 @@ const BASE_MAIN: Record<string, unknown> = {
 }
 
 let mockConfig: Record<string, unknown> = structuredClone(BASE_MAIN)
+let mockPlatform: MockPlatform = 'windows'
+
+type MockPermissionStatus = {
+  platform: string
+  microphone: { state: string; actionable: boolean; message: string }
+  accessibility: { state: string; actionable: boolean; message: string }
+  input_monitoring: { state: string; actionable: boolean; message: string }
+}
+
+type MockRuntimeCapabilities = {
+  can_capture_audio: boolean
+  can_text_inject: boolean
+  can_global_hotkey: boolean
+  capture_audio_state: string
+  text_inject_state: string
+  global_hotkey_state: string
+  next_steps: string[]
+  permission_status: MockPermissionStatus
+}
+
+function defaultPermissionStatus(platform: MockPlatform): MockPermissionStatus {
+  if (platform === 'macos') {
+    return {
+      platform: 'macos',
+      microphone: {
+        state: 'unknown',
+        actionable: true,
+        message: 'macOS shows the microphone prompt when recording starts. Run a mic test to confirm access.',
+      },
+      accessibility: {
+        state: 'needs_action',
+        actionable: true,
+        message: 'Enable Accessibility so Kalam can insert text into other apps.',
+      },
+      input_monitoring: {
+        state: 'unknown',
+        actionable: true,
+        message: 'Input Monitoring is usually prompted when global shortcuts are captured.',
+      },
+    }
+  }
+  if (platform === 'linux') {
+    return {
+      platform: 'linux',
+      microphone: {
+        state: 'unknown',
+        actionable: true,
+        message: 'Linux permissions vary by distribution and audio stack.',
+      },
+      accessibility: {
+        state: 'unknown',
+        actionable: true,
+        message: 'Linux accessibility/injection support varies by desktop environment.',
+      },
+      input_monitoring: {
+        state: 'unknown',
+        actionable: true,
+        message: 'Global hotkey support varies by desktop environment and compositor.',
+      },
+    }
+  }
+  return {
+    platform: 'windows',
+    microphone: {
+      state: 'unknown',
+      actionable: true,
+      message: 'If recording fails, check Windows Privacy > Microphone access for this app.',
+    },
+    accessibility: {
+      state: 'granted',
+      actionable: false,
+      message: 'No separate accessibility toggle is usually required on Windows.',
+    },
+    input_monitoring: {
+      state: 'granted',
+      actionable: false,
+      message: 'No separate Input Monitoring permission is required on Windows.',
+    },
+  }
+}
+
+function defaultRuntimeCapabilities(platform: MockPlatform): MockRuntimeCapabilities {
+  const permission_status = defaultPermissionStatus(platform)
+  return {
+    can_capture_audio: true,
+    can_text_inject: platform !== 'macos',
+    can_global_hotkey: platform !== 'macos',
+    capture_audio_state: permission_status.microphone.state,
+    text_inject_state: permission_status.accessibility.state,
+    global_hotkey_state: permission_status.input_monitoring.state,
+    next_steps: [],
+    permission_status,
+  }
+}
+
+let mockPermissionStatus: MockPermissionStatus = defaultPermissionStatus(mockPlatform)
+let mockRuntimeCapabilities: MockRuntimeCapabilities = defaultRuntimeCapabilities(mockPlatform)
 
 export function resetMockConfig(profile: MockProfile = 'main') {
   mockConfig = structuredClone(profile === 'onboarding' ? BASE_ONBOARDING : BASE_MAIN)
+  mockPlatform = 'windows'
+  mockPermissionStatus = defaultPermissionStatus(mockPlatform)
+  mockRuntimeCapabilities = defaultRuntimeCapabilities(mockPlatform)
+}
+
+export function setMockPlatform(platform: MockPlatform) {
+  mockPlatform = platform
+  mockPermissionStatus = defaultPermissionStatus(platform)
+  mockRuntimeCapabilities = defaultRuntimeCapabilities(platform)
+}
+
+export function setMockRuntimeCapabilities(next: Partial<MockRuntimeCapabilities>) {
+  mockRuntimeCapabilities = {
+    ...mockRuntimeCapabilities,
+    ...next,
+  }
+  if (next.permission_status) {
+    mockPermissionStatus = next.permission_status
+  } else {
+    mockPermissionStatus = mockRuntimeCapabilities.permission_status
+  }
 }
 
 function modelStatusEntry() {
@@ -127,7 +246,11 @@ export function handleDevBridgeInvoke(body: { cmd?: string; args?: Record<string
       return null
     }
     case 'get_platform':
-      return 'windows'
+      return mockPlatform
+    case 'get_permission_status':
+      return mockPermissionStatus
+    case 'get_runtime_capabilities':
+      return mockRuntimeCapabilities
     case 'get_os_release_info':
       return { name: 'Windows', version: '10.0 (e2e mock)' }
     case 'get_audio_devices':
@@ -183,6 +306,10 @@ export function handleDevBridgeInvoke(body: { cmd?: string; args?: Record<string
       return { active: 0, archived: 0, trash: 0 }
     case 'get_dictionary_entries':
       return []
+    case 'update_dictionary_entry':
+      return null
+    case 'focus_main_window':
+      return null
     case 'check_api_key':
       return true
     case 'test_microphone_start':

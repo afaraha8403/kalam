@@ -68,7 +68,9 @@ export interface AppConfig {
   overlay_expand_direction?: ExpandDirection
   command_config: CommandConfig
   /** Update channel: stable or beta (pre-releases). */
-  update_channel?: 'stable' | 'beta',
+  update_channel?: 'stable' | 'beta'
+  /** When true, do not auto-switch channel to beta on pre-release app builds. */
+  update_channel_locked?: boolean
   /** When true, left sidebar is collapsed to icon-only; persisted across restarts. */
   sidebar_collapsed?: boolean
   /** Light / Dark always; Auto follows system appearance. */

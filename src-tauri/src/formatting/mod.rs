@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::config::{FormattingConfig, Snippet};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 /// Actions to run before injecting text (e.g. undo, delete last).
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ pub fn format_text(
 }
 
 /// Replace snippet triggers (e.g. @@email) with their expansions. Longer triggers are applied
-/// first to avoid partial matches.
+/// first to avoid partial matches. Matching is case-insensitive; replaced text uses the expansion as-is.
 fn apply_snippets(text: &str, snippets: &[Snippet]) -> String {
     if snippets.is_empty() {
         return text.to_string();
@@ -58,8 +58,17 @@ fn apply_snippets(text: &str, snippets: &[Snippet]) -> String {
     sorted.sort_by(|a, b| b.trigger.len().cmp(&a.trigger.len()));
     let mut result = text.to_string();
     for s in sorted {
-        if !s.trigger.is_empty() && result.contains(&s.trigger) {
-            result = result.replace(&s.trigger, &s.expansion);
+        if s.trigger.is_empty() {
+            continue;
+        }
+        let Ok(re) = RegexBuilder::new(&regex::escape(&s.trigger))
+            .case_insensitive(true)
+            .build()
+        else {
+            continue;
+        };
+        if re.is_match(&result) {
+            result = re.replace_all(&result, s.expansion.as_str()).to_string();
         }
     }
     result

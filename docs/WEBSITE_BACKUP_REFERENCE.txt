@@ -1,0 +1,375 @@
+================================================================================
+KALAM PUBLIC SITE — REFERENCE NOTES (pre-rebuild snapshot)
+Created: 2026-03-27
+Canonical host: https://kalam.stream/
+GitHub repo referenced everywhere: afaraha8403/kalam
+================================================================================
+
+SCOPE OF “FRONT-FACING WEBSITE”
+-------------------------------
+Static marketing/docs site lives under repo folder `docs/` (GitHub Pages / kalam.stream).
+A full file listing at backup time is in `kalam-stream-site-backup-2026-03-27.zip` in this folder.
+
+Primary HTML pages:
+  index.html           Landing (long-form marketing, FAQ, inline CSS for tokens)
+  download.html        Auto-download + GitHub release asset grid
+  documentation.html   Product docs / setup (uses theme.css link)
+  business.html        Sponsors & commercial licensing
+  privacy.html         Privacy policy
+  terms.html           Terms and conditions
+
+Supporting assets:
+  favicon.svg, logo.svg, hero-bg.webp
+  platform-*.svg (windows, linux, macos)
+  marketing/*.png (screenshots)
+  robots.txt, sitemap.xml, CNAME (kalam.stream)
+  googleaa5243946d024a27.html (Search Console verification)
+
+IMPORTANT: Several pages `<link rel="stylesheet" href="theme.css">` but `theme.css` was not
+present in the workspace at backup time. `index.html` embeds the full design-token CSS
+inline; other pages expect shared `theme.css` — restore or generate that file when
+rebuilding, or inline shared styles.
+
+================================================================================
+SHARED STACK (MOST PAGES)
+================================================================================
+- Theme: `data-theme` on `<html>` ("dark" default). Persisted: localStorage key
+  `kalam-site-theme` (anti-flash script in `<head>` reads it before paint).
+- Analytics: Google gtag.js ID `G-F3WK2BDF59`.
+- Icons: Iconify web component `iconify-icon` (CDN 3.0.2).
+- Tailwind: `cdn.tailwindcss.com` with per-page `tailwind.config` (Figtree + EB Garamond
+  on most pages; index uses Inter + large inline `<style>` block).
+- Nav/footer patterns repeat: glass nav, GitHub link, theme toggle, mobile `<details>`
+  menu; footer includes Privacy, Terms, business, MIT/commercial line, creator links.
+
+Footer legal line (repeated):
+  "© 2026 Kalam. Noncommercial use: MIT. Commercial by agreement."
+  Credits: Ali Farahat (alifarahat.com) & Balacode (balacode.io).
+
+================================================================================
+LANDING PAGE COPY (index.html) — HIGH LEVEL
+================================================================================
+Title (SEO): "Kalam — Speak, It Types Everywhere. Free & Open-Source Voice Dictation..."
+Meta description: Free open-source voice typing for Windows, Mac, Linux; Wispr Flow /
+  Whisperflow alternative; BYOK or offline; no subscription.
+
+Structured data: JSON-LD `SoftwareApplication` + `FAQPage` with seven FAQs (free, vs
+  Wispr Flow, platforms, offline, API key, audio handling, hotkey to dictate).
+
+Product positioning keywords in meta: voice typing, Wispr Flow alternative, Tauri, Rust,
+  local STT, cross-platform desktop (no mobile).
+
+(Full section headings, feature grids, and comparison tables live in the HTML; grep
+`id="` for anchors: features, faq, compare, workspace, how-it-works, etc.)
+
+================================================================================
+DOWNLOAD PAGE (download.html) — COPY + BEHAVIOR
+================================================================================
+Hero:
+  Eyebrow: "Download"
+  H1: "Almost there. Your build is on the way."
+  Status line default: "Preparing your download…"
+  Manual link (hidden until URL known): id="manual-dl" — "Download did not start? Click here"
+    (Beta variant when only prerelease exists: "Download Beta did not start? Click here")
+
+Body copy: Explains open-source apps may trigger OS security warnings; points to
+  per-OS disclosure blocks.
+
+Sections:
+  "Permissions you’ll see" — Microphone; Accessibility/Input; Notifications (optional).
+  Disclosure "Security prompts for your system" — guides for Windows (SmartScreen),
+    macOS (Gatekeeper), Linux (AppImage/.deb), unknown OS.
+  "All downloads" — dynamic list from GitHub API; subtitle shows tag; link to older
+    releases on GitHub.
+
+DOWNLOAD JAVASCRIPT (inline IIFE at bottom of download.html)
+------------------------------------------------------------
+Constants:
+  REPO = 'afaraha8403/kalam'
+  RELEASES_API = 'https://api.github.com/repos/' + REPO + '/releases?per_page=10'
+
+Main functions (conceptual):
+  detectOSSync() / resolveMacArch() / detectOS()
+    → { os: 'windows'|'mac'|'linux'|null, arch: varies }
+    Mac arch from userAgentData.getHighEntropyValues(['architecture']) when available;
+    default Apple Silicon if unknown on Mac.
+
+  macAssetMatchesArch(nameLower, arch)
+  assetMatchesNewPattern(nameLower, platform, arch)
+    Matches filenames like -darwin-aarch64, _windows_x64, -linux-amd64, etc.
+
+  pickAssetForOS(assets, osInfo)
+    Picks installer by extension order:
+      Windows: .msi, .exe
+      Mac: .pkg, .dmg, .app.tar.gz  (download page includes .exe in win list)
+      Linux: .AppImage, .deb
+    Disambiguates by arch when multiple candidates.
+
+  formatBytes(n), fileKindLabel(filename)
+  triggerDownload(url) — creates temporary <a>, click(), remove.
+
+  showOsGuide(os), setOsChip(osInfo), setStatusDone()
+
+  run() on DOMContentLoaded:
+    1) detectOS → showOsGuide, setOsChip
+    2) fetch RELEASES_API (Accept: application/vnd.github.v3+json)
+    3) Scan releases: first non-draft stable, first prerelease beta
+    4) primaryRelease = stable || beta; hasBoth = stable && beta
+    5) Render #all-assets: header + links for primary release assets; if hasBoth, second
+       section for beta assets (pulse-colored borders)
+    6) pickAssetForOS(primary assets, osInfo) → auto-download after delay (1500ms, or 0
+       if prefers-reduced-motion)
+    7) #manual-dl href = picked URL or release page; optional beta CTA paragraph with
+       flask icon linking to beta asset for same OS
+    8) On failure: status message, manual link to releases/latest, showOsGuide(null)
+
+--------------------------------------------------------------------------------
+How site downloads connect to the repo (read this when changing either side)
+--------------------------------------------------------------------------------
+- The website does not host binaries. It calls the GitHub REST API; assets are whatever
+  files are attached to GitHub Releases for `afaraha8403/kalam`.
+- Filenames must stay consistent with `pickAssetForOS` / `assetMatchesNewPattern` in
+  `docs/download.html` (and the slimmer duplicate script on some other pages). If CI
+  renames bundles or drops an extension (e.g. only NSIS .exe, no .msi), update the site
+  logic or users may fall through to the wrong file or the release page.
+
+================================================================================
+UNDERLYING CODE THAT ENABLES DOWNLOADS (REPO, NOT docs/)
+================================================================================
+This is the pipeline that builds installers and attaches them to GitHub Releases — the
+same assets `download.html` lists and auto-downloads.
+
+--------------------------------------------------------------------------------
+1) GitHub Actions — `.github/workflows/release.yml`
+--------------------------------------------------------------------------------
+Trigger:
+  `on.push.tags: ['v*']` — cutting a version tag starts the pipeline.
+
+Jobs (high level):
+  A) `test` (Ubuntu)
+     - Installs Linux Tauri deps, Node 22, Rust stable.
+     - `npm install` → `npm run check` → `npm run test:unit` → `npm run build`
+     - `cargo fmt --check`, `cargo clippy`, `cargo test` in `src-tauri/`.
+     - Ensures the tree is green before any release artifacts are built.
+
+  B) `changelog`
+     - Reads `CHANGELOG.md` and extracts the section whose heading matches the tag
+       (e.g. `## [v0.1.0]` or `## [0.1.0]`) via `awk`.
+     - Output is passed as `releaseBody` for the GitHub release. If no section matches,
+       body defaults to: "See the assets to download this version."
+
+  C) `build` (needs: test, changelog)
+     - `if: startsWith(github.ref, 'refs/tags/v')`, `permissions.contents: write`.
+     - Matrix (four rows, `fail-fast: false`):
+         * macos-latest + `args: '--target aarch64-apple-darwin'`  (macos_arch: aarch64)
+         * macos-latest + `args: '--target x86_64-apple-darwin'`   (macos_arch: x86_64)
+         * ubuntu-22.04 + `args: ''`                               (Linux bundles)
+         * windows-latest + `args: '--bundles nsis'`               (Windows NSIS)
+     - Each row runs `tauri-apps/tauri-action@v0` with:
+         * `tagName: ${{ github.ref_name }}`
+         * `releaseName: 'Kalam ${{ github.ref_name }}'`
+         * `releaseBody: ${{ needs.changelog.outputs.body }}`
+         * `releaseDraft: true` — release stays draft until published manually.
+         * `prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}`
+         * `assetNamePattern: '[name]-[version]-[platform]-[arch][ext]'`
+           → produces names the download page matches with substrings like
+             `-darwin-aarch64`, `-windows-x64`, `-linux-amd64`, etc.
+         * `args: ${{ matrix.args }}` — forwarded to `tauri build`.
+         * Optional secrets: `TAURI_SIGNING_PRIVATE_KEY`,
+           `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (for signed updates / bundles).
+     - macOS-only follow-up (each mac matrix job):
+         * Verifies bundled `Kalam.app` has `NSMicrophoneUsageDescription` in Info.plist.
+         * Builds an extra **.pkg** with `pkgbuild` (component = `.app`, install location
+           `/Applications`, identifier `com.kalam.voice`, scripts from
+           `src-tauri/scripts/macos-postinstall.sh` copied to `pkg_scripts/postinstall`).
+         * Output filename: `kalam_${{ github.ref_name }}_macos_${{ matrix.macos_arch }}.pkg`
+         * Uploads that file to the same release: `gh release upload "${{ github.ref_name }}" ... --clobber`.
+         → The site prefers `.pkg` for Mac in extension order, so these uploads matter.
+
+--------------------------------------------------------------------------------
+2) Tauri app config — `src-tauri/tauri.conf.json` (bundle + updater)
+--------------------------------------------------------------------------------
+- `build.beforeBuildCommand`: `npm run build` (Vite frontend into `dist/`).
+- `bundle.active: true`, `bundle.targets: "all"` — local `tauri build` produces the
+  platform’s default set (on CI, matrix `args` narrow Windows to NSIS only).
+- `bundle.createUpdaterArtifacts: true` — updater metadata/files for the Tauri updater.
+- `plugins.updater.endpoints`: 
+    `https://github.com/afaraha8403/kalam/releases/latest/download/latest.json`
+  (in-app updates, separate from the marketing download page).
+- Windows: `bundle.windows.nsis` (installMode both, `nsis-hooks.nsh`).
+- Linux: `bundle.linux.deb.postRemoveScript`: `scripts/postrm.sh`.
+- macOS: `Info.plist`, `Entitlements.plist`, minimum macOS 11.0.
+
+--------------------------------------------------------------------------------
+3) Local / manual builds — `package.json`
+--------------------------------------------------------------------------------
+- `npm run build` — Vite production build (required before Tauri bundles).
+- `npm run tauri:build` / `tauri:build:unsigned` — wrap `tauri build` on a developer
+  machine; artifacts land under `src-tauri/target/...` per Tauri’s layout.
+
+--------------------------------------------------------------------------------
+4) End-to-end data flow
+--------------------------------------------------------------------------------
+  git tag v… pushed
+       → release.yml test + changelog
+       → tauri-action builds per OS/arch, uploads named assets + updater artifacts
+       → mac job adds kalam_<tag>_macos_<aarch64|x86_64>.pkg
+  Maintainer publishes the draft release on GitHub
+       → GET /repos/afaraha8403/kalam/releases appears in download.html
+       → Browser picks asset URL → `triggerDownload(browser_download_url)`
+
+No server-side download API in this project: GitHub hosts files and rate-limits API
+calls; the download page is static HTML + client-side fetch.
+
+================================================================================
+TERMS (terms.html) — STRUCTURE (Last updated: March 9, 2026)
+================================================================================
+Intro: Applies to Kalam desktop app + kalam.stream; Ali Farahat / Balacode.
+
+Sections:
+  1. Acceptance (links to privacy.html)
+  2. License — dual: noncommercial MIT; commercial requires written license;
+     contact business.html / hello@balacode.io
+  3. Contributions — CLA-style grant to maintainers
+  4. Sponsorships and Donations — voluntary, non-refundable, no guaranteed benefits,
+     not a commercial license, tax note, platform terms
+  5. API Keys and Third-Party Services — BYOK; user responsibility; not affiliated
+  6. Acceptable Use — consent for recording, law, no bad-faith reverse engineering
+  7. Disclaimer of Warranties — as-is; transcription accuracy disclaimer
+  8. Limitation of Liability — cap USD $10 or commercial license fees
+  9. Changes to Terms
+  10. Governing Law — England and Wales
+  11. Contact — hello@balacode.io, GitHub issues, business page
+
+Note: terms.html (and privacy.html) include a trailing script labeled "Smart download
+  detection" that looks for #download-primary / #download-secondary (from landing).
+  Those IDs are absent on legal pages, so the IIFE exits immediately at run() — dead code
+  on those URLs; safe but redundant.
+
+HTML quirk: extra closing </div></div> after `</nav></div>` on terms/privacy (and similar).
+
+================================================================================
+COMMERCIAL LICENSING & DUAL-LICENSE MODEL (REFERENCE)
+================================================================================
+Authoritative legal text lives in the repository root file **LICENSE** (not only the
+website). **package.json** declares `"license": "MIT"` at the package metadata level;
+the full conditions are in LICENSE’s dual-license wording.
+
+--------------------------------------------------------------------------------
+1) LICENSE file (repo) — structure at backup time
+--------------------------------------------------------------------------------
+Header: "Dual License: MIT (Noncommercial) + Commercial by Permission"
+Copyright: Kalam Voice Contributors (year as in file).
+
+**Noncommercial use — MIT (restricted)**
+- Grant is MIT-style (use, copy, modify, merge, publish, distribute, sublicense, sell
+  copies) but **scoped to noncommercial use** only.
+- "Noncommercial": personal, educational, or nonprofit not primarily aimed at commercial
+  advantage or monetary compensation.
+- **Commercial use**, **resale**, or embedding in a **for-profit product** is **not**
+  permitted under this grant **except** as explicitly allowed in **Small Team
+  Commercial Use** below; otherwise a **separate written license** from the copyright
+  holder is required.
+
+**Small team commercial use (no separate license)**
+- **Commercial use is allowed without a separate license** only if the organization has
+  **at most two (2) "team members"**.
+- "Team member" = a natural person who uses the Software (or a modified/combined
+  version) for the organization’s **commercial** purposes (employee, contractor, or
+  equivalent).
+- Same MIT-style permissions apply for that small-team case, subject to the usual
+  MIT disclaimer.
+- **More than two team members**, or **resale** / **distribution as part of a for-profit
+  product or service**, still requires a **separate written license**.
+
+**Commercial use (beyond small team)**
+- Directs readers to contact project maintainers for a commercial license.
+
+--------------------------------------------------------------------------------
+2) Public website — docs/business.html ("Sponsors & commercial")
+--------------------------------------------------------------------------------
+Marketing summary (aligns with LICENSE small-team rule):
+- Free for **noncommercial** use under MIT (personal, educational, nonprofit).
+- **Commercial use by small teams**: organizations with **up to 2 team members** may use
+  Kalam commercially **without** a separate license.
+- **Larger organizations**, **resale**, or **integration into a for-profit product** need a
+  **separate written license**.
+- Points to full text: GitHub **LICENSE** file.
+- **CTA**: mailto **hello@balacode.io** with subject "Kalam commercial license inquiry",
+  or GitHub issues for discussion.
+- Separate section: **GitHub Sponsors** (github.com/sponsors/afaraha8403) — sponsorship
+  is not a substitute for a commercial license (see Terms §4).
+
+Footer line (site-wide): "Noncommercial use: MIT. Commercial by agreement." with link to
+**business.html**.
+
+--------------------------------------------------------------------------------
+3) Terms of use — docs/terms.html §2 (and related)
+--------------------------------------------------------------------------------
+§2 **License** (summary):
+- Dual-license framing; noncommercial under MIT with link to LICENSE.
+- **Commercial use** by for-profit business, resale, or part of for-profit product/service
+  requires **separate written commercial license**; lists examples (internal tools, SaaS,
+  paid distribution).
+- Enquiry: **business.html** or **hello@balacode.io**.
+
+**Documentation drift to fix when you next edit legal pages:** terms.html §2 does **not**
+spell out the **≤2 team member** commercial carve-out that appears in **LICENSE** and
+**business.html**. For consistency, consider updating §2 to reference "Small Team
+Commercial Use" from LICENSE or mirror its wording so the Terms match the repo.
+
+§3 **Contributions**: contributors grant maintainers a broad license; contributions may
+appear in **noncommercial and commercial** versions of the Software.
+
+§4 **Sponsorships and Donations**: donations/sponsorship are **not** a purchase of a
+commercial license; commercial use still needs a separate license where required (§2).
+
+§8 **Limitation of Liability**: liability cap references amount paid for a **commercial
+license** in the preceding twelve months or USD **$10**.
+
+--------------------------------------------------------------------------------
+4) Who to contact for commercial licensing
+--------------------------------------------------------------------------------
+- Email: **hello@balacode.io**
+- Page: **https://kalam.stream/business.html** (or relative `business.html` in static
+  export)
+- Optional: **GitHub issues** on afaraha8403/kalam for initial discussion
+
+================================================================================
+PRIVACY (privacy.html) — STRUCTURE (Last updated: March 9, 2026)
+================================================================================
+TL;DR card: audio not on disk; local vs cloud vs hybrid; history on device; telemetry
+  opt-in; no audio/text in telemetry.
+
+Sections:
+  1. Who We Are — data controller Ali Farahat / Balacode, hello@balacode.io
+  2. What Data We Collect — tables for audio/transcription modes; optional email in
+     onboarding; API keys local; opt-in anonymous telemetry; Google Analytics on site;
+     Google Fonts on site (IP to Google)
+  3. How We Use Your Data — table with GDPR legal bases
+  4. Who We Share Data With — STT providers, Google Analytics, GitHub
+  5. Data Retention and Deletion — audio ephemeral; history retention in Settings;
+     reset app path
+  6. Your Rights — GDPR (EEA/UK), CCPA (California)
+  7. Security
+  8. Children's Privacy (under 13 / 16)
+  9. Third-Party Links
+  10. Changes to Policy
+  11. Contact — 30-day response aim
+
+Same JSON-LD SoftwareApplication + FAQPage blocks as terms (SEO alignment with product).
+
+================================================================================
+SITEMAP (sitemap.xml) — URLs LISTED
+================================================================================
+  https://kalam.stream/
+  https://kalam.stream/download.html
+  https://kalam.stream/documentation.html
+  https://kalam.stream/business.html
+(Privacy and terms were not in sitemap.xml at backup time.)
+
+================================================================================
+ZIP BACKUP
+================================================================================
+File: kalam-stream-site-backup-2026-03-27.zip
+Contents: snapshot of `docs/` excluding this reference file and the zip itself.

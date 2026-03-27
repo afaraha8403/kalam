@@ -207,9 +207,16 @@
     const zoneEl = row.closest('[data-tasks-zone]')
     const zone = zoneEl?.getAttribute('data-tasks-zone') ?? 'flat'
     const page = row.closest('.page.fade-in') as HTMLElement | null
-    const pageRect = page?.getBoundingClientRect()
-    const containerOffsetX = pageRect ? pageRect.left : 0
-    const containerOffsetY = pageRect ? pageRect.top : 0
+    let containerOffsetX = 0
+    let containerOffsetY = 0
+    if (page) {
+      const xf = getComputedStyle(page).transform
+      if (xf && xf !== 'none') {
+        const pageRect = page.getBoundingClientRect()
+        containerOffsetX = pageRect.left
+        containerOffsetY = pageRect.top
+      }
+    }
     pointerReorderPending = {
       id: task.id,
       x: e.clientX,

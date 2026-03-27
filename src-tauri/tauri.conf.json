@@ -69,6 +69,7 @@
     "macOS": {
       "frameworks": [],
       "minimumSystemVersion": "11.0",
+      "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist",
       "exceptionDomain": "",
       "signingIdentity": null,

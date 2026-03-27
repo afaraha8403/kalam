@@ -213,6 +213,53 @@
 
   $: wordsWeekTotal = dashboard?.words_dictated_7d.reduce((s, d) => s + d.words, 0) ?? 0
 
+  /** Typing-speed baseline for "time you would have spent typing" (minutes). */
+  const TYPING_WPM_BASELINE = 40
+
+  /** Whole hours + minutes for the weekly time-saved KPI. */
+  function formatHoursMinutes(totalMinutes: number): string {
+    if (!Number.isFinite(totalMinutes) || totalMinutes <= 0) return '0<span class="kpi-unit">min</span>'
+    const rounded = Math.round(totalMinutes)
+    const h = Math.floor(rounded / 60)
+    const m = rounded % 60
+    if (h === 0) return `${m}<span class="kpi-unit">min</span>`
+    if (m === 0) return `${h}<span class="kpi-unit">h</span>`
+    return `${h}<span class="kpi-unit">h</span> ${m}<span class="kpi-unit">min</span>`
+  }
+
+  /**
+   * Per-day estimated minutes saved vs typing at TYPING_WPM_BASELINE, using one weekly dictation WPM
+   * from total words and total dictation time (when time > 0). If that pace is unknown, saved stays 0
+   * so the chart still renders words + a flat zero line (stable UI).
+   */
+  $: valueMetrics = ((): {
+    dictationWpm: number | null
+    savedPerDay: number[]
+    weeklySavedMinutes: number
+  } => {
+    if (!dashboard) {
+      return { dictationWpm: null, savedPerDay: [], weeklySavedMinutes: 0 }
+    }
+    const rows = dashboard.words_dictated_7d
+    const weekWords = rows.reduce((s, d) => s + d.words, 0)
+    const dictationWpm =
+      dashboard.total_time_dictating_7d_ms > 0 && weekWords > 0
+        ? weekWords / (dashboard.total_time_dictating_7d_ms / 60000)
+        : null
+    let weeklySaved = 0
+    const savedPerDay = rows.map((d) => {
+      const typingMin = d.words / TYPING_WPM_BASELINE
+      if (dictationWpm != null && dictationWpm > 0) {
+        const dictationMin = d.words / dictationWpm
+        const saved = Math.max(0, typingMin - dictationMin)
+        weeklySaved += saved
+        return saved
+      }
+      return 0
+    })
+    return { dictationWpm, savedPerDay, weeklySavedMinutes: weeklySaved }
+  })()
+
   function shortenAppLabel(name: string): string {
     const n = name.replace(/\.exe$/i, '').replace(/\.app$/i, '')
     return n.length > 18 ? `${n.slice(0, 16)}…` : n
@@ -354,74 +401,212 @@
     
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    const yesterday = new Date(today)
-    yesterday.setDate(yesterday.getDate() - 1)
-    
+
     const dDate = new Date(d)
     dDate.setHours(0, 0, 0, 0)
-    
+
     if (dDate.getTime() === today.getTime()) return 'Today'
-    if (dDate.getTime() === yesterday.getTime()) return 'Yesterday'
+    // Other days: short weekday (e.g. Mon) — same calendar semantics as backend YYYY-MM-DD rows.
     return d.toLocaleDateString(undefined, { weekday: 'short' })
   }
 
-  $: wordsChartOptions = ((): ApexOptions | null => {
+  /** Series colors shared by hero chart + dual y-axes so left/right scales read as paired with each curve. */
+  const HERO_WORDS_COLOR = '#AEC6CF'
+  const HERO_TIME_SAVED_COLOR = '#FF9500' // Orange for time saved
+
+  /** Sparkline uses a different accent color (e.g. a nice blue) for its peak values. */
+  const SPARKLINE_MAX_COLOR = '#007AFF'
+
+  function hexToRgb(hex: string): { r: number; g: number; b: number } {
+    const h = hex.replace('#', '').slice(0, 6)
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16),
+    }
+  }
+
+  /** Per-bar fills: low counts stay near `HERO_WORDS_COLOR`, highest day in the week reaches the sparkline max color. */
+  function wordsSparklineBarColors(values: number[]): string[] {
+    const maxW = Math.max(1, ...values)
+    const lo = hexToRgb(HERO_WORDS_COLOR)
+    const hi = hexToRgb(SPARKLINE_MAX_COLOR)
+    return values.map((w) => {
+      const t = Math.min(1, w / maxW)
+      const r = Math.round(lo.r + (hi.r - lo.r) * t)
+      const g = Math.round(lo.g + (hi.g - lo.g) * t)
+      const b = Math.round(lo.b + (hi.b - lo.b) * t)
+      return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
+    })
+  }
+
+  /** Hero: words (area) + estimated minutes saved (area); dual y-axis with axis colors matching series. */
+  $: valueHeroChartOptions = ((): ApexOptions | null => {
     if (!dashboard) return null
     const rows = dashboard.words_dictated_7d
+    const { savedPerDay } = valueMetrics
+    const gridLine = darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
     return {
       theme: { mode: darkMode ? 'dark' : 'light' },
       chart: {
-        type: 'area',
-        height: 112,
+        type: 'line',
+        height: 268,
         width: '100%',
         toolbar: { show: false },
         zoom: { enabled: false },
         background: 'transparent',
         fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         animations: { easing: 'easeinout', speed: 420 },
+        stacked: false,
       },
-      series: [{ name: 'Words', data: rows.map((x) => x.words) }],
-      stroke: { curve: 'smooth', width: 3, colors: ['#AEC6CF'] },
+      series: [
+        {
+          name: 'Words dictated',
+          type: 'area',
+          data: rows.map((x) => x.words),
+        },
+        {
+          name: 'Est. time saved',
+          type: 'area',
+          data: savedPerDay,
+        },
+      ],
+      stroke: { curve: 'smooth', width: [2, 2] },
       fill: {
         type: 'gradient',
-        gradient: { shadeIntensity: 1, opacityFrom: 0.45, opacityTo: 0.05, stops: [0, 90, 100], colorStops: [
-          { offset: 0, color: '#AEC6CF', opacity: 0.4 },
-          { offset: 100, color: '#AEC6CF', opacity: 0.05 }
-        ] },
-      },
-      colors: ['#AEC6CF'],
-      // Per-day word totals above each point: smaller + muted vs axis labels.
-      dataLabels: {
-        enabled: true,
-        offsetY: -6,
-        style: {
-          fontSize: '9px',
-          fontWeight: 400,
-          colors: ['var(--text-secondary)'],
+        gradient: {
+          shadeIntensity: 1,
+          opacityFrom: 0.42,
+          opacityTo: 0.06,
+          stops: [0, 90, 100],
         },
-        background: { enabled: false },
-        formatter: (val: string | number) => Math.round(Number(val)).toLocaleString(),
       },
+      colors: [HERO_WORDS_COLOR, HERO_TIME_SAVED_COLOR],
+      dataLabels: { enabled: false },
+      // No point markers — dual series are read from the filled areas and axes.
       markers: {
         size: 0,
-        strokeColors: '#AEC6CF',
-        strokeWidth: 2,
-        hover: { size: 6, strokeWidth: 2 },
+        strokeWidth: 0,
+        hover: { sizeOffset: 0 },
       },
       states: {
         hover: { filter: { type: 'lighten', value: 0.12 } },
         active: { filter: { type: 'none' } },
       },
+      legend: { show: false },
       xaxis: {
         categories: rows.map((x) => formatRelativeDate(x.date)),
         labels: { style: { fontSize: '11px', fontWeight: 500, colors: 'var(--text-secondary)' } },
         axisBorder: { show: false },
         axisTicks: { show: false },
       },
-      yaxis: { show: false },
-      grid: { show: false, padding: { top: 18, right: 6, bottom: 0, left: 6 } },
-      // Data labels already show counts per day; hover tooltip would duplicate that.
-      tooltip: { enabled: false },
+      yaxis: [
+        {
+          seriesName: 'Words dictated',
+          min: 0,
+          decimalsInFloat: 0,
+          title: {
+            text: 'Words',
+            style: { fontSize: '11px', fontWeight: 600, color: HERO_WORDS_COLOR },
+          },
+          labels: {
+            style: { colors: HERO_WORDS_COLOR, fontSize: '11px', fontWeight: 500 },
+            formatter: (v: string | number) => Math.round(Number(v)).toLocaleString(),
+          },
+        },
+        {
+          opposite: true,
+          seriesName: 'Est. time saved',
+          min: 0,
+          decimalsInFloat: 1,
+          title: {
+            text: 'Minutes saved (est.)',
+            style: { fontSize: '11px', fontWeight: 600, color: HERO_TIME_SAVED_COLOR },
+          },
+          labels: {
+            style: { colors: HERO_TIME_SAVED_COLOR, fontSize: '11px', fontWeight: 500 },
+            formatter: (v: string | number) => Number(v).toFixed(1),
+          },
+        },
+      ],
+      grid: {
+        borderColor: gridLine,
+        strokeDashArray: 4,
+        padding: { top: 4, right: 8, bottom: 0, left: 8 },
+        xaxis: { lines: { show: false } },
+        yaxis: { lines: { show: true } },
+      },
+      tooltip: {
+        enabled: true,
+        shared: true,
+        intersect: false,
+        fillSeriesColor: false,
+        cssClass: 'kalam-dash-tooltip',
+        y: {
+          formatter: (val: number, opts: { seriesIndex?: number }) => {
+            if (opts?.seriesIndex === 0) return `${Math.round(val).toLocaleString()} words`
+            return `${Number(val).toFixed(1)} min saved (est.)`
+          },
+        },
+      },
+    } as ApexOptions
+  })()
+
+  /** Tiny 7-day word bars for the stat tile — taller chart + day labels; y/grid hidden for a sparkline-like look. */
+  $: wordsSparklineOptions = ((): ApexOptions | null => {
+    if (!dashboard) return null
+    const rows = dashboard.words_dictated_7d
+    const values = rows.map((x) => x.words)
+    const categories = rows.map((x) => formatRelativeDate(x.date))
+    const barColors = wordsSparklineBarColors(values)
+    return {
+      theme: { mode: darkMode ? 'dark' : 'light' },
+      chart: {
+        type: 'bar',
+        height: 130,
+        width: '100%',
+        toolbar: { show: false },
+        background: 'transparent',
+        fontFamily: "'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        animations: { easing: 'easeinout', speed: 320 },
+      },
+      series: [{ name: 'Words', data: values }],
+      colors: barColors,
+      // Distributed series otherwise get a default numbered legend (1…7).
+      legend: { show: false },
+      plotOptions: {
+        // `distributed` applies `colors[i]` to bar i so each day can reflect its relative volume.
+        bar: { distributed: true, borderRadius: 2, columnWidth: '72%' },
+      },
+      xaxis: {
+        // Same relative labels as the hero week chart (Today / weekday short); backend sends 7 days oldest→today.
+        categories,
+        tickPlacement: 'on',
+        labels: {
+          show: true,
+          hideOverlappingLabels: false,
+          trim: false,
+          style: { fontSize: '10px', fontWeight: 500, colors: 'var(--text-secondary)' },
+        },
+        axisBorder: { show: false },
+        axisTicks: { show: false },
+      },
+      yaxis: {
+        labels: { show: false },
+        axisBorder: { show: false },
+        axisTicks: { show: false },
+      },
+      // Extra horizontal padding so the last category ("Today") is not clipped by Apex label layout.
+      grid: { show: false, padding: { top: 4, right: 10, bottom: 0, left: 6 } },
+      dataLabels: { enabled: false },
+      tooltip: {
+        enabled: true,
+        cssClass: 'kalam-dash-tooltip',
+        y: {
+          formatter: (v: number) => `${Math.round(v).toLocaleString()} words`,
+        },
+      },
+      stroke: { colors: ['transparent'] },
     } as ApexOptions
   })()
 
@@ -515,46 +700,62 @@
   <div class="overview-dashboard">
     {#if dashboardLoading}
       <div class="dashboard-chart-stack">
+        <div class="stat-box dash-tile wide"><span class="stat-label">Time saved</span><span class="stat-num">—</span></div>
         <div class="dashboard-tiles-row two-cols">
-          <div class="stat-box dash-tile"><span class="stat-label">Words (7 days)</span><span class="stat-num">—</span></div>
-          <div class="stat-box dash-tile"><span class="stat-label">Top apps</span><span class="stat-num">—</span></div>
+          <div class="stat-box dash-tile"><span class="stat-label">Top destinations</span><span class="stat-num">—</span></div>
+          <div class="stat-box dash-tile"><span class="stat-label">Words this week</span><span class="stat-num">—</span></div>
         </div>
       </div>
-      <div class="stat-box dash-tile wide"><span class="stat-label">Speaking time</span></div>
+      <div class="stat-box dash-tile wide"><span class="stat-label">Activity patterns</span></div>
       <div class="dashboard-tiles-bottom">
-        <div class="stat-box dash-tile"><span class="stat-label">Average dictation length</span></div>
-        <div class="stat-box dash-tile"><span class="stat-label">Activity</span></div>
+        <div class="stat-box dash-tile"><span class="stat-label">Typical capture</span></div>
+        <div class="stat-box dash-tile"><span class="stat-label">Capture consistency</span></div>
       </div>
-    {:else if dashboard && wordsChartOptions && appsChartOptions && speakingTimeHeatmapOptions}
+    {:else if dashboard && valueHeroChartOptions && wordsSparklineOptions && appsChartOptions && speakingTimeHeatmapOptions}
       <div class="dashboard-chart-stack">
+        <div class="stat-box dash-tile wide hero-value-tile">
+          <span class="stat-label">Time saved</span>
+          <div class="hero-kpi-block">
+            <span class="hero-kpi-value">{@html formatHoursMinutes(valueMetrics.weeklySavedMinutes)}</span>
+            <span class="hero-kpi-caption">~ saved this week</span>
+          </div>
+          <div class="dash-chart-wrap hero">
+            <DashboardApex options={valueHeroChartOptions} />
+          </div>
+        </div>
         <div class="dashboard-tiles-row two-cols">
           <div class="stat-box dash-tile">
-            <span class="stat-label">Words (7 days)</span>
-            <span class="stat-num">{wordsWeekTotal.toLocaleString()}</span>
-            <p class="dash-tile-sub">All time {(dashboard.total_words ?? 0).toLocaleString()}</p>
-            <div class="dash-chart-wrap">
-              <DashboardApex options={wordsChartOptions} />
-            </div>
-          </div>
-          <div class="stat-box dash-tile">
-            <span class="stat-label">Top apps (7 days)</span>
+            <span class="stat-label">Top destinations</span>
+            <p class="dash-tile-sub">Share of dictation captures by app (7 days)</p>
             <div class="dash-chart-wrap apps">
               <DashboardApex options={appsChartOptions} />
+            </div>
+          </div>
+          <div class="stat-box dash-tile words-week-tile">
+            <span class="stat-label">Words this week</span>
+            <span class="stat-num">{wordsWeekTotal.toLocaleString()}</span>
+            <p class="dash-tile-sub words-week-pages">
+              ~{(wordsWeekTotal / 250).toFixed(1)} pages
+            </p>
+            <p class="dash-tile-sub words-week-alltime">All time {(dashboard.total_words ?? 0).toLocaleString()} words</p>
+            <div class="dash-chart-wrap words-sparkline">
+              <DashboardApex options={wordsSparklineOptions} />
             </div>
           </div>
         </div>
       </div>
       <div class="stat-box dash-tile wide">
-        <span class="stat-label">Speaking time (7 days)</span>
+        <span class="stat-label">Activity patterns</span>
+        <p class="dash-tile-sub">Captures by weekday and time of day (7 days)</p>
         <div class="dash-chart-wrap flow">
           <DashboardApex options={speakingTimeHeatmapOptions} />
         </div>
       </div>
       <div class="dashboard-tiles-bottom">
         <div class="stat-box dash-tile">
-          <span class="stat-label">Average dictation length</span>
+          <span class="stat-label">Typical capture length</span>
           <span class="stat-num" style="margin-top: 12px; display: block; font-size: 32px;">{averageSessionLengthSec.toFixed(1)}s</span>
-          <p class="dash-tile-sub" style="margin-top: 8px;">Over the last 7 days</p>
+          <p class="dash-tile-sub" style="margin-top: 8px;">Average session over the last 7 days</p>
           <!-- Same cohort as avg duration: timed dictations only (`duration_ms` &gt; 0). -->
           {#if dashboard.avg_words_per_dictation_7d != null}
             <p class="dash-tile-sub" style="margin-top: 4px;">
@@ -563,9 +764,9 @@
           {/if}
         </div>
         <div class="stat-box dash-tile streak-tile">
-          <span class="stat-label">Day streak</span>
+          <span class="stat-label">Capture consistency</span>
           <span class="stat-num streak-num">{dashboard.streak_days ?? 0}</span>
-          <p class="dash-tile-sub">Last 14 days</p>
+          <p class="dash-tile-sub">Consecutive days with dictation (from daily totals)</p>
           <div class="heatmap-row" role="img" aria-label="Dictation activity last 14 days">
             {#each dashboard.activity_heatmap_14d as day (day.date)}
               <div
@@ -721,15 +922,9 @@
     min-width: 0;
     max-width: 100%;
   }
-  .dashboard-tiles-row.two-cols .radial-span {
-    grid-column: 1 / -1;
-  }
   @media (max-width: 960px) {
     .dashboard-tiles-row.two-cols {
       grid-template-columns: 1fr;
-    }
-    .dashboard-tiles-row.two-cols .radial-span {
-      grid-column: auto;
     }
   }
   .dashboard-tiles-bottom {
@@ -765,14 +960,61 @@
     min-height: 112px;
     flex: 1 1 auto;
   }
+  .hero-value-tile .dash-tile-sub.hero-kpi-sub {
+    line-height: 1.45;
+    margin-bottom: 10px;
+  }
+  .hero-kpi-block {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px 14px;
+    margin: 10px 0 0 0;
+  }
+  .hero-kpi-value {
+    font-size: clamp(28px, 5vw, 36px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+  }
+  :global(.hero-kpi-value .kpi-unit) {
+    font-size: 0.55em;
+    font-weight: 600;
+    margin-left: 2px;
+    margin-right: 4px;
+    color: var(--text-secondary);
+  }
+  .hero-kpi-caption {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .dash-chart-wrap.hero {
+    min-height: 268px;
+  }
   .dash-chart-wrap.flow {
     min-height: 240px;
   }
-  .dash-chart-wrap.radial {
-    min-height: 200px;
-  }
   .dash-chart-wrap.apps {
     min-height: 200px;
+  }
+  /* Stack label → KPI → page estimate → all-time, then chart grows to fill the tile. */
+  .words-week-tile {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .words-week-tile .dash-tile-sub.words-week-pages {
+    margin-top: 4px;
+  }
+  .words-week-tile .dash-tile-sub.words-week-alltime {
+    margin-top: 2px;
+    margin-bottom: 0;
+  }
+  .dash-chart-wrap.words-sparkline {
+    min-height: 120px;
+    margin-top: 8px;
+    flex: 1 1 auto;
   }
   .streak-num {
     display: block;

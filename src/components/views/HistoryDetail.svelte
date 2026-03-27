@@ -5,6 +5,7 @@
   import { getAppIcon } from '../../lib/api/appInfo'
   import { invoke, listenSafe } from '../../lib/backend'
   import type { AppConfig, Entry, SensitiveAppPattern } from '../../types'
+  import { isProcessInSensitiveList, processNameMatchesSensitivePattern } from '../../lib/sensitiveAppPatterns'
   import { selectedHistoryId } from '../../lib/historyDetailStore'
   import { selectedNoteId } from '../../lib/noteDetailStore'
   import { selectedTaskId } from '../../lib/taskDetailStore'
@@ -33,19 +34,6 @@
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   }
 
-  /** Align with Settings → sensitive apps picker (`isAppAlreadyAdded`). */
-  function sensitiveProcessPatternMatches(processName: string, p: SensitiveAppPattern): boolean {
-    if (p.pattern_type !== 'ProcessName') return false
-    const normalized = processName.toLowerCase()
-    const pattern = p.pattern.toLowerCase()
-    return pattern.includes(normalized) || normalized.includes(pattern.replace(/[^a-z0-9]/g, ''))
-  }
-
-  function isProcessInSensitiveList(patterns: SensitiveAppPattern[] | undefined, processName: string): boolean {
-    if (!patterns?.length) return false
-    return patterns.some((p) => sensitiveProcessPatternMatches(processName, p))
-  }
-
   /** Same regex shape as `addSensitiveAppFromPicker` in Settings. */
   function buildSensitivePatternForProcess(processName: string): SensitiveAppPattern {
     const baseName = processName.replace(/\.exe$/i, '').replace(/\.app$/i, '')
@@ -72,7 +60,7 @@
       const cfg = (await invoke('get_settings')) as AppConfig
       const patterns = [...(cfg.privacy?.sensitive_app_patterns ?? [])]
       const next = isProcessInSensitiveList(patterns, proc)
-        ? patterns.filter((p) => !sensitiveProcessPatternMatches(proc, p))
+        ? patterns.filter((p) => !processNameMatchesSensitivePattern(proc, p))
         : [...patterns, buildSensitivePatternForProcess(proc)]
       await invoke('save_settings', {
         newConfig: { ...cfg, privacy: { ...cfg.privacy, sensitive_app_patterns: next } }
@@ -351,8 +339,8 @@
           </dl>
           {#if wpm != null}
             <dl class="history-stat">
-              <dt>Words / min</dt>
-              <dd>~{wpm} <span class="history-stat-hint">(vs recording length)</span></dd>
+              <dt>Speaking pace</dt>
+              <dd>~{wpm} <span class="history-stat-hint">(estimated from recording length)</span></dd>
             </dl>
           {/if}
           <dl class="history-stat">
@@ -374,7 +362,7 @@
         <!-- Row 2: same height, fills width (fixes lone Recognition cell) -->
         <div class="history-stats-meta">
           <div class="history-stat">
-            <dt>Recognition</dt>
+            <dt>Transcription</dt>
             <dd>{recognitionDisplay(entry.stt_provider, entry.stt_mode)}</dd>
           </div>
           <div class="history-stat">
@@ -419,9 +407,8 @@
                       </button>
                     </div>
                     <p class="history-privacy-desc" id="history-detail-privacy-toggle-desc">
-                      Same list as <strong>Settings → Sensitive apps</strong>; with detection on and
-                      <strong>Hybrid</strong> or <strong>Auto</strong> STT, Kalam uses <strong>local</strong> recognition
-                      while this app is focused.
+                      When this app is in focus, Kalam can keep your audio on this device instead of sending it to the
+                      cloud (when you use Hybrid or Auto and have sensitive-app detection on in Settings).
                     </p>
                   </div>
                   <label class="toggle-switch history-sensitive-toggle" for="history-detail-privacy-toggle">
@@ -445,10 +432,9 @@
 
       <div id="history-sensitive-help-popover" popover class="history-sensitive-help-popover">
         <p>
-          The toggle updates the same list as <strong>Settings → Data &amp; Privacy → Sensitive apps</strong> (open
-          Settings to confirm). When <strong>Sensitive app detection</strong> is on and STT mode is
-          <strong>Hybrid</strong> or <strong>Auto</strong>, Kalam uses <strong>local</strong> transcription while this
-          app is in the foreground.
+          This uses the same list as <strong>Settings → Data &amp; Privacy → Sensitive apps</strong>. For extra privacy
+          in password managers or similar apps, turn on sensitive-app detection and use Hybrid or Auto — Kalam then
+          prefers on-device transcription while that app is open.
         </p>
       </div>
 

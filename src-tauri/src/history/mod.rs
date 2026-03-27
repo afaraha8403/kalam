@@ -300,11 +300,14 @@ pub async fn search(query: &str) -> anyhow::Result<Vec<HistoryEntry>> {
 
 pub async fn clear() -> anyhow::Result<()> {
     let conn = db::open_db()?;
-    conn.execute("DELETE FROM entries WHERE entry_type = 'history'", [])?;
-    conn.execute(
-        "DELETE FROM vec_entries WHERE entry_id NOT IN (SELECT id FROM entries)",
+    // Delete vec rows first (same transaction) so sqlite-vec state stays consistent with entries.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM vec_entries WHERE entry_id IN (SELECT id FROM entries WHERE entry_type = 'history')",
         [],
     )?;
+    tx.execute("DELETE FROM entries WHERE entry_type = 'history'", [])?;
+    tx.commit()?;
     Ok(())
 }
 

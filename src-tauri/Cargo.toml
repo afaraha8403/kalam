@@ -73,6 +73,7 @@ base64 = "0.22"
 
 # Overlay window handle (for ShowWindow without focus)
 raw-window-handle = "0.6"
+tauri-plugin-opener = "2"
 
 # Platform-specific
 [target.'cfg(windows)'.dependencies]

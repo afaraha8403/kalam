@@ -4,7 +4,7 @@
 
 **Kalam** (كلام — *speech* in Arabic) is an open-source, cross-platform voice dictation app that turns speech into text in any application on Windows, macOS, and Linux. A free, privacy-friendly alternative to Whisperflow.
 
-[**Website**](https://kalam.stream/) · [**Documentation & manual**](https://kalam.stream/documentation.html) · [**Download (GitHub Releases)**](https://github.com/afaraha8403/kalam/releases) — *beta pre-releases available*
+[**Website**](https://kalam.stream/) · [**In-repo docs (.doc)**](https://github.com/afaraha8403/kalam/tree/main/.doc) · [**Download (GitHub Releases)**](https://github.com/afaraha8403/kalam/releases) — *beta pre-releases available*
 
 ---
 
@@ -50,7 +50,7 @@ Use a **separate hotkey** from dictation. When you press it and speak, Kalam cre
    - **Local:** choose SenseVoice or Whisper Base; the app will download the engine and model when needed.
 3. **Dictate:** press **Ctrl+Win** (Windows), **Ctrl+Super** (Linux), or **Ctrl+Cmd** (macOS), hold while you speak, then release. Text is inserted into the app that had focus. On macOS, when you first use the hotkey, allow **Input Monitoring** if prompted—required for the hotkey to work in other apps.
 
-For setup details, API keys, and the full user manual, see the [**documentation**](https://kalam.stream/documentation.html).
+For setup details and deeper product notes, see the [**`.doc` folder**](https://github.com/afaraha8403/kalam/tree/main/.doc) in the repository (a new **kalam.stream** manual will return with the redesigned site).
 
 ## Uninstalling
 

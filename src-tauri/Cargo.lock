@@ -2958,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "kalam-voice"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "active-win-pos-rs",
  "aes-gcm",
@@ -3006,6 +3006,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-autostart",
  "tauri-plugin-notification",
+ "tauri-plugin-opener",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
@@ -5950,6 +5951,28 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "url",
+]
+
+[[package]]
+name = "tauri-plugin-opener"
+version = "2.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc624469b06f59f5a29f874bbc61a2ed737c0f9c23ef09855a292c389c42e83f"
+dependencies = [
+ "dunce",
+ "glob",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "open",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+ "url",
+ "windows 0.61.3",
+ "zbus 5.13.2",
 ]
 
 [[package]]

@@ -52,6 +52,45 @@ pub fn get_foreground_app() -> Option<(String, String)> {
     Some((process_name, title))
 }
 
+/// True when Hybrid/Auto, detection is on, and the current foreground matches a sensitive pattern.
+/// Used for overlay “peek” when focus enters a sensitive app (no dictation yet).
+pub fn foreground_matches_sensitive_app(config: &AppConfig) -> bool {
+    let stt = &config.stt_config;
+    if stt.mode != STTMode::Hybrid && stt.mode != STTMode::Auto {
+        return false;
+    }
+    if !config.privacy.sensitive_app_detection || config.privacy.sensitive_app_patterns.is_empty() {
+        return false;
+    }
+    let (process_name, window_title) = match get_foreground_app() {
+        Some(x) => x,
+        None => return false,
+    };
+    foreground_matches_sensitive_patterns(config, &process_name, &window_title)
+}
+
+fn foreground_matches_sensitive_patterns(
+    config: &AppConfig,
+    process_name: &str,
+    window_title: &str,
+) -> bool {
+    for pattern in &config.privacy.sensitive_app_patterns {
+        let re = match Regex::new(&pattern.pattern) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let matches = match pattern.pattern_type {
+            PatternType::ProcessName => re.is_match(process_name),
+            PatternType::WindowTitle => re.is_match(window_title),
+            PatternType::BundleId => re.is_match(process_name),
+        };
+        if matches {
+            return true;
+        }
+    }
+    false
+}
+
 /// If mode is Hybrid or Auto, sensitive app detection is enabled, and patterns exist, check whether the
 /// foreground app matches any pattern. Returns an STTConfig that uses Local mode when a match is found.
 pub fn effective_stt_config(config: &AppConfig) -> STTConfig {
@@ -66,27 +105,15 @@ pub fn effective_stt_config(config: &AppConfig) -> STTConfig {
         Some(x) => x,
         None => return stt.clone(),
     };
-    // All patterns use ForceLocal semantics (`PrivacyAction` only exposes ForceLocal; legacy JSON maps here).
-    for pattern in &config.privacy.sensitive_app_patterns {
-        let re = match Regex::new(&pattern.pattern) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        let matches = match pattern.pattern_type {
-            PatternType::ProcessName => re.is_match(&process_name),
-            PatternType::WindowTitle => re.is_match(&window_title),
-            PatternType::BundleId => re.is_match(&process_name),
-        };
-        if matches {
-            log::info!(
-                "Sensitive app detected ({} / {}), forcing Local STT",
-                process_name,
-                window_title
-            );
-            let mut local = stt.clone();
-            local.mode = STTMode::Local;
-            return local;
-        }
+    if foreground_matches_sensitive_patterns(config, &process_name, &window_title) {
+        log::info!(
+            "Sensitive app detected ({} / {}), forcing Local STT",
+            process_name,
+            window_title
+        );
+        let mut local = stt.clone();
+        local.mode = STTMode::Local;
+        return local;
     }
     stt.clone()
 }

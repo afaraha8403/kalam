@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::Child;
 use tokio::sync::Mutex;
@@ -187,10 +188,20 @@ impl LocalModelManager {
             }
         };
 
-        let child = tokio::process::Command::new(&binary_path)
-            .args(&server_args)
+        // Hide console windows on Windows (whisper-server / sherpa are console binaries).
+        let mut cmd = tokio::process::Command::new(&binary_path);
+        cmd.args(&server_args)
             .current_dir(&work_dir)
             .kill_on_drop(true)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            // `creation_flags` comes from `std::os::windows::process::CommandExt` (in prelude on Windows).
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let child = cmd
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn engine: {}", e))?;
 

@@ -86,6 +86,11 @@
       "sourceType": "github",
       "computedHash": "3bce17549f6233b5b864fc0ee71ad23d639f621fe6aa057e711a013814305fee"
     },
+    "remotion-best-practices": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "computedHash": "6f22ccc0dd7103de270a465b30e44b001bcee4751e43197bba60680e69928635"
+    },
     "svelte5-best-practices": {
       "source": "ejirocodes/agent-skills",
       "sourceType": "github",

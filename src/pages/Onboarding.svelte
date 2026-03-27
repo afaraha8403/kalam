@@ -43,12 +43,65 @@
   let audioDevices: AudioDevice[] = []
   /** '' = system default (same as Settings → Audio Input). */
   let audioDeviceSelection = ''
-  /** Permission cards + details; collapsed by default to shorten the Access step. */
-  let permCardsOpen = false
   /** True while refresh re-lists devices (click feedback + prevent double-fires). */
   let micRefreshBusy = false
   /** True from Record click until `test_microphone_start` succeeds (UI feedback during async start). */
   let micRecordStarting = false
+  /** User-visible error when `test_microphone_start` fails (Settings surfaces similarly). */
+  let micTestStartError = ''
+
+  type PermissionStatusItem = { state: string; actionable: boolean; message: string }
+  type PermissionStatusPayload = {
+    platform: string
+    microphone: PermissionStatusItem
+    accessibility: PermissionStatusItem
+    input_monitoring: PermissionStatusItem
+  }
+  type RuntimeCapabilitiesPayload = {
+    can_capture_audio: boolean
+    can_text_inject: boolean
+    can_global_hotkey: boolean
+    capture_audio_state: string
+    text_inject_state: string
+    global_hotkey_state: string
+    next_steps: string[]
+    permission_status: PermissionStatusPayload
+  }
+
+  let runtimeCaps: RuntimeCapabilitiesPayload | null = null
+  let permCapsLoading = false
+  let permCapsLoadError = ''
+  /** macOS: Continue allowed if Accessibility isn’t ready and user defers to Settings. */
+  let macAccessibilityDeferLater = false
+
+  function badgeLabelForState(state: string): string {
+    if (state === 'granted') return 'Granted'
+    if (state === 'needs_action') return 'Needs action'
+    return 'Unknown'
+  }
+
+  async function loadPermissionsAndCapabilities() {
+    permCapsLoading = true
+    permCapsLoadError = ''
+    try {
+      runtimeCaps = (await invoke('get_runtime_capabilities')) as RuntimeCapabilitiesPayload
+    } catch (e) {
+      permCapsLoadError = e instanceof Error ? e.message : String(e)
+      runtimeCaps = null
+    } finally {
+      permCapsLoading = false
+    }
+  }
+
+  /** Continue on step 3: mic not blocked; on macOS also need Accessibility granted or deferral checkbox. */
+  $: step3ContinueEnabled =
+    step !== 3 ||
+    permCapsLoadError !== '' ||
+    (runtimeCaps != null &&
+      runtimeCaps.capture_audio_state !== 'needs_action' &&
+      (platform !== 'macos' ||
+        runtimeCaps.text_inject_state === 'granted' ||
+        macAccessibilityDeferLater))
 
   /** Short nav labels — match the order of steps below. */
   const stepLabels = [
@@ -235,6 +288,7 @@
     recordedSampleRate = 0
     micLevel = 0
     micRecordStarting = true
+    micTestStartError = ''
     try {
       audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
       await audioCtx.resume()
@@ -249,6 +303,7 @@
       }, 100)
     } catch (e) {
       console.error('Microphone test start failed:', e)
+      micTestStartError = e instanceof Error ? e.message : String(e)
       testingMic = false
       if (levelPollId != null) {
         clearInterval(levelPollId)
@@ -356,6 +411,10 @@
     }
   }
 
+  $: if (step === 3) {
+    void loadPermissionsAndCapabilities()
+  }
+
   onMount(() => {
     const setup = async () => {
       const unlisten = await listenSafe<string>('dictation-result', (e) => {
@@ -369,6 +428,7 @@
     void loadPlatform()
       .then(() => loadConfig())
       .then(() => loadAudioDevices())
+      .then(() => loadPermissionsAndCapabilities())
     return () => {
       unlistenDictation?.()
     }
@@ -468,6 +528,9 @@
         {#if skipError}
           <p class="skip-error" role="alert">{skipError}</p>
         {/if}
+        <p class="skip-consequence">
+          Skipping applies defaults and may leave permissions unset—you can fix microphone and accessibility in Settings → Audio &amp; Dictation.
+        </p>
       </div>
     {/if}
   </nav>
@@ -573,95 +636,106 @@
         <div class="step step-permissions">
           <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
           <h1>Access &amp; microphone</h1>
-          <p class="subtitle">Grant what your OS asks for, then confirm the mic picks you up. Without these, Kalam can’t hear you or type into other apps.</p>
+          <p class="subtitle">Check status below, then confirm the mic picks you up. Kalam needs capture for dictation and (on some systems) accessibility for typing into other apps.</p>
 
-          <div class="perm-panel">
-            <h2 class="section-heading">Allow on this device</h2>
-            <ol class="perm-steps-hint" aria-label="Suggested order">
-              <li>Microphone first</li>
-              <li>Then accessibility (if prompted)</li>
-              <li>Finally run the quick mic check below</li>
-            </ol>
-            <div class="perm-accordion">
-              <button
-                type="button"
-                class="perm-accordion-trigger"
-                id="onboarding-perm-accordion-btn"
-                aria-expanded={permCardsOpen}
-                aria-controls="onboarding-perm-cards-region"
-                on:click={() => (permCardsOpen = !permCardsOpen)}
-              >
-                <span class="perm-accordion-text">
-                  <span class="perm-accordion-title">System permissions &amp; details</span>
-                  <span class="perm-accordion-sub">
-                    {permCardsOpen ? 'Hide' : 'Show'} microphone, accessibility{#if platform === 'macos'}, Input Monitoring{/if}, and privacy notes
-                  </span>
-                </span>
-                <span class="perm-accordion-chevron" aria-hidden="true">
-                  <Icon icon={permCardsOpen ? 'ph:caret-up' : 'ph:caret-down'} />
-                </span>
-              </button>
-              {#if permCardsOpen}
-                <div
-                  class="perm-accordion-panel"
-                  id="onboarding-perm-cards-region"
-                  role="region"
-                  aria-labelledby="onboarding-perm-accordion-btn"
-                >
-                  <div class="perm-cards">
-              <article class="perm-card">
-                <div class="perm-card-row">
-                  <div class="perm-icon-wrap"><Icon icon="ph:microphone" aria-hidden="true" /></div>
-                  <div class="perm-info">
-                    <strong>Microphone</strong>
-                    <span>Hear you while you dictate</span>
-                  </div>
-                  <button type="button" class="btn-outline-sm" on:click={() => requestPermission('microphone')}>
-                    {platform === 'macos' ? 'Allow in System Settings' : 'Open system settings'}
-                  </button>
+          <div class="perm-status-strip" aria-live="polite">
+            {#if permCapsLoading}
+              <p class="perm-strip-loading">Checking permissions…</p>
+            {:else if permCapsLoadError}
+              <p class="error-text" role="alert">{permCapsLoadError}</p>
+            {:else if runtimeCaps}
+              <div class="perm-status-row">
+                <div class="perm-status-head">
+                  <span class="perm-status-title">Microphone</span>
+                  <span
+                    class="perm-badge"
+                    class:perm-badge--granted={runtimeCaps.capture_audio_state === 'granted'}
+                    class:perm-badge--needs={runtimeCaps.capture_audio_state === 'needs_action'}
+                    class:perm-badge--unknown={runtimeCaps.capture_audio_state === 'unknown'}
+                    >{badgeLabelForState(runtimeCaps.capture_audio_state)}</span
+                  >
                 </div>
-                <p class="perm-card-detail">
-                  Audio goes to the speech engine you configure (cloud and/or local). This onboarding flow does not keep raw recordings.
-                </p>
-              </article>
-              <article class="perm-card">
-                <div class="perm-card-row">
-                  <div class="perm-icon-wrap"><Icon icon="ph:keyboard" aria-hidden="true" /></div>
-                  <div class="perm-info">
-                    <strong>Accessibility</strong>
-                    <span>Insert text into the focused app</span>
-                  </div>
+                <p class="perm-status-msg">{runtimeCaps.permission_status.microphone.message}</p>
+                <div class="perm-status-actions">
                   {#if platform === 'macos'}
-                    <button type="button" class="btn-outline-sm" on:click={() => requestPermission('accessibility')}>Allow in System Settings</button>
+                    <button type="button" class="btn-outline-sm" on:click={() => openPermissionPage('microphone')}>
+                      Open Microphone settings
+                    </button>
+                    <span class="perm-status-hint-inline"
+                      >Starting <strong>Record sample</strong> below triggers the system prompt if needed.</span
+                    >
                   {:else if platform === 'windows'}
-                    <span class="perm-auto">Usually automatic on Windows</span>
+                    {#if runtimeCaps.permission_status.microphone.actionable}
+                      <button type="button" class="btn-outline-sm" on:click={() => openPermissionPage('microphone')}>
+                        Open microphone privacy settings
+                      </button>
+                    {/if}
                   {:else}
-                    <button type="button" class="btn-outline-sm" on:click={() => openPermissionPage('accessibility')}>Open system settings</button>
+                    <span class="perm-status-hint-inline"
+                      >Use the mic test below; PipeWire/PulseAudio and device access vary by distro.</span
+                    >
                   {/if}
                 </div>
-                <p class="perm-card-detail">
-                  Lets Kalam insert transcribed text into the app that has focus—similar to pasting, without switching windows.
-                </p>
-              </article>
-              {#if platform === 'macos'}
-                <article class="perm-card">
-                  <div class="perm-card-row perm-row-hint-only">
-                    <div class="perm-icon-wrap"><Icon icon="ph:key-return" aria-hidden="true" /></div>
-                    <div class="perm-info">
-                      <strong>Input Monitoring</strong>
-                      <span>Global dictation shortcut in every app</span>
-                    </div>
-                  </div>
-                  <p class="perm-card-detail">
-                    macOS may prompt the first time you use the shortcut in another app—approve it so it’s detected everywhere. Kalam does not log keystroke content or send it anywhere.
-                  </p>
-                </article>
-              {/if}
-                  </div>
+              </div>
+
+              <div class="perm-status-row">
+                <div class="perm-status-head">
+                  <span class="perm-status-title">Text insertion</span>
+                  <span
+                    class="perm-badge"
+                    class:perm-badge--granted={runtimeCaps.text_inject_state === 'granted'}
+                    class:perm-badge--needs={runtimeCaps.text_inject_state === 'needs_action'}
+                    class:perm-badge--unknown={runtimeCaps.text_inject_state === 'unknown'}
+                    >{badgeLabelForState(runtimeCaps.text_inject_state)}</span
+                  >
                 </div>
+                <p class="perm-status-msg">{runtimeCaps.permission_status.accessibility.message}</p>
+                <div class="perm-status-actions">
+                  {#if platform === 'macos'}
+                    {#if runtimeCaps.text_inject_state !== 'granted'}
+                      <button type="button" class="btn-outline-sm" on:click={() => requestPermission('accessibility')}>
+                        Request accessibility prompt
+                      </button>
+                      <button type="button" class="btn-outline-sm" on:click={() => openPermissionPage('accessibility')}>
+                        Open Accessibility settings
+                      </button>
+                    {/if}
+                  {:else if platform === 'windows'}
+                    <span class="perm-auto">No separate accessibility toggle is usually required on Windows.</span>
+                  {:else}
+                    <p class="perm-linux-msg">
+                      Text injection depends on your desktop environment; there isn’t a single settings link for all Linux setups.
+                    </p>
+                  {/if}
+                </div>
+              </div>
+
+              <div class="perm-status-row">
+                <div class="perm-status-head">
+                  <span class="perm-status-title">Global hotkey</span>
+                  <span
+                    class="perm-badge"
+                    class:perm-badge--granted={runtimeCaps.global_hotkey_state === 'granted'}
+                    class:perm-badge--needs={runtimeCaps.global_hotkey_state === 'needs_action'}
+                    class:perm-badge--unknown={runtimeCaps.global_hotkey_state === 'unknown'}
+                    >{badgeLabelForState(runtimeCaps.global_hotkey_state)}</span
+                  >
+                </div>
+                <p class="perm-status-msg">{runtimeCaps.permission_status.input_monitoring.message}</p>
+              </div>
+
+              {#if platform === 'macos' && runtimeCaps.text_inject_state !== 'granted'}
+                <label class="check-row perm-defer-check">
+                  <input type="checkbox" bind:checked={macAccessibilityDeferLater} />
+                  <span>I’ll enable Accessibility later in System Settings</span>
+                </label>
               {/if}
-            </div>
+            {/if}
           </div>
+
+          <p class="step-meta perm-privacy-footnote">
+            The sample you record below is only used to verify levels during onboarding; it isn’t kept as a file by this step.
+          </p>
 
           <div class="mic-test">
             <div class="mic-test-header">
@@ -720,6 +794,9 @@
                   <Icon icon="ph:info" />
                 </button>
               </p>
+            {/if}
+            {#if micTestStartError}
+              <p class="mic-test-start-error" role="alert">{micTestStartError}</p>
             {/if}
             <div class="mic-test-body">
               <div class="mic-controls">
@@ -1062,7 +1139,7 @@
         {#if step < totalSteps}
           <button
             class="btn-next"
-            disabled={step === 2 && (!termsAgreed || !isEmailValid(userEmail))}
+            disabled={(step === 2 && (!termsAgreed || !isEmailValid(userEmail))) || (step === 3 && !step3ContinueEnabled)}
             on:click={nextStep}
           >Continue</button>
         {:else}
@@ -1083,6 +1160,9 @@
           {#if skipError}
             <p class="skip-error" role="alert">{skipError}</p>
           {/if}
+          <p class="skip-consequence">
+            Skipping applies defaults and may leave permissions unset—you can fix microphone and accessibility in Settings → Audio &amp; Dictation.
+          </p>
         </div>
       {/if}
 
@@ -1352,31 +1432,125 @@
     margin-right: auto;
   }
 
-  h2.section-heading {
-    font-family: var(--font-sleek, 'Inter', system-ui, sans-serif);
-    font-size: 12px;
+  .perm-status-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+
+  .perm-strip-loading {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0;
+  }
+
+  .perm-status-row {
+    padding: 14px 16px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+  }
+
+  .perm-status-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+
+  .perm-status-title {
+    font-size: 14px;
     font-weight: 600;
-    letter-spacing: 0.06em;
+    color: var(--text);
+  }
+
+  .perm-badge {
+    font-size: 11px;
+    font-weight: 700;
     text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 4px 10px;
+    border-radius: var(--radius-full);
+    background: var(--bg-input);
     color: var(--text-muted);
-    margin: 28px 0 12px;
-    line-height: 1.3;
+    border: 1px solid var(--border);
   }
 
-  .step-permissions .perm-panel > .section-heading {
-    margin-top: 8px;
+  .perm-badge.perm-badge--granted {
+    background: color-mix(in srgb, var(--success) 14%, var(--bg-elevated));
+    color: var(--success);
+    border-color: color-mix(in srgb, var(--success) 35%, var(--border));
   }
 
-  .perm-steps-hint {
-    margin: 0 0 14px;
-    padding-left: 1.35rem;
+  .perm-badge.perm-badge--needs {
+    background: color-mix(in srgb, var(--warning) 14%, var(--bg-elevated));
+    color: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+  }
+
+  .perm-badge.perm-badge--unknown {
+    background: var(--bg-input);
+    color: var(--text-secondary);
+  }
+
+  .perm-status-msg {
     font-size: 13px;
     color: var(--text-secondary);
     line-height: 1.5;
+    margin: 0 0 10px;
   }
 
-  .perm-row-hint-only {
-    align-items: flex-start;
+  .perm-status-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .perm-status-hint-inline {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.45;
+    flex: 1 1 180px;
+  }
+
+  .perm-linux-msg {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+    margin: 0;
+  }
+
+  .perm-defer-check {
+    margin-top: 4px;
+    padding: 12px 14px;
+    background: var(--bg-input);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+  }
+
+  .perm-privacy-footnote {
+    margin: -8px 0 20px;
+  }
+
+  .mic-test-start-error {
+    font-size: 13px;
+    color: var(--error);
+    margin: 0 0 10px;
+    line-height: 1.45;
+  }
+
+  .skip-consequence {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    margin: 10px 0 0;
+    max-width: 220px;
+    margin-left: auto;
+    margin-right: auto;
   }
 
   .visually-hidden {
@@ -1682,151 +1856,10 @@
     font-weight: 500;
   }
 
-  /* ── Step 3: Permissions (single panel: order hint + accordion for cards) ── */
-  .perm-panel {
-    margin-bottom: 24px;
-  }
-
-  .perm-accordion {
-    margin-top: 2px;
-  }
-
-  .perm-accordion-trigger {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    text-align: left;
-    padding: 14px 16px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    font: inherit;
-    color: var(--text);
-    transition: var(--transition-sleek, 200ms ease);
-  }
-
-  .perm-accordion-trigger:hover {
-    border-color: var(--border-light);
-    background: var(--bg-hover);
-  }
-
-  .perm-accordion-text {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .perm-accordion-title {
-    display: block;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-    letter-spacing: -0.01em;
-  }
-
-  .perm-accordion-sub {
-    display: block;
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin-top: 4px;
-    line-height: 1.45;
-  }
-
-  .perm-accordion-chevron {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    color: var(--text-muted);
-  }
-
-  .perm-accordion-chevron :global(svg) {
-    width: 20px;
-    height: 20px;
-  }
-
-  .perm-accordion-panel {
-    margin-top: 10px;
-  }
-
-  .perm-cards {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .perm-card {
-    padding: 16px 20px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    transition: var(--transition-sleek, 200ms ease);
-  }
-
-  .perm-card:hover {
-    border-color: var(--border-light);
-    background: var(--bg-hover);
-  }
-
-  .perm-card-row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-  }
-
-  .perm-card-detail {
-    margin: 14px 0 0;
-    padding-top: 14px;
-    border-top: 1px solid var(--border);
-    font-size: 14px;
-    color: var(--text-secondary);
-    line-height: 1.5;
-  }
-
-  .perm-icon-wrap {
-    width: 42px;
-    height: 42px;
-    background: var(--bg-input);
-    border-radius: var(--radius-sm);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .perm-icon-wrap :global(svg) {
-    width: 22px;
-    height: 22px;
-    color: var(--text);
-  }
-
-  .perm-info {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .perm-info strong {
-    display: block;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .perm-info span {
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-
   .perm-auto {
     font-size: 12px;
     color: var(--success);
     font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .perm-hint {
-    font-size: 12px;
-    color: var(--text-muted);
     white-space: nowrap;
   }
 
@@ -2848,20 +2881,6 @@
 
     .form-card {
       padding: 20px;
-    }
-
-    .perm-card {
-      padding: 14px 16px;
-    }
-
-    .perm-card-row {
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-
-    .perm-info {
-      flex: 1;
-      min-width: 120px;
     }
 
     .mode-pills {

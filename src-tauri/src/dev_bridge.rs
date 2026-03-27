@@ -307,6 +307,20 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
             let entries = crate::db::get_dictionary_entries(&conn).map_err(|e| e.to_string())?;
             serde_json::to_value(entries).map_err(|e| e.to_string())
         }
+        "update_dictionary_entry" => {
+            let id = arg_get(args, "id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .ok_or_else(|| "missing id".to_string())?;
+            let term = arg_get(args, "term")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .ok_or_else(|| "missing term".to_string())?;
+            let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+            crate::db::update_dictionary_entry(&conn, &id, &term).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        }
+        "focus_main_window" => Ok(serde_json::Value::Null),
         "get_entry" => {
             let id = arg_get(args, "id")
                 .and_then(|v| v.as_str())

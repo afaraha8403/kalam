@@ -297,7 +297,11 @@ pub fn add_snippet(trigger: String, expansion: String) -> Result<(), String> {
         db::get_entries_by_type(&conn, "snippet", None, 500, 0).map_err(|e| e.to_string())?;
     for e in existing
         .iter()
-        .filter(|e| e.title.as_deref() == Some(trigger.as_str()))
+        .filter(|e| {
+            e.title
+                .as_deref()
+                .is_some_and(|t| t.eq_ignore_ascii_case(trigger.trim()))
+        })
     {
         let _ = db::delete_entry(&conn, &e.id);
     }
@@ -313,10 +317,11 @@ pub fn remove_snippet(trigger: String) -> Result<bool, String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
     let existing =
         db::get_entries_by_type(&conn, "snippet", None, 500, 0).map_err(|e| e.to_string())?;
-    if let Some(e) = existing
-        .into_iter()
-        .find(|e| e.title.as_deref() == Some(trigger.as_str()))
-    {
+    if let Some(e) = existing.into_iter().find(|e| {
+        e.title
+            .as_deref()
+            .is_some_and(|t| t.eq_ignore_ascii_case(trigger.trim()))
+    }) {
         Ok(db::delete_entry(&conn, &e.id).map_err(|e| e.to_string())?)
     } else {
         Ok(false)

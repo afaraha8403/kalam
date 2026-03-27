@@ -111,6 +111,73 @@ fn is_prompt_echo(text: &str, vocabulary: &str) -> bool {
     !t.is_empty() && t == v
 }
 
+/// Remove prompt leakage from cloud STT output:
+/// - exact vocabulary echo (already handled by `is_prompt_echo`)
+/// - repeated leading vocabulary prefix(s) before actual dictated text
+fn sanitize_prompt_leakage(text: &str, vocabulary: Option<&str>) -> String {
+    let mut cleaned = text.trim().to_string();
+    let Some(vocab) = vocabulary.map(str::trim).filter(|v| !v.is_empty()) else {
+        return cleaned;
+    };
+
+    if is_prompt_echo(&cleaned, vocab) {
+        return String::new();
+    }
+
+    // Strip repeated exact vocabulary prefixes at the beginning, if present.
+    loop {
+        let lower_cleaned = cleaned.to_lowercase();
+        let lower_vocab = vocab.to_lowercase();
+        if !lower_cleaned.starts_with(&lower_vocab) {
+            break;
+        }
+        cleaned = cleaned
+            .get(vocab.len()..)
+            .unwrap_or("")
+            .trim_start_matches(|c: char| c.is_whitespace() || [',', ';', ':', '-'].contains(&c))
+            .trim_start()
+            .to_string();
+        if cleaned.is_empty() {
+            return cleaned;
+        }
+    }
+
+    // If the text begins with 2+ comma-separated dictionary terms, strip that run.
+    // This is conservative enough to avoid deleting normal prose starts.
+    let vocab_terms: std::collections::HashSet<String> = vocab
+        .split(|c: char| c == ',' || c == ';' || c == '\n')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if vocab_terms.len() >= 2 && cleaned.contains(',') {
+        let parts: Vec<&str> = cleaned.split(',').collect();
+        let mut leading_vocab_parts = 0usize;
+        for p in &parts {
+            let token = p.trim().to_lowercase();
+            if token.is_empty() {
+                break;
+            }
+            if vocab_terms.contains(&token) {
+                leading_vocab_parts += 1;
+            } else {
+                break;
+            }
+        }
+        if leading_vocab_parts >= 2 {
+            if leading_vocab_parts >= parts.len() {
+                return String::new();
+            }
+            cleaned = parts[leading_vocab_parts..]
+                .join(",")
+                .trim_start_matches(|c: char| c.is_whitespace() || [',', ';', ':', '-'].contains(&c))
+                .trim_start()
+                .to_string();
+        }
+    }
+
+    cleaned
+}
+
 #[derive(Debug, Clone)]
 pub struct TranscriptionResult {
     pub text: String,
@@ -176,7 +243,8 @@ fn transcribe_windows(
             (None, None) => None,
         };
         let result = provider.transcribe_blocking(chunk, sample_rate, prompt, language_hint)?;
-        let t = result.text.trim();
+        let cleaned_chunk = sanitize_prompt_leakage(&result.text, vocabulary);
+        let t = cleaned_chunk.trim();
         if !t.is_empty() {
             if !combined_text.is_empty() {
                 combined_text.push(' ');
@@ -187,7 +255,8 @@ fn transcribe_windows(
             if !result.language.is_empty() && language.is_empty() {
                 language = result.language;
             }
-            prev_text = Some(result.text);
+            // Chain sanitized text only, so prompt leakage does not snowball across chunks.
+            prev_text = Some(t.to_string());
         }
     }
 
@@ -229,11 +298,7 @@ pub fn transcribe_chunked(
         if audio.len() <= max_samples {
             let mut result =
                 provider.transcribe_blocking(audio, sample_rate, vocabulary, language_hint)?;
-            if let Some(vocab) = vocabulary {
-                if is_prompt_echo(&result.text, vocab) {
-                    result.text.clear();
-                }
-            }
+            result.text = sanitize_prompt_leakage(&result.text, vocabulary);
             log::info!(
                 "STT chunking: vad_segments=0 chunked_windows=1 empty_vad_timewindows=false (single_shot)"
             );
@@ -256,11 +321,7 @@ pub fn transcribe_chunked(
             language_hint,
             vocabulary,
         )?;
-        if let Some(vocab) = vocabulary {
-            if is_prompt_echo(&result.text, vocab) {
-                result.text.clear();
-            }
-        }
+        result.text = sanitize_prompt_leakage(&result.text, vocabulary);
         return Ok(result);
     }
 
@@ -335,5 +396,31 @@ mod tests {
         let mut cfg = VADConfig::default();
         cfg.max_chunk_duration_sec = 0.1;
         assert_eq!(max_chunk_samples(&cfg, 16_000), 16_000);
+    }
+
+    #[test]
+    fn sanitize_prompt_leakage_removes_exact_echo() {
+        let vocab = "Kalam, Balacode, Rolla, Farahat";
+        let out = sanitize_prompt_leakage(vocab, Some(vocab));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn sanitize_prompt_leakage_removes_leading_vocab_prefix() {
+        let vocab = "Kalam, Balacode, Rolla, Farahat";
+        let text = "Kalam, Balacode, Rolla, Farahat primarily these are the features that we are looking for";
+        let out = sanitize_prompt_leakage(text, Some(vocab));
+        assert_eq!(
+            out,
+            "primarily these are the features that we are looking for"
+        );
+    }
+
+    #[test]
+    fn sanitize_prompt_leakage_keeps_normal_text() {
+        let vocab = "Kalam, Balacode, Rolla, Farahat";
+        let text = "we are looking to have served the use cases described below";
+        let out = sanitize_prompt_leakage(text, Some(vocab));
+        assert_eq!(out, text);
     }
 }

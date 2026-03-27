@@ -1,1536 +1,2166 @@
 <!DOCTYPE html>
-<html lang="en" class="scroll-smooth" data-theme="dark">
+<html lang="en">
 <head>
-    <!-- Anti-flash: restore saved theme before first paint -->
-    <script>(function(){try{var t=localStorage.getItem('kalam-site-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})()</script>
-
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-F3WK2BDF59"></script>
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'G-F3WK2BDF59');
-    </script>
-
-    <title>Kalam — Speak, It Types Everywhere. Free & Open-Source Voice Dictation | Voice Typing for PC & Mac</title>
-
-    <!-- SEO Meta Tags -->
-    <meta name="description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline. No subscription.">
-    <meta name="keywords" content="voice typing, voice typing for computer, wispr flow alternative, wisprflow open source, whisperflow, whisperflow for computer, open source voice dictation, speech to text desktop, free voice dictation, dictation software Windows Mac Linux, voice dictation, open source, speech to text, tauri, rust, privacy, cross-platform, local STT">
-    <meta name="author" content="Kalam Voice">
-    <link rel="canonical" href="https://kalam.stream/">
-
-    <!-- OpenGraph -->
-    <meta property="og:title" content="Kalam — Free Open-Source Voice Typing for PC & Mac | Wispr Flow Alternative">
-    <meta property="og:description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline.">
-    <meta property="og:type" content="website">
-    <meta property="og:url" content="https://kalam.stream/">
-    <meta property="og:image" content="https://kalam.stream/logo.svg">
-    <meta property="og:image:alt" content="Kalam — Free open-source voice typing for your computer">
-    <meta property="og:site_name" content="Kalam Voice">
-    <meta property="og:locale" content="en_US">
-
-    <!-- Twitter Card -->
-    <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="Kalam — Free Open-Source Voice Typing for PC & Mac | Wispr Flow Alternative">
-    <meta name="twitter:description" content="Free open-source voice typing for Windows, Mac, and Linux. Speak; it types everywhere. Wispr Flow and Whisperflow alternative—BYOK or fully offline.">
-    <meta name="twitter:image" content="https://kalam.stream/logo.svg">
-    <meta name="twitter:image:alt" content="Kalam — Free open-source voice typing for your computer">
-
-    <!-- Structured Data (JSON-LD) -->
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": "Kalam",
-      "description": "Free open-source voice typing for Windows, Mac, and Linux. Turns your voice into text in any app. Wispr Flow and Whisperflow alternative with BYOK or fully offline.",
-      "applicationCategory": "ProductivityApplication",
-      "operatingSystem": "Windows, macOS, Linux",
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-      "url": "https://kalam.stream/"
-    }
-    </script>
-    <script type="application/ld+json">
-    {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      "mainEntity": [
-        {"@type": "Question", "name": "Is Kalam free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Kalam is open source and free. You can use cloud transcription with your own API key (Groq has a free tier) or run fully offline with local models—no subscription."}},
-        {"@type": "Question", "name": "Is Kalam like Wispr Flow or Whisperflow?", "acceptedAnswer": {"@type": "Answer", "text": "Yes—same idea (voice typing in any app). Kalam is free, open source, and runs on Windows, Mac, and Linux (desktop only); Wispr Flow is paid and also on mobile."}},
-        {"@type": "Question", "name": "What platforms does Kalam support?", "acceptedAnswer": {"@type": "Answer", "text": "Kalam runs on Windows, macOS, and Linux (desktop only). We are not building for Android or iOS."}},
-        {"@type": "Question", "name": "Does Kalam work offline?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. You can use a local STT model (SenseVoice or Whisper) so no audio leaves your device. No API key required for offline mode."}},
-        {"@type": "Question", "name": "Do I need an API key?", "acceptedAnswer": {"@type": "Answer", "text": "Only for cloud transcription (e.g. Groq). Sign up at Groq Console, get a free key, and add it in Settings → STT Provider. For local mode, no key is needed."}},
-        {"@type": "Question", "name": "Is my audio stored or sent somewhere?", "acceptedAnswer": {"@type": "Answer", "text": "Audio is not stored to disk (in-memory only). In cloud mode it's sent to the provider over TLS and not retained. In local mode, nothing leaves your machine."}},
-        {"@type": "Question", "name": "How do I start dictating?", "acceptedAnswer": {"@type": "Answer", "text": "Press Ctrl+Win (Windows) or Ctrl+Cmd (macOS), hold while you speak, then release. Text is typed into the app that had focus when you pressed the key."}}
-      ]
-    }
-    </script>
-
-    <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <script src="https://code.iconify.design/iconify-icon/3.0.2/iconify-icon.min.js"></script>
-
-    <!-- Inter — same as .kalam-sleek --font-sleek in App.svelte (page titles, body, UI) -->
+    <title>Kalam Design System 2026</title>
+    
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-    <!-- Tailwind (layout/spacing utilities only; colors via CSS vars) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Inter', 'system-ui', 'sans-serif'],
-            }
-          }
-        }
-      }
-    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
 
     <style>
-      /* ─── Design tokens: mirrors .kalam-sleek.dark exactly ─── */
-      :root, [data-theme="dark"] {
-        color-scheme: dark;
-        --bg:          #000000;  /* app --bg */
-        --bg-elevated: #111111;  /* slightly warmer than pure black for sections */
-        --bg-card:     #1c1c1e;  /* app --bg-elevated */
-        --bg-input:    #2c2c2e;  /* app --bg-input */
-        --text:        #f5f5f7;  /* Apple text white */
-        --text-2:      #aeaeb2;  /* secondary */
-        --text-3:      #8e8e93;  /* muted (WCAG AA compliant) */
-        --border:      rgba(255,255,255,0.07);
-        --border-hi:   rgba(255,255,255,0.13);
-        --primary:     #4AAEBE;
-        --primary-dim: rgba(74,174,190,0.15);
-        --primary-mid: rgba(74,174,190,0.28);
-        --btn-primary-text: #000000;
-        --sh-sm: 0 1px 3px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
-        --sh-md: 0 6px 24px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05);
-        --sh-lg: 0 24px 64px rgba(0,0,0,0.9), 0 0 0 1px rgba(255,255,255,0.06);
-        --sh-xl: 0 32px 80px rgba(0,0,0,0.92), 0 0 0 1px rgba(255,255,255,0.06);
-      }
-      [data-theme="light"] {
-        color-scheme: light;
-        --bg:          #fafafa;
-        --bg-elevated: #f4f4f5;
-        --bg-card:     #ffffff;
-        --bg-input:    #e4e4e7;
-        --text:        #09090b;
-        --text-2:      #52525b;
-        --text-3:      #71717a;  /* muted (WCAG AA compliant) */
-        --border:      rgba(0,0,0,0.08);
-        --border-hi:   rgba(0,0,0,0.14);
-        --primary:     #2c889e;  /* Darkened slightly for better contrast with white text */
-        --primary-dim: rgba(44,136,158,0.10);
-        --primary-mid: rgba(44,136,158,0.22);
-        --btn-primary-text: #ffffff;
-        --sh-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.04);
-        --sh-md: 0 8px 24px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.04);
-        --sh-lg: 0 24px 64px rgba(0,0,0,0.12), 0 8px 24px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.05);
-        --sh-xl: 0 32px 80px rgba(0,0,0,0.16), 0 16px 32px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.05);
-      }
-
-      /* ─── Base ─── */
-      *, *::before, *::after { box-sizing: border-box; margin: 0; }
-      html { scroll-behavior: smooth; }
-      * { scrollbar-width: none; }
-      *::-webkit-scrollbar { width: 0; height: 0; }
-      body {
-        background: var(--bg);
-        color: var(--text);
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        -webkit-font-smoothing: antialiased;
-        min-height: 100vh;
-        display: flex;
-        flex-direction: column;
-        transition: background .2s, color .15s;
-      }
-      ::selection { background: var(--primary-mid); color: var(--text); }
-      
-      /* Accessibility: Focus states */
-      :focus-visible {
-        outline: 2px solid var(--primary);
-        outline-offset: 2px;
-        border-radius: 2px;
-      }
-      a:focus-visible, button:focus-visible, details:focus-visible {
-        border-radius: 8px;
-      }
-
-      /* ─── Nav ─── */
-      .site-nav {
-        background: rgba(0,0,0,0.78);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border-bottom: 1px solid var(--border);
-      }
-      [data-theme="light"] .site-nav {
-        background: rgba(250,250,250,0.90);
-      }
-      .nav-link { color: var(--text-2); font-weight: 500; transition: color .15s; text-decoration: none; }
-      .nav-link:hover { color: var(--text); }
-
-      /* Platform logos (external SVGs can't use currentColor — tint to match --text-2) */
-      .platform-icon {
-        display: block;
-        flex-shrink: 0;
-        object-fit: contain;
-      }
-      .platform-icon--glyph {
-        width: 1.125rem;
-        height: 1.125rem;
-      }
-      /* macOS wordmark is wide — cap width, single-line height */
-      .platform-icon--macos {
-        height: 0.9rem;
-        width: auto;
-        max-width: 3.75rem;
-      }
-      [data-theme="dark"] .platform-icon--tint {
-        filter: brightness(0) saturate(100%) invert(0.78);
-        opacity: 0.92;
-      }
-      [data-theme="light"] .platform-icon--tint {
-        filter: brightness(0) saturate(100%) invert(0.32);
-        opacity: 0.9;
-      }
-      /* Windows row: optical align with macOS wordmark + Linux glyph */
-      .platform-row-windows {
-        transform: translateY(2px);
-      }
-
-      /* ─── Buttons ─── */
-      .btn-primary {
-        background: var(--primary);
-        color: var(--btn-primary-text);
-        font-weight: 600;
-        font-size: 0.9375rem;
-        border-radius: 10px;
-        padding: .75rem 1.625rem;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
-        text-decoration: none;
-        white-space: nowrap;
-        position: relative;
-        overflow: hidden;
-      }
-      [data-theme="light"] .btn-primary {
-        border: 1px solid rgba(0, 0, 0, 0.05);
-      }
-      .btn-primary::after {
-        content: '';
-        position: absolute;
-        top: -50%; left: -50%;
-        width: 200%; height: 200%;
-        background: radial-gradient(circle, rgba(255,255,255,0.3) 0%, transparent 60%);
-        opacity: 0;
-        transform: scale(0.5);
-        transition: opacity 0.3s, transform 0.3s;
-        pointer-events: none;
-      }
-      .btn-primary:hover { 
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px var(--primary-dim);
-      }
-      .btn-primary:hover::after {
-        opacity: 1;
-        transform: scale(1);
-      }
-      .btn-primary:active {
-        transform: translateY(1px);
-        box-shadow: 0 2px 4px var(--primary-dim);
-      }
-
-      .btn-secondary {
-        background: var(--bg-card);
-        color: var(--text);
-        font-weight: 500;
-        font-size: 0.9375rem;
-        border-radius: 10px;
-        padding: .75rem 1.625rem;
-        border: 1px solid var(--border-hi);
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
-        text-decoration: none;
-        white-space: nowrap;
-      }
-      .btn-secondary:hover { 
-        background: var(--bg-input); 
-        transform: translateY(-2px);
-        box-shadow: var(--sh-sm);
-      }
-      .btn-secondary:active {
-        transform: translateY(1px);
-      }
-
-      .btn-ghost {
-        background: var(--primary-dim);
-        color: var(--primary);
-        font-weight: 500;
-        font-size: 0.875rem;
-        border-radius: 10px;
-        padding: .65rem 1.375rem;
-        border: 1px solid var(--primary-mid);
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1);
-        text-decoration: none;
-      }
-      .btn-ghost:hover { 
-        background: var(--primary-mid); 
-        transform: translateY(-2px);
-      }
-      .btn-ghost:active {
-        transform: translateY(1px);
-      }
-
-      /* ─── Hero ─── */
-      .hero-section {
-        position: relative;
-        overflow: hidden;
-        background: var(--bg);
-      }
-      /* Single clean radial — teal glow at top center, like a lamp */
-      .hero-glow {
-        position: absolute;
-        top: -200px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 1000px;
-        height: 700px;
-        background: radial-gradient(ellipse at center top, var(--primary-dim) 0%, transparent 62%);
-        pointer-events: none;
-        z-index: 0;
-      }
-
-      /* ─── Platform pills hover ─── */
-      .platform-pill {
-        transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), color 0.2s;
-        cursor: default;
-      }
-      .platform-pill:hover {
-        transform: translateY(-2px);
-        color: var(--text);
-      }
-      .platform-pill:hover .platform-icon--tint {
-        filter: brightness(0) saturate(100%) invert(1);
-        opacity: 1;
-      }
-      [data-theme="light"] .platform-pill:hover .platform-icon--tint {
-        filter: brightness(0) saturate(100%) invert(0);
-      }
-
-      /* ─── Faux app shell in hero ─── */
-      .app-shell {
-        border-radius: 14px;
-        border: 1px solid var(--border-hi);
-        background: var(--bg-card);
-        box-shadow: var(--sh-xl);
-        overflow: hidden;
-        transform: perspective(1000px) rotateX(2deg) rotateY(-4deg) rotateZ(1deg);
-        transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-        transform-origin: center right;
-      }
-      .app-shell:hover {
-        transform: perspective(1000px) rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(1.02);
-      }
-      .app-shell-bar {
-        height: 38px;
-        background: var(--bg-elevated);
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        padding: 0 12px;
-        gap: 6px;
-      }
-      .shell-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-      .shell-spacer { flex: 1; }
-      .shell-pill { width: 72px; height: 14px; border-radius: 4px; background: var(--border-hi); }
-      .app-shell-body { display: flex; }
-      /* Hero preview: clip + scale for readable UI in a short frame. */
-      .app-shell-shot-wrap {
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        position: relative;
-        background: var(--bg);
-      }
-      .app-shell-shot--hero {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        object-position: top center;
-        display: block;
-        transform: scale(1.24);
-        transform-origin: top center;
-      }
-      .marketing-thumb {
-        display: block;
-        width: 100%;
-        object-fit: cover;
-        object-position: top left;
-      }
-      /* Lightbox triggers (hero image excluded in markup). */
-      img.lightbox-trigger {
-        cursor: zoom-in;
-      }
-      img.lightbox-trigger:focus {
-        outline: 2px solid var(--primary);
-        outline-offset: 2px;
-      }
-      img.lightbox-trigger:focus:not(:focus-visible) {
-        outline: none;
-      }
-      .img-lightbox[hidden] {
-        display: none !important;
-      }
-      .img-lightbox {
-        position: fixed;
-        inset: 0;
-        z-index: 9999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
-        box-sizing: border-box;
-      }
-      .img-lightbox__scrim {
-        position: absolute;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.88);
-        cursor: pointer;
-        border: none;
-        padding: 0;
-        margin: 0;
-      }
-      .img-lightbox__inner {
-        position: relative;
-        z-index: 1;
-        max-width: min(96vw, 1280px);
-        max-height: 92vh;
-        pointer-events: none;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      .img-lightbox__img {
-        max-width: 100%;
-        max-height: 92vh;
-        width: auto;
-        height: auto;
-        object-fit: contain;
-        border-radius: 10px;
-        box-shadow: var(--sh-xl);
-        pointer-events: auto;
-        cursor: default;
-      }
-      .img-lightbox__close {
-        position: fixed;
-        top: max(0.75rem, env(safe-area-inset-top));
-        right: max(0.75rem, env(safe-area-inset-right));
-        z-index: 2;
-        width: 2.75rem;
-        height: 2.75rem;
-        border-radius: 9999px;
-        border: 1px solid var(--border-hi);
-        background: var(--bg-card);
-        color: var(--text);
-        font-size: 1.5rem;
-        line-height: 1;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        pointer-events: auto;
-        transition: background 0.15s ease, transform 0.15s ease;
-      }
-      .img-lightbox__close:hover {
-        background: var(--bg-input);
-        transform: scale(1.05);
-      }
-      body.lightbox-open {
-        overflow: hidden;
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .img-lightbox__close:hover {
-          transform: none;
+        :root {
+            /* Core Colors - Sleek, Minimal, High-Converting */
+            --bg-base: #070a10;
+            --bg-surface: #0f1522;
+            --bg-surface-hover: #161e30;
+            --header-bg: rgba(7, 10, 16, 0.8);
+            
+            --fg-primary: #ffffff;
+            --fg-secondary: #a1a1aa;
+            --fg-tertiary: #71717a;
+            
+            /* High-Converting Accents */
+            --accent-primary: #4ABBC7; /* Vibrant Teal from Logo */
+            --accent-primary-hover: #3AA1AC;
+            --accent-primary-fg: #000000;
+            
+            --accent-secondary: #133051; /* Deep Blue from Logo */
+            
+            /* Semantic */
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            
+            /* Borders & Dividers */
+            --border-subtle: rgba(255, 255, 255, 0.08);
+            --border-strong: rgba(255, 255, 255, 0.15);
+            
+            /* Typography */
+            --font-display: 'Bricolage Grotesque', sans-serif;
+            --font-body: 'Manrope', sans-serif;
+            
+            /* Spacing */
+            --space-1: 0.25rem;
+            --space-2: 0.5rem;
+            --space-3: 0.75rem;
+            --space-4: 1rem;
+            --space-6: 1.5rem;
+            --space-8: 2rem;
+            --space-12: 3rem;
+            --space-16: 4rem;
+            --space-24: 6rem;
+            
+            /* Radii */
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --radius-xl: 20px;
+            --radius-full: 9999px;
+            
+            /* Shadows & Effects */
+            --shadow-glow: 0 0 40px rgba(74, 187, 199, 0.15);
+            --glass-bg: rgba(15, 21, 34, 0.6);
+            --glass-border: rgba(255, 255, 255, 0.05);
+            
+            /* Transitions */
+            --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+            --ease-in-out-circ: cubic-bezier(0.85, 0, 0.15, 1);
+            --duration-fast: 200ms;
+            --duration-normal: 400ms;
+            --duration-slow: 800ms;
         }
-      }
-      .app-sidebar {
-        width: 50px;
-        background: #0d0d0d;
-        border-right: 1px solid rgba(255,255,255,0.05);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        padding: 12px 0;
-        gap: 9px;
-      }
-      .sidebar-icon {
-        width: 30px; height: 30px;
-        border-radius: 8px;
-        background: rgba(255,255,255,0.05);
-      }
-      .sidebar-icon.on { background: rgba(74,174,190,0.18); }
-      .app-content { flex: 1; padding: 14px; }
-      .mock-line { border-radius: 4px; background: rgba(255,255,255,0.06); margin-bottom: 7px; height: 8px; }
-      .mock-stat-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; margin-top: 12px; }
-      .mock-stat {
-        border-radius: 8px;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.06);
-        height: 52px;
-        padding: 8px;
-        display: flex; flex-direction: column; gap: 6px;
-      }
-      .mock-bar { height: 5px; border-radius: 3px; }
 
-      /* ─── Scroll Reveal Animations ─── */
-      .reveal-on-scroll {
-        opacity: 0;
-        transform: translateY(30px);
-        transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
-      }
-      .reveal-on-scroll.is-visible {
-        opacity: 1;
-        transform: translateY(0);
-      }
-      .stagger-1 { transition-delay: 0.1s; }
-      .stagger-2 { transition-delay: 0.2s; }
-      .stagger-3 { transition-delay: 0.3s; }
-      .stagger-4 { transition-delay: 0.4s; }
-
-      /* ─── Photo divider ─── */
-      .photo-divider {
-        background-image:
-          linear-gradient(to bottom, var(--bg) 0%, transparent 12%, transparent 88%, var(--bg) 100%),
-          linear-gradient(rgba(0,0,0,.6), rgba(0,0,0,.6)),
-          url('hero-bg.webp');
-        background-size: cover;
-        background-position: center;
-      }
-
-      /* ─── Image Placeholders ─── */
-      @keyframes shimmer {
-        0% { transform: translateX(-100%); }
-        100% { transform: translateX(100%); }
-      }
-      .img-placeholder {
-        background: var(--bg-input);
-        border: 1px dashed var(--border-hi);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        color: var(--text-3);
-        font-weight: 500;
-        position: relative;
-        overflow: hidden;
-      }
-      .img-placeholder::before {
-        content: '';
-        position: absolute;
-        inset: 0;
-        background: radial-gradient(circle at top left, var(--primary-dim), transparent 70%);
-        opacity: 0.5;
-      }
-      .img-placeholder::after {
-        content: '';
-        position: absolute;
-        top: 0; right: 0; bottom: 0; left: 0;
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
-        transform: translateX(-100%);
-        animation: shimmer 3s infinite;
-        pointer-events: none;
-      }
-      [data-theme="light"] .img-placeholder::after {
-        background: linear-gradient(90deg, transparent, rgba(0,0,0,0.02), transparent);
-      }
-      .img-placeholder iconify-icon {
-        font-size: 1.75rem;
-        margin-bottom: 0.5rem;
-        color: var(--primary);
-        opacity: 0.8;
-      }
-
-      /* ─── Section helpers ─── */
-      .s-base { background: var(--bg); }
-      .s-raise { background: var(--bg-elevated); }
-      .divider { border-top: 1px solid var(--border); }
-
-      /* ─── Cards — borderless; depth from shadow only ─── */
-      .card {
-        background: var(--bg-card);
-        border: none;
-        border-radius: 14px;
-        padding: 1.625rem;
-        box-shadow: var(--sh-sm);
-        transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
-      }
-      .card:hover { 
-        box-shadow: var(--sh-md); 
-        transform: translateY(-4px);
-      }
-      .card:hover .ibadge {
-        transform: scale(1.08) rotate(-4deg);
-        background: var(--primary-dim);
-        color: var(--primary);
-      }
-
-      /* ─── Icon badge — neutral surface like app icon buttons (no pastel fills) ─── */
-      .ibadge {
-        width: 40px; height: 40px;
-        border-radius: 10px;
-        display: flex; align-items: center; justify-content: center;
-        margin-bottom: 1rem;
-        font-size: 1.125rem;
-        background: var(--bg-input);
-        color: var(--text-2);
-        border: none;
-        transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
-      }
-      .ibadge iconify-icon { color: inherit; opacity: 0.92; }
-
-      /* ─── Section text — matches .kalam-sleek .page-title (Inter 600, tight tracking) ─── */
-      .eyebrow {
-        font-family: 'Inter', sans-serif;
-        font-size: 0.72rem;
-        font-weight: 600;
-        letter-spacing: .1em;
-        text-transform: uppercase;
-        color: var(--primary);
-        margin-bottom: .625rem;
-      }
-      .s-heading {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        font-weight: 600;
-        letter-spacing: -0.04em;
-        color: var(--text);
-        line-height: 1.08;
-      }
-      @keyframes slideUpFade {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      .hero-title {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        font-size: clamp(2.5rem, 5.5vw, 4rem);
-        font-weight: 600;
-        letter-spacing: -0.04em;
-        line-height: 1.05;
-        color: var(--text);
-        animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-      }
-      .hero-title span {
-        display: inline-block;
-        opacity: 0;
-        animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
-      }
-      .s-body { color: var(--text-2); line-height: 1.7; }
-      .h3-card {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        font-weight: 600;
-        color: var(--text);
-        letter-spacing: -0.02em;
-      }
-
-      /* ─── Bento ─── */
-      .bento { display: grid; gap: 10px; }
-      @media (min-width: 768px) {
-        .bento { grid-template-columns: repeat(3,1fr); }
-        .bento-wide { grid-column: span 2; }
-      }
-
-      /* ─── Steps ─── */
-      .step-num {
-        width: 40px; height: 40px;
-        border-radius: 50%;
-        display: flex; align-items: center; justify-content: center;
-        font-family: 'Inter', sans-serif;
-        font-weight: 600;
-        font-size: 0.9375rem;
-        background: var(--bg-card);
-        color: var(--text);
-        border: none;
-        flex-shrink: 0;
-        transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
-      }
-      .step-card:hover .step-num {
-        transform: scale(1.1) rotate(5deg);
-        background: var(--primary-dim);
-        color: var(--primary);
-      }
-      .step-card {
-        transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
-      }
-      .step-card:hover {
-        transform: translateY(-4px);
-      }
-
-      /* ─── FAQ ─── */
-      .faq-item { border-bottom: 1px solid var(--border); padding: 1.25rem 0; }
-      .faq-item:last-child { border-bottom: none; }
-      .faq-q { font-family: 'Inter', sans-serif; font-weight: 600; color: var(--text); margin-bottom: .4rem; }
-      .faq-a { color: var(--text-2); line-height: 1.65; }
-
-      /* ─── Compare table — full Kalam column outline ─── */
-      .ctable { color: var(--text-2); }
-      .ctable .kalam-col-head { color: var(--primary); font-weight: 600; }
-      .kalam-col-cell {
-        border-left: 2px solid var(--primary);
-        border-right: 2px solid var(--primary);
-        background: var(--primary-dim);
-      }
-      .kalam-col-first {
-        border-top: 2px solid var(--primary);
-        border-radius: 10px 10px 0 0;
-      }
-      .kalam-col-mid {
-        border-top: 1px solid var(--border);
-      }
-      .kalam-col-last {
-        border-top: 1px solid var(--border);
-        border-bottom: 2px solid var(--primary);
-        border-radius: 0 0 10px 10px;
-      }
-      .c-check { color: var(--primary); }
-
-      /* ─── KBD ─── */
-      .kbd {
-        display: inline-block;
-        padding: 1px 7px;
-        font-size: .72em;
-        font-family: ui-monospace, 'Cascadia Code', monospace;
-        border-radius: 5px;
-        border: 1px solid var(--border);
-        background: var(--bg-card);
-        color: var(--text-2);
-      }
-
-      /* ─── Theme toggle ─── */
-      #theme-toggle {
-        transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.15s;
-      }
-      #theme-toggle:active {
-        transform: scale(0.9) rotate(-15deg);
-      }
-      [data-theme="dark"]  .t-sun  { display: block; }
-      [data-theme="dark"]  .t-moon { display: none;  }
-      [data-theme="light"] .t-sun  { display: none;  }
-      [data-theme="light"] .t-moon { display: block; }
-
-      /* ─── details/summary ─── */
-      details summary::-webkit-details-marker { display: none; }
-      details[open] summary svg.chevron { transform: rotate(180deg); }
-      summary svg.chevron { transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1); }
-      
-      /* Mobile menu icon swap */
-      details[open] summary .menu-open { display: none; }
-      details[open] summary .menu-close { display: block; }
-      details:not([open]) summary .menu-open { display: block; }
-      details:not([open]) summary .menu-close { display: none; }
-
-      /* ─── Accessibility: Reduced Motion ─── */
-      @media (prefers-reduced-motion: reduce) {
-        *, *::before, *::after {
-          animation-duration: 0.01ms !important;
-          animation-iteration-count: 1 !important;
-          transition-duration: 0.01ms !important;
-          scroll-behavior: auto !important;
+        [data-theme="light"] {
+            --bg-base: #f8fafc;
+            --bg-surface: #ffffff;
+            --bg-surface-hover: #f1f5f9;
+            --header-bg: rgba(248, 250, 252, 0.8);
+            
+            --fg-primary: #0f172a;
+            --fg-secondary: #475569;
+            --fg-tertiary: #64748b;
+            
+            --accent-primary: #4ABBC7;
+            --accent-primary-hover: #3AA1AC;
+            --accent-primary-fg: #ffffff;
+            
+            --accent-secondary: #133051;
+            
+            --border-subtle: rgba(0, 0, 0, 0.08);
+            --border-strong: rgba(0, 0, 0, 0.15);
+            
+            --shadow-glow: 0 0 40px rgba(74, 187, 199, 0.2);
+            --glass-bg: rgba(255, 255, 255, 0.7);
+            --glass-border: rgba(0, 0, 0, 0.05);
         }
-        html { scroll-behavior: auto; }
-      }
 
-      /* ─── Mobile compare scroll ─── */
-      @media (max-width: 640px) {
-        .ctable-wrap { margin-left: -1.25rem; margin-right: -1.25rem; padding-left: 1.25rem; }
-      }
+        /* Reset & Base */
+        html {
+            scroll-behavior: smooth;
+        }
 
-      @supports (padding: env(safe-area-inset-top)) {
-        .site-nav { padding-top: max(0px, env(safe-area-inset-top)); }
-      }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: var(--bg-base);
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-strong);
+            border-radius: var(--radius-full);
+            border: 3px solid var(--bg-base);
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--fg-tertiary);
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--fg-primary);
+            font-family: var(--font-body);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(74, 187, 199, 0.05), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(19, 48, 81, 0.15), transparent 25%);
+            background-attachment: fixed;
+            transition: background-color var(--duration-normal), color var(--duration-normal);
+        }
+
+        a {
+            color: var(--accent-primary);
+            text-decoration: none;
+            transition: color var(--duration-fast);
+        }
+        
+        a:hover {
+            color: var(--accent-primary-hover);
+            text-decoration: underline;
+        }
+
+        /* Noise Texture Overlay */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 9999;
+            opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+            transition: opacity var(--duration-normal), filter var(--duration-normal);
+        }
+
+        [data-theme="light"] body::before {
+            opacity: 0.04;
+            filter: invert(1);
+        }
+
+        /* Typography */
+        h1, h2, h3, h4, h5, h6 {
+            font-family: var(--font-display);
+            font-weight: 700;
+            line-height: 1.1;
+            letter-spacing: -0.03em;
+            margin-bottom: var(--space-4);
+        }
+
+        .text-display-lg { font-size: clamp(3rem, 8vw, 6rem); letter-spacing: -0.04em; line-height: 1; }
+        .text-display-md { font-size: clamp(2.5rem, 5vw, 4rem); }
+        .text-display-sm { font-size: clamp(2rem, 4vw, 3rem); }
+        
+        .text-body-lg { font-size: 1.25rem; color: var(--fg-secondary); }
+        .text-body-md { font-size: 1rem; color: var(--fg-secondary); }
+        .text-body-sm { font-size: 0.875rem; color: var(--fg-tertiary); }
+
+        /* Layout */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 var(--space-6);
+        }
+
+        .section {
+            padding: var(--space-24) 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--space-8); }
+        .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: var(--space-6); }
+
+        /* Components */
+        
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+            padding: 0 var(--space-6);
+            height: 3.5rem;
+            border-radius: var(--radius-full);
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 1.125rem;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all var(--duration-fast) var(--ease-out-expo);
+            border: none;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary {
+            background-color: var(--accent-primary);
+            color: var(--accent-primary-fg);
+            box-shadow: 0 4px 20px rgba(74, 187, 199, 0.2);
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(74, 187, 199, 0.3);
+        }
+
+        .btn-secondary {
+            background-color: var(--bg-surface);
+            color: var(--fg-primary);
+            border: 1px solid var(--border-strong);
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--bg-surface-hover);
+            border-color: var(--fg-secondary);
+            transform: translateY(-2px);
+        }
+
+        .btn-ghost {
+            background-color: transparent;
+            color: var(--fg-primary);
+        }
+
+        .btn-ghost:hover {
+            background-color: var(--border-subtle);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-xl);
+            padding: var(--space-8);
+            transition: transform var(--duration-normal) var(--ease-out-expo), border-color var(--duration-fast), background-color var(--duration-normal);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            opacity: 0;
+            transition: opacity var(--duration-normal);
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            border-color: var(--border-strong);
+        }
+
+        .card:hover::before {
+            opacity: 1;
+        }
+
+        /* Inputs */
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-2);
+            margin-bottom: var(--space-4);
+        }
+
+        .input-label {
+            font-family: var(--font-display);
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--fg-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .input-field {
+            background-color: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 0 var(--space-4);
+            height: 3.5rem;
+            color: var(--fg-primary);
+            font-family: var(--font-body);
+            font-size: 1rem;
+            transition: all var(--duration-fast);
+            width: 100%;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(74, 187, 199, 0.1);
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: var(--radius-full);
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            background-color: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            color: var(--fg-secondary);
+        }
+
+        .badge-accent {
+            background-color: rgba(74, 187, 199, 0.1);
+            color: var(--accent-primary);
+            border-color: rgba(74, 187, 199, 0.2);
+        }
+
+        /* Animation Classes */
+        .reveal {
+            opacity: 0;
+            transform: translateY(20px);
+            animation: revealUp var(--duration-slow) var(--ease-out-expo) forwards;
+        }
+
+        .delay-1 { animation-delay: 100ms; }
+        .delay-2 { animation-delay: 200ms; }
+        .delay-3 { animation-delay: 300ms; }
+
+        @keyframes revealUp {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Design System Specific Styles */
+        .ds-header {
+            padding: var(--space-12) 0;
+            border-bottom: 1px solid var(--border-subtle);
+            position: sticky;
+            top: 0;
+            background: var(--header-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            z-index: 100;
+            transition: background-color var(--duration-normal), border-color var(--duration-normal);
+        }
+
+        .color-swatch {
+            height: 120px;
+            border-radius: var(--radius-lg);
+            margin-bottom: var(--space-3);
+            border: 1px solid var(--border-subtle);
+        }
+
+        .ds-nav {
+            display: flex;
+            gap: var(--space-6);
+            overflow-x: auto;
+            padding-bottom: var(--space-2);
+        }
+
+        .ds-nav a {
+            color: var(--fg-secondary);
+            text-decoration: none;
+            font-family: var(--font-display);
+            font-weight: 500;
+            transition: color var(--duration-fast);
+            white-space: nowrap;
+        }
+
+        .ds-nav a:hover {
+            color: var(--fg-primary);
+        }
+
+        /* Accordion / FAQ */
+        .accordion {
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            background: var(--bg-surface);
+            margin-bottom: var(--space-4);
+            transition: border-color var(--duration-fast);
+        }
+        .accordion:hover {
+            border-color: var(--border-strong);
+        }
+        .accordion-header {
+            padding: var(--space-4) var(--space-6);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 1.125rem;
+            color: var(--fg-primary);
+            user-select: none;
+        }
+        .accordion-content {
+            padding: 0 var(--space-6);
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height var(--duration-normal) var(--ease-out-expo), padding var(--duration-normal);
+            color: var(--fg-secondary);
+        }
+        .accordion.open .accordion-content {
+            padding: 0 var(--space-6) var(--space-4) var(--space-6);
+            max-height: 500px;
+        }
+        .accordion-icon {
+            transition: transform var(--duration-fast);
+            color: var(--accent-primary);
+        }
+        .accordion.open .accordion-icon {
+            transform: rotate(180deg);
+        }
+
+        /* Marquee / Carousel */
+        .marquee-container {
+            overflow: hidden;
+            white-space: nowrap;
+            position: relative;
+            width: 100%;
+            padding: var(--space-8) 0;
+            mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+            -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+        }
+        .marquee-content {
+            display: inline-flex;
+            gap: var(--space-12);
+            animation: marquee 45s linear infinite;
+        }
+        .marquee-item {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--fg-tertiary);
+            opacity: 0.6;
+            transition: opacity var(--duration-fast), color var(--duration-fast);
+        }
+        .marquee-item:hover {
+            opacity: 1;
+            color: var(--fg-primary);
+        }
+        .marquee-item i {
+            font-size: 2rem;
+        }
+        /* Simple Icons — monochrome via CSS filter so glyphs follow theme (brand SVGs from jsDelivr) */
+        .marquee-si-wrap {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            flex-shrink: 0;
+        }
+        .marquee-item img.marquee-si {
+            height: 1.5rem;
+            width: auto;
+            max-width: 1.75rem;
+            object-fit: contain;
+            display: block;
+            transition: opacity var(--duration-fast), filter var(--duration-fast);
+        }
+        /* Dark UI: near-white icons */
+        [data-theme="dark"] .marquee-item img.marquee-si {
+            filter: brightness(0) invert(1);
+            opacity: 0.88;
+        }
+        /* Light UI: near-black icons */
+        [data-theme="light"] .marquee-item img.marquee-si {
+            filter: brightness(0) saturate(100%);
+            opacity: 0.78;
+        }
+        .marquee-item:hover img.marquee-si {
+            opacity: 1;
+        }
+        @keyframes marquee {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+
+        /* Comparison table — Sleek, Minimal, High-Converting */
+        .compare-section .compare-lede {
+            max-width: 48rem;
+            margin-bottom: var(--space-12);
+        }
+        .compare-lede a {
+            color: var(--accent-primary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color var(--duration-fast);
+        }
+        .compare-lede a:hover {
+            color: var(--accent-primary-hover);
+            text-decoration: underline;
+        }
+        .compare-scroll {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            border-radius: var(--radius-xl);
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 0;
+            margin: var(--space-4) 0;
+        }
+        [data-theme="dark"] .compare-scroll {
+            box-shadow: 0 24px 56px rgba(0, 0, 0, 0.45), var(--shadow-glow);
+        }
+        .compare-table {
+            width: 100%;
+            min-width: 800px;
+            border-collapse: collapse;
+            font-size: 0.9375rem;
+            text-align: left;
+        }
+        .compare-table th,
+        .compare-table td {
+            padding: var(--space-6) var(--space-8);
+            vertical-align: middle;
+            border-bottom: 1px solid var(--border-subtle);
+            line-height: 1.5;
+            color: var(--fg-secondary);
+        }
+        .compare-table tbody tr:last-child th,
+        .compare-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        .compare-table thead th {
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 1.125rem;
+            color: var(--fg-primary);
+            padding-top: var(--space-8);
+            padding-bottom: var(--space-8);
+            background: var(--bg-surface-hover);
+        }
+        .compare-table tbody th[scope="row"] {
+            font-weight: 600;
+            color: var(--fg-primary);
+            width: 25%;
+            background: var(--bg-surface);
+        }
+        
+        /* Kalam Column Highlight */
+        .compare-table th:nth-child(2) {
+            background: rgba(74, 187, 199, 0.1);
+            color: var(--accent-primary);
+            border-top: 2px solid var(--accent-primary);
+        }
+        .compare-table td:nth-child(2) {
+            background: rgba(74, 187, 199, 0.03);
+            color: var(--fg-primary);
+            font-weight: 500;
+            border-left: 1px solid rgba(74, 187, 199, 0.1);
+            border-right: 1px solid rgba(74, 187, 199, 0.1);
+        }
+        [data-theme="light"] .compare-table td:nth-child(2) {
+            background: rgba(74, 187, 199, 0.05);
+        }
+        .compare-table tbody tr:last-child td:nth-child(2) {
+            border-bottom: 2px solid var(--accent-primary);
+        }
+
+        /* Icons */
+        .compare-icon {
+            font-size: 1.25rem;
+            vertical-align: middle;
+            margin-right: var(--space-2);
+        }
+        .compare-icon-check {
+            color: var(--accent-primary);
+        }
+        .compare-icon-x {
+            color: var(--fg-tertiary);
+            opacity: 0.5;
+        }
+        
+        .compare-foot {
+            margin-top: var(--space-6);
+            font-size: 0.875rem;
+            color: var(--fg-tertiary);
+            max-width: 48rem;
+            line-height: 1.6;
+        }
+        .compare-foot a {
+            color: var(--accent-primary);
+            text-decoration: none;
+        }
+        .compare-foot a:hover {
+            text-decoration: underline;
+        }
+
+        /* Review Wall — animated columns, opposing scroll, edge fades */
+        @keyframes review-scroll-up {
+            from { transform: translate3d(0, 0, 0); }
+            to { transform: translate3d(0, -50%, 0); }
+        }
+        @keyframes review-scroll-down {
+            from { transform: translate3d(0, -50%, 0); }
+            to { transform: translate3d(0, 0, 0); }
+        }
+        @keyframes review-edge-breathe {
+            /* Subtle pulse so the fade zone feels alive without distracting from content */
+            0%, 100% { opacity: 0.92; }
+            50% { opacity: 1; }
+        }
+        .review-wall {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: var(--space-6);
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        @media (min-width: 768px) {
+            .review-wall {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        @media (min-width: 1024px) {
+            .review-wall {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        .review-wall-col {
+            position: relative;
+            height: clamp(22rem, 58vh, 36rem);
+            overflow: hidden;
+            border-radius: var(--radius-xl);
+            /* Transparent → opaque → transparent: cards dissolve at top & bottom */
+            -webkit-mask-image: linear-gradient(
+                to bottom,
+                transparent 0%,
+                black 12%,
+                black 88%,
+                transparent 100%
+            );
+            mask-image: linear-gradient(
+                to bottom,
+                transparent 0%,
+                black 12%,
+                black 88%,
+                transparent 100%
+            );
+        }
+        .review-wall-col::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            border-radius: inherit;
+            box-shadow: inset 0 0 50px 12px var(--bg-base);
+            opacity: 0.85;
+            animation: review-edge-breathe 7s var(--ease-in-out-circ) infinite;
+        }
+        .review-wall-track {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-6);
+            width: 100%;
+            will-change: transform;
+        }
+        .review-wall-col--up .review-wall-track {
+            animation: review-scroll-up var(--review-dur, 42s) linear infinite;
+        }
+        .review-wall-col--down .review-wall-track {
+            animation: review-scroll-down var(--review-dur, 48s) linear infinite;
+        }
+        .review-wall-col:nth-child(1) { --review-dur: 44s; }
+        .review-wall-col:nth-child(2) { --review-dur: 52s; }
+        .review-wall-col:nth-child(3) { --review-dur: 39s; }
+        .review-wall-col:hover .review-wall-track {
+            animation-play-state: paused;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .review-wall-col::after {
+                animation: none;
+                opacity: 0.6;
+            }
+            .review-wall-col--up .review-wall-track,
+            .review-wall-col--down .review-wall-track {
+                animation: none;
+                transform: none;
+            }
+            .review-wall-col {
+                height: auto;
+                overflow: visible;
+                -webkit-mask-image: none;
+                mask-image: none;
+            }
+        }
+        .review-card {
+            flex-shrink: 0;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-6);
+            transition:
+                transform var(--duration-fast) var(--ease-out-expo),
+                border-color var(--duration-fast),
+                box-shadow var(--duration-normal) var(--ease-out-expo);
+        }
+        .review-card:hover {
+            transform: translateY(-3px) scale(1.01);
+            border-color: var(--border-strong);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25), var(--shadow-glow);
+        }
+        .review-header {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            margin-bottom: var(--space-4);
+        }
+        .review-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: var(--radius-full);
+            background: var(--border-strong);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: var(--fg-primary);
+        }
+        .review-stars {
+            color: var(--warning);
+            font-size: 0.875rem;
+            margin-bottom: var(--space-2);
+        }
+
+        /* Pricing / Licensing */
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: var(--space-6);
+            align-items: stretch;
+        }
+        .pricing-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-xl);
+            padding: var(--space-8);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            overflow: hidden;
+            transition: transform var(--duration-normal), border-color var(--duration-fast);
+        }
+        .pricing-card:hover {
+            transform: translateY(-4px);
+        }
+        .pricing-card.featured {
+            border-color: var(--accent-primary);
+            background: linear-gradient(180deg, rgba(74, 187, 199, 0.05) 0%, transparent 100%), var(--bg-surface);
+            box-shadow: var(--shadow-glow);
+        }
+        .pricing-card.featured::before {
+            content: 'Commercial';
+            position: absolute;
+            top: 0;
+            right: 0;
+            background: var(--accent-primary);
+            color: var(--accent-primary-fg);
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: var(--space-1) var(--space-4);
+            border-bottom-left-radius: var(--radius-lg);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .pricing-price {
+            font-family: var(--font-display);
+            font-size: 3rem;
+            font-weight: 700;
+            color: var(--fg-primary);
+            margin: var(--space-4) 0;
+            display: flex;
+            align-items: baseline;
+            gap: var(--space-2);
+        }
+        .pricing-features {
+            list-style: none;
+            margin: var(--space-6) 0;
+            flex-grow: 1;
+        }
+        .pricing-features li {
+            display: flex;
+            align-items: flex-start;
+            gap: var(--space-3);
+            margin-bottom: var(--space-3);
+            color: var(--fg-secondary);
+        }
+        .pricing-features i {
+            color: var(--accent-primary);
+            margin-top: 2px;
+        }
+
+        /* Footer */
+        .site-footer {
+            border-top: 1px solid var(--border-subtle);
+            padding: var(--space-16) 0 var(--space-8);
+            background: var(--bg-surface);
+        }
+        .footer-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: var(--space-8);
+            margin-bottom: var(--space-12);
+        }
+        @media (max-width: 768px) {
+            .footer-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+        .footer-col h4 {
+            font-family: var(--font-display);
+            font-size: 1.125rem;
+            color: var(--fg-primary);
+            margin-bottom: var(--space-4);
+        }
+        .footer-col ul {
+            list-style: none;
+        }
+        .footer-col ul li {
+            margin-bottom: var(--space-2);
+        }
+        .footer-col ul a {
+            color: var(--fg-secondary);
+            text-decoration: none;
+            transition: color var(--duration-fast);
+        }
+        .footer-col ul a:hover {
+            color: var(--accent-primary);
+        }
+        .footer-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: var(--space-8);
+            border-top: 1px solid var(--border-subtle);
+            color: var(--fg-tertiary);
+            font-size: 0.875rem;
+            flex-wrap: wrap;
+            gap: var(--space-4);
+        }
+
+        /* ── App Showcase — 3D floating scene ── */
+        .showcase-theme-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-2);
+            padding: 0.35rem 0.75rem;
+            border-radius: var(--radius-full);
+            border: 1px solid var(--border-strong);
+            background: var(--bg-surface);
+            font-family: var(--font-display);
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--fg-secondary);
+            cursor: pointer;
+            transition: all var(--duration-fast);
+            user-select: none;
+        }
+        .showcase-theme-toggle:hover {
+            border-color: var(--accent-primary);
+            color: var(--fg-primary);
+        }
+        .showcase-theme-toggle[aria-pressed="true"] {
+            background: var(--accent-primary);
+            color: var(--accent-primary-fg);
+            border-color: var(--accent-primary);
+        }
+
+        /* 3D scene wrapper */
+        .showcase-scene {
+            perspective: 1800px;
+            perspective-origin: 50% 40%;
+            position: relative;
+            width: 100%;
+            min-height: 900px;
+            overflow: visible;
+            margin-top: var(--space-8);
+        }
+        .showcase-stage {
+            position: relative;
+            width: 100%;
+            height: 900px;
+            transform-style: preserve-3d;
+        }
+
+        /* Each floating card */
+        .showcase-card {
+            position: absolute;
+            border-radius: var(--radius-xl);
+            overflow: hidden;
+            cursor: pointer;
+            transform-style: preserve-3d;
+            transition:
+                transform 0.6s var(--ease-out-expo),
+                box-shadow 0.6s var(--ease-out-expo),
+                filter 0.4s ease;
+            will-change: transform, box-shadow;
+        }
+        .showcase-card img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: var(--radius-xl);
+        }
+
+        /* Glow reflection under each card */
+        .showcase-card::after {
+            content: '';
+            position: absolute;
+            bottom: -20px;
+            left: 10%;
+            right: 10%;
+            height: 40px;
+            background: radial-gradient(ellipse at center, rgba(74, 187, 199, 0.12) 0%, transparent 70%);
+            filter: blur(16px);
+            opacity: 0;
+            transition: opacity 0.6s var(--ease-out-expo);
+            pointer-events: none;
+            z-index: -1;
+        }
+        .showcase-card:hover::after {
+            opacity: 1;
+        }
+
+        /* Hover label overlay */
+        .showcase-card .showcase-label {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: var(--space-8) var(--space-6) var(--space-4);
+            background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 100%);
+            color: #fff;
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 0.95rem;
+            letter-spacing: -0.01em;
+            opacity: 0;
+            transform: translateY(8px);
+            transition: opacity 0.3s, transform 0.3s var(--ease-out-expo);
+            border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+        }
+        .showcase-card:hover .showcase-label {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .showcase-badge {
+            display: inline-block;
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 0.15rem 0.5rem;
+            border-radius: var(--radius-full);
+            background: rgba(74, 187, 199, 0.3);
+            color: #4ABBC7;
+            margin-right: var(--space-2);
+            vertical-align: middle;
+        }
+
+        /*
+         * Individual card positions — staggered depths, angles, scales.
+         * Hero (overview) is largest and centered; others orbit around it
+         * at various 3D angles to create the Product Hunt "floating" look.
+         */
+        .sc-overview {
+            width: 52%;
+            top: 2%;
+            left: 24%;
+            z-index: 5;
+            transform: rotateX(4deg) rotateY(0deg) translateZ(40px);
+            box-shadow:
+                0 30px 80px rgba(0,0,0,0.35),
+                0 0 60px rgba(74, 187, 199, 0.08);
+        }
+        .sc-overview:hover {
+            transform: rotateX(0deg) rotateY(0deg) translateZ(80px) scale(1.03);
+            box-shadow:
+                0 40px 100px rgba(0,0,0,0.45),
+                0 0 80px rgba(74, 187, 199, 0.15);
+        }
+
+        .sc-notes {
+            width: 32%;
+            top: 0%;
+            left: -2%;
+            z-index: 4;
+            transform: rotateX(2deg) rotateY(18deg) translateZ(-30px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .sc-notes:hover {
+            transform: rotateX(0deg) rotateY(10deg) translateZ(40px) scale(1.05);
+            box-shadow: 0 30px 80px rgba(0,0,0,0.4), 0 0 40px rgba(74, 187, 199, 0.1);
+        }
+
+        .sc-history {
+            width: 32%;
+            top: 8%;
+            right: -2%;
+            z-index: 4;
+            transform: rotateX(3deg) rotateY(-16deg) translateZ(-20px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .sc-history:hover {
+            transform: rotateX(0deg) rotateY(-8deg) translateZ(40px) scale(1.05);
+            box-shadow: 0 30px 80px rgba(0,0,0,0.4), 0 0 40px rgba(74, 187, 199, 0.1);
+        }
+
+        .sc-settings-general {
+            width: 28%;
+            top: 56%;
+            left: 0%;
+            z-index: 3;
+            transform: rotateX(6deg) rotateY(14deg) translateZ(-60px);
+            box-shadow: 0 16px 50px rgba(0,0,0,0.25);
+        }
+        .sc-settings-general:hover {
+            transform: rotateX(2deg) rotateY(6deg) translateZ(30px) scale(1.06);
+            box-shadow: 0 28px 70px rgba(0,0,0,0.35), 0 0 40px rgba(74, 187, 199, 0.1);
+        }
+
+        .sc-tasks {
+            width: 26%;
+            top: 58%;
+            left: 30%;
+            z-index: 3;
+            transform: rotateX(5deg) rotateY(-4deg) translateZ(-40px);
+            box-shadow: 0 16px 50px rgba(0,0,0,0.25);
+        }
+        .sc-tasks:hover {
+            transform: rotateX(1deg) rotateY(-2deg) translateZ(30px) scale(1.06);
+            box-shadow: 0 28px 70px rgba(0,0,0,0.35), 0 0 40px rgba(74, 187, 199, 0.1);
+        }
+
+        .sc-snippets {
+            width: 26%;
+            top: 54%;
+            right: 5%;
+            z-index: 3;
+            transform: rotateX(4deg) rotateY(-12deg) translateZ(-50px);
+            box-shadow: 0 16px 50px rgba(0,0,0,0.25);
+        }
+        .sc-snippets:hover {
+            transform: rotateX(1deg) rotateY(-5deg) translateZ(30px) scale(1.06);
+            box-shadow: 0 28px 70px rgba(0,0,0,0.35), 0 0 40px rgba(74, 187, 199, 0.1);
+        }
+
+        .sc-reminders {
+            width: 22%;
+            top: 42%;
+            right: -1%;
+            z-index: 2;
+            transform: rotateX(5deg) rotateY(-20deg) translateZ(-80px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+        }
+        .sc-reminders:hover {
+            transform: rotateX(1deg) rotateY(-10deg) translateZ(20px) scale(1.06);
+            box-shadow: 0 24px 60px rgba(0,0,0,0.3), 0 0 30px rgba(74, 187, 199, 0.08);
+        }
+
+        .sc-settings-privacy {
+            width: 22%;
+            top: 40%;
+            left: -1%;
+            z-index: 2;
+            transform: rotateX(5deg) rotateY(20deg) translateZ(-80px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+        }
+        .sc-settings-privacy:hover {
+            transform: rotateX(1deg) rotateY(10deg) translateZ(20px) scale(1.06);
+            box-shadow: 0 24px 60px rgba(0,0,0,0.3), 0 0 30px rgba(74, 187, 199, 0.08);
+        }
+
+        /* Lightbox */
+        .showcase-lightbox {
+            position: fixed;
+            inset: 0;
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.88);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity var(--duration-normal) var(--ease-out-expo);
+            cursor: zoom-out;
+        }
+        .showcase-lightbox.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .showcase-lightbox img {
+            max-width: 92vw;
+            max-height: 90vh;
+            border-radius: var(--radius-xl);
+            box-shadow: 0 32px 80px rgba(0, 0, 0, 0.6), var(--shadow-glow);
+            transform: scale(0.92);
+            transition: transform var(--duration-normal) var(--ease-out-expo);
+        }
+        .showcase-lightbox.open img {
+            transform: scale(1);
+        }
+        .showcase-lightbox-close {
+            position: absolute;
+            top: var(--space-6);
+            right: var(--space-6);
+            background: rgba(255,255,255,0.12);
+            border: none;
+            color: #fff;
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-full);
+            font-size: 1.5rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background var(--duration-fast);
+        }
+        .showcase-lightbox-close:hover {
+            background: rgba(255,255,255,0.25);
+        }
+
+        /* Responsive: flatten on small screens */
+        @media (max-width: 768px) {
+            .showcase-scene { perspective: none; min-height: auto; }
+            .showcase-stage {
+                height: auto;
+                display: flex;
+                flex-direction: column;
+                gap: var(--space-6);
+                transform-style: flat;
+            }
+            .showcase-card {
+                position: relative !important;
+                width: 100% !important;
+                top: auto !important;
+                left: auto !important;
+                right: auto !important;
+                transform: none !important;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.25) !important;
+            }
+            .showcase-card:hover {
+                transform: scale(1.02) !important;
+                box-shadow: 0 16px 50px rgba(0,0,0,0.35) !important;
+            }
+        }
     </style>
 </head>
 <body>
+    <script>
+        // Prevent flash of unstyled content
+        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', savedTheme);
+    </script>
 
-<!-- ═══════════════════════════════════════════ NAV ══ -->
-<nav class="site-nav fixed w-full z-50">
-  <div class="max-w-6xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between gap-4">
-
-    <a href="#" class="flex items-center gap-3 shrink-0 group" style="text-decoration:none">
-      <img src="favicon.svg" alt="Kalam" width="44" height="44" class="group-hover:scale-105 transition-transform" style="width:44px;height:44px">
-      <span class="font-semibold text-[1.125rem] tracking-tight" style="color:var(--text);font-family:Inter,sans-serif;letter-spacing:-0.03em">Kalam</span>
-    </a>
-
-    <!-- Desktop links (slim bar; other landing sections live in footer) -->
-    <div class="hidden md:flex items-center gap-0.5 text-sm">
-      <a href="documentation.html" class="nav-link px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors">Documentation</a>
-      <a href="#features"         class="nav-link px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors">Features</a>
-      <a href="#faq"              class="nav-link px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors">FAQ</a>
-    </div>
-
-    <div class="hidden md:flex items-center gap-2">
-      <!-- Theme toggle -->
-      <button id="theme-toggle" class="nav-link flex items-center justify-center w-9 h-9 rounded-lg hover:bg-[var(--bg-card)] transition-colors" aria-label="Toggle theme">
-        <svg class="t-sun w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-        <svg class="t-moon w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      </button>
-      <!-- GitHub -->
-      <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="nav-link flex items-center gap-1.5 text-sm px-3 py-2 rounded-lg hover:bg-[var(--bg-card)] font-medium transition-colors">
-        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
-        GitHub
-      </a>
-    </div>
-
-    <!-- Mobile hamburger -->
-    <details class="md:hidden relative">
-      <summary class="list-none flex items-center justify-center w-10 h-10 rounded-xl hover:bg-[var(--bg-card)] transition-colors cursor-pointer" style="color:var(--text)" aria-label="Open menu">
-        <svg class="menu-open w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
-        <svg class="menu-close w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" style="display:none"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-      </summary>
-      <div class="absolute right-0 top-full mt-2 w-52 py-2 rounded-2xl text-sm" style="background:var(--bg-card);border:1px solid var(--border);box-shadow:var(--sh-lg)">
-        <a href="documentation.html" class="nav-link block px-4 py-2.5">Documentation</a>
-        <a href="#features"     class="nav-link block px-4 py-2.5">Features</a>
-        <a href="#faq"          class="nav-link block px-4 py-2.5">FAQ</a>
-        <button class="theme-toggle-mobile nav-link block w-full text-left px-4 py-2.5">Toggle theme</button>
-        <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener noreferrer" class="nav-link block px-4 py-2.5">GitHub</a>
-      </div>
-    </details>
-
-  </div>
-</nav>
-
-<main style="flex:1">
-
-  <!-- ═══════════════════════════════════════════ HERO ══ -->
-  <section class="hero-section pt-32 pb-24 sm:pt-36 sm:pb-32 px-5 sm:px-8">
-    <div class="hero-glow" aria-hidden="true"></div>
-    <div class="max-w-6xl mx-auto relative" style="z-index:1">
-      <div class="grid lg:grid-cols-[1fr_400px] gap-14 xl:gap-20 items-center">
-
-        <!-- Copy -->
-        <div>
-          <!-- Beta chip -->
-          <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold mb-8" style="background:var(--bg-card);color:var(--primary);border:1px solid var(--primary-mid)">
-            <span class="relative flex" style="width:8px;height:8px">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-70" style="background:var(--primary)"></span>
-              <span class="relative flex rounded-full" style="width:8px;height:8px;background:var(--primary)"></span>
-            </span>
-            Now in beta
-          </div>
-
-          <h1 class="hero-title mb-6">
-            Speak.<br>It types.<br>
-            <span style="color:var(--primary)">Everywhere.</span>
-          </h1>
-
-          <p class="s-body text-base sm:text-lg mb-3 max-w-lg">
-            Free, open-source <strong style="color:var(--text);font-weight:600">voice typing for your computer</strong>—Windows, Mac, and Linux. Types into <strong style="color:var(--text);font-weight:600">any app</strong> the moment you speak.
-          </p>
-          <p class="text-sm sm:text-base mb-10 max-w-lg" style="color:var(--text-3);line-height:1.65">
-            No subscription, no lock-in. BYOK or fully offline—your audio stays yours.
-          </p>
-
-          <!-- CTA row -->
-          <div id="download-section" class="flex flex-col sm:flex-row gap-3 mb-5 flex-wrap">
-            <a id="download-primary" href="download.html" class="btn-primary">
-              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-              <span id="download-primary-text">Download Latest Release</span>
-            </a>
-            <a href="https://github.com/afaraha8403/kalam" class="btn-secondary">View source</a>
-          </div>
-          <p id="download-secondary" class="text-sm min-h-[1.25rem]" style="color:var(--text-3)"></p>
-
-          <!-- Platform pills -->
-          <div class="flex items-center gap-6 mt-7 text-xs font-medium flex-wrap" style="color:var(--text-3)">
-            <span class="platform-pill platform-row-windows flex items-center gap-2">
-              <img class="platform-icon platform-icon--glyph platform-icon--tint" src="platform-windows.svg" width="18" height="18" alt="" />
-              Windows
-            </span>
-            <span class="platform-pill flex items-center gap-2">
-              <img class="platform-icon platform-icon--macos platform-icon--tint" src="platform-macos.svg" width="120" height="24" alt="macOS" />
-            </span>
-            <span class="platform-pill flex items-center gap-2">
-              <img class="platform-icon platform-icon--glyph platform-icon--tint" src="platform-linux.svg" width="18" height="18" alt="" />
-              Linux
-            </span>
-          </div>
-        </div>
-
-        <!-- Faux app preview (desktop only) -->
-        <div class="hidden lg:block" style="opacity: 0; animation: slideUpFade 1s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards;">
-          <div class="app-shell">
-            <div class="app-shell-bar" aria-hidden="true">
-              <span class="shell-dot" style="background:#FF5F57"></span>
-              <span class="shell-dot" style="background:#FEBC2E"></span>
-              <span class="shell-dot" style="background:#28C840"></span>
-              <span class="shell-spacer"></span>
-              <span class="shell-pill"></span>
+    <header class="ds-header reveal">
+        <div class="container">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-6);">
+                <div style="display: flex; align-items: center; gap: var(--space-3);">
+                    <img src="assets/logo/kalam-logo_icon.svg" alt="Kalam Logo" style="height: 32px; width: auto;">
+                    <h1 style="margin: 0; font-size: 1.5rem;">Kalam <span style="color: var(--fg-tertiary)">Design System</span></h1>
+                </div>
+                <div style="display: flex; align-items: center; gap: var(--space-4);">
+                    <span class="badge badge-accent">v2.0 / 2026</span>
+                    <button id="theme-toggle" class="btn btn-ghost" style="height: 2.5rem; padding: 0 var(--space-3); border-radius: var(--radius-full);" aria-label="Toggle theme">
+                        <i class="ri-moon-line" id="theme-icon"></i>
+                    </button>
+                </div>
             </div>
-            <div class="app-shell-body" style="height:420px; border:none; border-top: 1px solid var(--border); border-radius:0; padding:0; background: var(--bg);">
-              <div class="app-shell-shot-wrap">
-                <img src="marketing/app-home-overview.png" alt="Kalam desktop app: overview dashboard with dictation activity charts and statistics" width="700" height="560" loading="lazy" decoding="async" class="app-shell-shot--hero" />
-              </div>
+            <nav class="ds-nav">
+                <a href="#showcase">App Showcase</a>
+                <a href="#foundations">Foundations</a>
+                <a href="#typography">Typography</a>
+                <a href="#colors">Colors</a>
+                <a href="#components">Components</a>
+                <a href="#layout">Layout & Cards</a>
+                <a href="#animations">Animation Styles</a>
+                <a href="#marquee">Integrations</a>
+                <a href="#compare">Compare</a>
+                <a href="#reviews">Review Wall</a>
+                <a href="#faq">FAQ</a>
+                <a href="#pricing">Licensing</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        
+        <!-- Hero -->
+        <section class="section">
+            <div class="reveal delay-1">
+                <span class="badge" style="margin-bottom: var(--space-4);">Design Language</span>
+                <div style="margin-bottom: var(--space-6);">
+                    <img src="assets/logo/kalam-logo_icon.svg" alt="Kalam Icon" style="height: 64px; width: auto; filter: drop-shadow(0 0 20px rgba(74, 187, 199, 0.2));">
+                </div>
+                <h2 class="text-display-lg">Sleek. Minimal.<br><span style="color: var(--accent-primary);">High-Converting.</span></h2>
+                <p class="text-body-lg" style="max-width: 600px; margin-top: var(--space-6);">
+                    A brutalist-inspired, highly refined aesthetic designed for maximum conversion. 
+                    Bold typography pairs with electric accents and deep, atmospheric backgrounds.
+                </p>
+                
             </div>
-          </div>
-        </div>
+        </section>
 
-      </div>
-    </div>
-  </section>
+        <!-- App Showcase -->
+        <section id="showcase" class="section">
+            <div class="reveal">
+                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-8);">
+                    <div>
+                        <span class="badge badge-accent" style="margin-bottom: var(--space-4);">Product Screenshots</span>
+                        <h3 class="text-display-sm" style="margin-top: var(--space-3);">The App in Action</h3>
+                        <p class="text-body-md" style="max-width: 540px; margin-top: var(--space-2);">
+                            Real screenshots from the Kalam desktop app — overview dashboard, dictation history, 
+                            notes, tasks, reminders, snippets, and settings.
+                        </p>
+                    </div>
+                    <div style="display: flex; gap: var(--space-2);">
+                        <button class="showcase-theme-toggle" id="showcase-light-btn" aria-pressed="true" onclick="setShowcaseTheme('light')">
+                            <i class="ri-sun-line"></i> Light
+                        </button>
+                        <button class="showcase-theme-toggle" id="showcase-dark-btn" aria-pressed="false" onclick="setShowcaseTheme('dark')">
+                            <i class="ri-moon-line"></i> Dark
+                        </button>
+                    </div>
+                </div>
 
-  <!-- ═══════════════════════════════════════════ QUOTE DIVIDER ══ -->
-  <div class="photo-divider divider" style="min-height:260px;display:flex;align-items:center;justify-content:center;padding:4rem 1.5rem">
-    <p class="text-white text-xl sm:text-2xl md:text-3xl text-center max-w-2xl drop-shadow font-semibold" style="font-family:Inter,sans-serif;letter-spacing:-0.04em;line-height:1.2">
-      Focus on what you say.<br>We'll handle the rest.
-    </p>
-  </div>
+                <div class="showcase-scene">
+                    <div class="showcase-stage" id="showcase-grid">
 
-  <!-- ═══════════════════════════════════════════ FEATURES ══ -->
-  <section id="features" class="s-raise divider py-20 sm:py-28 px-5 sm:px-8">
-    <div class="max-w-6xl mx-auto space-y-12 sm:space-y-16">
-      <div class="text-center reveal-on-scroll">
-        <p class="eyebrow">Features</p>
-        <h2 class="s-heading text-3xl sm:text-4xl mb-4">Built to disappear into your workflow</h2>
-        <p class="s-body text-base max-w-lg mx-auto">Rust + Tauri: near-zero memory, instant startup, stays out of your way.</p>
-      </div>
+                        <!-- Hero: Overview — largest, centered, slight forward tilt -->
+                        <div class="showcase-card sc-overview" onclick="openShowcaseLightbox(this)">
+                            <img src="assets/screenshots/overview-light.png" data-light="assets/screenshots/overview-light.png" data-dark="assets/screenshots/overview-dark.png" alt="Overview Dashboard">
+                            <div class="showcase-label"><span class="showcase-badge">Dashboard</span> Overview &mdash; time saved, word count, top destinations</div>
+                        </div>
 
-      <figure class="m-0 rounded-2xl overflow-hidden shadow-[var(--sh-md)] reveal-on-scroll stagger-1" style="border: 1px solid var(--border); background: var(--bg-card);">
-        <img src="marketing/dictation-experience.png" alt="Watercolor painting: soft sound-like washes flowing into horizontal strokes suggesting speech becoming written text" width="1792" height="768" loading="lazy" decoding="async" class="w-full object-cover lightbox-trigger" style="max-height: min(40vh, 340px); min-height: 200px; object-position: center 45%;" />
-        <figcaption class="border-t px-[1.625rem] py-5" style="border-color: var(--border);">
-          <p class="text-base font-semibold mb-2" style="color: var(--text);">From voice to typed text—instantly</p>
-          <p class="text-sm leading-relaxed max-w-2xl" style="color: var(--text-3);">Your global hotkey brings Kalam forward over whatever you're working in: speak, release, and transcribed text lands in the focused field—without a full window taking over the screen.</p>
-        </figcaption>
-      </figure>
+                        <!-- Left wing: Notes — tilted toward viewer -->
+                        <div class="showcase-card sc-notes" onclick="openShowcaseLightbox(this)">
+                            <img src="assets/screenshots/notes-light.png" data-light="assets/screenshots/notes-light.png" data-dark="assets/screenshots/notes-dark.png" alt="Notes">
+                            <div class="showcase-label"><span class="showcase-badge">Workspace</span> Notes &mdash; color-coded cards with labels &amp; pins</div>
+                        </div>
 
-      <div class="grid sm:grid-cols-2 gap-4 sm:gap-6">
+                        <!-- Right wing: History — tilted opposite -->
+                        <div class="showcase-card sc-history" onclick="openShowcaseLightbox(this)">
+                            <img src="assets/screenshots/history-light.png" data-light="assets/screenshots/history-light.png" data-dark="assets/screenshots/history-dark.png" alt="Dictation History">
+                            <div class="showcase-label"><span class="showcase-badge">History</span> Dictation log &mdash; searchable, timestamped entries</div>
+                        </div>
 
-        <div class="card reveal-on-scroll stagger-1">
-          <div class="ibadge">
-            <iconify-icon icon="ph:lightning-duotone" aria-hidden="true"></iconify-icon>
-          </div>
-          <h3 class="h3-card text-base mb-2">Lightning-fast transcription</h3>
-          <p class="s-body text-sm leading-relaxed">Speak up to 4× faster than typing. Text is injected into the active window the moment you release the hotkey.</p>
-        </div>
+                        <!-- Mid-left: Settings Privacy — deeper, more angled -->
+                        <div class="showcase-card sc-settings-privacy" onclick="openShowcaseLightbox(this)">
+                            <img src="assets/screenshots/settings-privacy-light.png" data-light="assets/screenshots/settings-privacy-light.png" data-dark="assets/screenshots/settings-privacy-dark.png" alt="Settings — Privacy">
+                            <div class="showcase-label"><span class="showcase-badge">Privacy</span> Sensitive app detection &amp; data controls</div>
+                        </div>
 
-        <div class="card reveal-on-scroll stagger-2">
-          <div class="ibadge">
-            <iconify-icon icon="ph:shield-check-duotone" aria-hidden="true"></iconify-icon>
-          </div>
-          <h3 class="h3-card text-base mb-2">Privacy first</h3>
-          <p class="s-body text-sm leading-relaxed">Audio never touches disk. Use cloud (zero-retention TLS) or go fully offline—SenseVoice and Whisper.cpp run entirely on-device.</p>
-        </div>
+                        <!-- Mid-right: Reminders — deeper, angled away -->
+                        <div class="showcase-card sc-reminders" onclick="openShowcaseLightbox(this)">
+                            <img src="assets/screenshots/reminders-light.png" data-light="assets/screenshots/reminders-light.png" data-dark="assets/screenshots/reminders-dark.png" alt="Reminders">
+                            <div class="showcase-label"><span class="showcase-badge">Workspace</span> Reminders &mdash; notes &amp; task due dates</div>
+                        </div>
 
-        <div class="card reveal-on-scroll stagger-3">
-          <div class="ibadge">
-            <iconify-icon icon="ph:cpu-duotone" aria-hidden="true"></iconify-icon>
-          </div>
-          <h3 class="h3-card text-base mb-2">Dual-engine STT</h3>
-          <p class="s-body text-sm leading-relaxed">Groq Whisper API for ultra-fast cloud, or SenseVoice / Whisper.cpp for completely on-device transcription. Switch any time in Settings.</p>
-        </div>
+                        <!-- Bottom row: Settings General -->
+                        <div class="showcase-card sc-settings-general" onclick="openShowcaseLightbox(this)">
+                            <img src="assets/screenshots/settings-general-light.png" data-light="assets/screenshots/settings-general-light.png" data-dark="assets/screenshots/settings-general-dark.png" alt="Settings — General">
+                            <div class="showcase-label"><span class="showcase-badge">Settings</span> Hotkeys &mdash; hold-to-dictate, toggle, language</div>
+                        </div>
 
-        <div class="card reveal-on-scroll stagger-4">
-          <div class="ibadge">
-            <iconify-icon icon="ph:keyboard-duotone" aria-hidden="true"></iconify-icon>
-          </div>
-          <h3 class="h3-card text-base mb-2">Works in any app</h3>
-          <p class="s-body text-sm leading-relaxed">One global hotkey—<span class="kbd">Ctrl+Win</span> / <span class="kbd">Ctrl+Cmd</span>—activates from anywhere. Email, Slack, VS Code, your browser: all of them.</p>
-        </div>
+                        <!-- Bottom center: Tasks -->
+                        <div class="showcase-card sc-tasks" onclick="openShowcaseLightbox(this)">
+                            <img src="assets/screenshots/tasks-light.png" data-light="assets/screenshots/tasks-light.png" data-dark="assets/screenshots/tasks-dark.png" alt="Tasks">
+                            <div class="showcase-label"><span class="showcase-badge">Workspace</span> Tasks &mdash; open/closed with priority levels</div>
+                        </div>
 
-      </div>
-    </div>
-  </section>
+                        <!-- Bottom right: Snippets -->
+                        <div class="showcase-card sc-snippets" onclick="openShowcaseLightbox(this)">
+                            <img src="assets/screenshots/snippets-light.png" data-light="assets/screenshots/snippets-light.png" data-dark="assets/screenshots/snippets-dark.png" alt="Snippets">
+                            <div class="showcase-label"><span class="showcase-badge">Productivity</span> Snippets &mdash; text shortcuts for quick expansion</div>
+                        </div>
 
-  <!-- ═══════════════════════════════════════════ WORKSPACE ══ -->
-  <section id="workspace" class="s-base divider py-20 sm:py-28 px-5 sm:px-8">
-    <div class="max-w-6xl mx-auto">
-      <div class="text-center mb-14 reveal-on-scroll">
-        <p class="eyebrow">Workspace</p>
-        <h2 class="s-heading text-3xl sm:text-4xl mb-4">More than just dictation</h2>
-        <p class="s-body text-base max-w-lg mx-auto">Kalam is a complete voice-first workspace. Manage your whole day without touching the keyboard.</p>
-      </div>
-
-      <div class="bento">
-
-        <div class="card flex flex-col h-full reveal-on-scroll stagger-1">
-          <div class="ibadge">
-            <iconify-icon icon="ph:note-duotone" aria-hidden="true"></iconify-icon>
-          </div>
-          <h3 class="h3-card text-sm mb-1.5">Smart notes</h3>
-          <p class="s-body text-sm leading-relaxed mb-6">Capture fleeting thoughts. Tag, pin, color, and search your voice notes in a dedicated workspace.</p>
-          <div class="mt-auto w-full h-32 rounded-lg overflow-hidden" style="border-radius: 8px; border: 1px solid var(--border);">
-            <img src="marketing/app-notes.png" alt="Kalam Notes: list with search and note cards" width="640" height="400" loading="lazy" decoding="async" class="marketing-thumb h-32 lightbox-trigger" />
-          </div>
-        </div>
-
-        <div class="card flex flex-col h-full reveal-on-scroll stagger-2">
-          <div class="ibadge">
-            <iconify-icon icon="ph:check-square-duotone" aria-hidden="true"></iconify-icon>
-          </div>
-          <h3 class="h3-card text-sm mb-1.5">Task management</h3>
-          <p class="s-body text-sm leading-relaxed mb-6">Brain-dump to-dos by voice. Kalam organizes them into actionable checklists you manage later.</p>
-          <div class="mt-auto w-full h-32 rounded-lg overflow-hidden" style="border-radius: 8px; border: 1px solid var(--border);">
-            <img src="marketing/app-tasks.png" alt="Kalam Tasks: checklist with search" width="640" height="400" loading="lazy" decoding="async" class="marketing-thumb h-32 lightbox-trigger" />
-          </div>
-        </div>
-
-        <div class="card flex flex-col h-full reveal-on-scroll stagger-3">
-          <div class="ibadge">
-            <iconify-icon icon="ph:bell-duotone" aria-hidden="true"></iconify-icon>
-          </div>
-          <h3 class="h3-card text-sm mb-1.5">Voice reminders</h3>
-          <p class="s-body text-sm leading-relaxed mb-6">Set reminders completely hands-free. Never lose a follow-up, meeting, or fleeting idea.</p>
-          <div class="mt-auto w-full h-32 rounded-lg overflow-hidden" style="border-radius: 8px; border: 1px solid var(--border);">
-            <img src="marketing/app-reminders.png" alt="Kalam Reminders: list with search, due times, and tags" width="640" height="400" loading="lazy" decoding="async" class="marketing-thumb h-32 lightbox-trigger" />
-          </div>
-        </div>
-
-        <div class="card flex flex-col h-full reveal-on-scroll stagger-1">
-          <div class="ibadge">
-            <iconify-icon icon="ph:scissors-duotone" aria-hidden="true"></iconify-icon>
-          </div>
-          <h3 class="h3-card text-sm mb-1.5">Text snippets</h3>
-          <p class="s-body text-sm leading-relaxed mb-6">Say a short trigger phrase to instantly expand long templates or boilerplate—entirely by voice.</p>
-          <div class="mt-auto w-full h-32 rounded-lg overflow-hidden" style="border-radius: 8px; border: 1px solid var(--border);">
-            <img src="marketing/app-snippets.png" alt="Kalam Snippets: shortcuts and expanded text" width="640" height="400" loading="lazy" decoding="async" class="marketing-thumb h-32 lightbox-trigger" />
-          </div>
-        </div>
-
-        <div class="card bento-wide flex flex-col sm:flex-row gap-6 items-center reveal-on-scroll stagger-2">
-          <div class="flex-1">
-            <div class="ibadge">
-              <iconify-icon icon="ph:clock-counter-clockwise-duotone" aria-hidden="true"></iconify-icon>
+                    </div>
+                </div>
             </div>
-            <h3 class="h3-card text-sm mb-1.5">Local history &amp; search</h3>
-            <p class="s-body text-sm leading-relaxed">Everything you dictate is saved to an encrypted local SQLite database. Search past transcriptions, copy them, or promote them into notes and tasks—after the fact. Nothing leaves your device unless you choose cloud STT.</p>
-          </div>
-          <div class="flex-1 w-full h-40 sm:h-full min-h-[160px] max-h-[220px] sm:max-h-none rounded-xl overflow-hidden" style="border-radius: 10px; border: 1px solid var(--border);">
-            <img src="marketing/app-history.png" alt="Kalam History: search bar and dictation timeline by day" width="880" height="540" loading="lazy" decoding="async" class="marketing-thumb h-full min-h-[160px] lightbox-trigger" />
-          </div>
+
+            <!-- Lightbox overlay -->
+            <div class="showcase-lightbox" id="showcase-lightbox" onclick="closeShowcaseLightbox()">
+                <button class="showcase-lightbox-close" aria-label="Close"><i class="ri-close-line"></i></button>
+                <img src="" alt="Enlarged screenshot" id="showcase-lightbox-img">
+            </div>
+        </section>
+
+        <!-- Typography -->
+        <section id="typography" class="section">
+            <div class="reveal">
+                <h3 class="text-display-sm">Typography</h3>
+                <p class="text-body-md" style="margin-bottom: var(--space-8);">
+                    Distinctive display type paired with highly legible geometric body copy.
+                </p>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <div class="badge" style="margin-bottom: var(--space-4);">Display Font</div>
+                        <h4 style="font-size: 2.5rem; margin-bottom: var(--space-2);">Bricolage Grotesque</h4>
+                        <p class="text-body-sm">Used for all headings, buttons, and structural elements. Bold, expressive, and unforgettable.</p>
+                        <div style="margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--border-subtle);">
+                            <div class="text-display-md">Aa Bb Cc</div>
+                            <div style="font-family: var(--font-display); font-size: 1.5rem; margin-top: var(--space-2);">0123456789</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="badge" style="margin-bottom: var(--space-4);">Body Font</div>
+                        <h4 style="font-family: var(--font-body); font-size: 2.5rem; font-weight: 500; margin-bottom: var(--space-2);">Manrope</h4>
+                        <p class="text-body-sm">Used for long-form reading and UI text. Clean, geometric, and perfectly readable at small sizes.</p>
+                        <div style="margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--border-subtle);">
+                            <div style="font-family: var(--font-body); font-size: 2.5rem; font-weight: 500;">Aa Bb Cc</div>
+                            <div style="font-family: var(--font-body); font-size: 1.5rem; margin-top: var(--space-2);">0123456789</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Colors -->
+        <section id="colors" class="section">
+            <div class="reveal">
+                <h3 class="text-display-sm">Color Palette</h3>
+                <p class="text-body-md" style="margin-bottom: var(--space-8);">
+                    Deep, immersive dark mode with high-contrast, electric accents designed to draw the eye to conversion points.
+                </p>
+
+                <div class="grid-3">
+                    <div>
+                        <div class="color-swatch" style="background: var(--bg-base);"></div>
+                        <div style="font-family: var(--font-display); font-weight: 600;">Base Background</div>
+                        <div class="text-body-sm">#070A10</div>
+                    </div>
+                    <div>
+                        <div class="color-swatch" style="background: var(--bg-surface);"></div>
+                        <div style="font-family: var(--font-display); font-weight: 600;">Surface</div>
+                        <div class="text-body-sm">#0F1522</div>
+                    </div>
+                    <div>
+                        <div class="color-swatch" style="background: var(--accent-primary);"></div>
+                        <div style="font-family: var(--font-display); font-weight: 600; color: var(--accent-primary);">Vibrant Teal (Primary)</div>
+                        <div class="text-body-sm">#4ABBC7</div>
+                    </div>
+                    <div>
+                        <div class="color-swatch" style="background: var(--accent-secondary);"></div>
+                        <div style="font-family: var(--font-display); font-weight: 600; color: var(--accent-secondary);">Deep Blue (Secondary)</div>
+                        <div class="text-body-sm">#133051</div>
+                    </div>
+                    <div>
+                        <div class="color-swatch" style="background: var(--fg-primary);"></div>
+                        <div style="font-family: var(--font-display); font-weight: 600;">Text Primary</div>
+                        <div class="text-body-sm">#FFFFFF</div>
+                    </div>
+                    <div>
+                        <div class="color-swatch" style="background: var(--fg-secondary);"></div>
+                        <div style="font-family: var(--font-display); font-weight: 600;">Text Secondary</div>
+                        <div class="text-body-sm">#A1A1AA</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Components -->
+        <section id="components" class="section">
+            <div class="reveal">
+                <h3 class="text-display-sm">Interactive Elements</h3>
+                <p class="text-body-md" style="margin-bottom: var(--space-8);">
+                    High-converting buttons and form elements with satisfying micro-interactions.
+                </p>
+
+                <div class="grid-2">
+                    <div class="card">
+                        <h4 style="margin-bottom: var(--space-6);">Buttons</h4>
+                        
+                        <div style="display: flex; flex-direction: column; gap: var(--space-4); align-items: flex-start;">
+                            <button class="btn btn-primary">
+                                Download for Windows <i class="ri-download-2-line"></i>
+                            </button>
+                            
+                            <button class="btn btn-secondary">
+                                View Documentation <i class="ri-arrow-right-line"></i>
+                            </button>
+                            
+                            <button class="btn btn-ghost">
+                                Learn more
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h4 style="margin-bottom: var(--space-6);">Form Inputs</h4>
+                        
+                        <div class="input-group">
+                            <label class="input-label">Email Address</label>
+                            <input type="email" class="input-field" placeholder="hello@example.com">
+                        </div>
+                        
+                        <div class="input-group" style="margin-top: var(--space-4);">
+                            <label class="input-label">License Key</label>
+                            <input type="text" class="input-field" placeholder="XXXX-XXXX-XXXX-XXXX">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Layout & Cards -->
+        <section id="layout" class="section">
+            <div class="reveal">
+                <h3 class="text-display-sm">Spatial & Cards</h3>
+                <p class="text-body-md" style="margin-bottom: var(--space-8);">
+                    Glassmorphism combined with sharp borders to create depth without clutter.
+                </p>
+
+                <div class="grid-3">
+                    <div class="card">
+                        <div class="badge badge-accent" style="margin-bottom: var(--space-4);">Feature</div>
+                        <h4 style="font-size: 1.5rem;">Offline First</h4>
+                        <p class="text-body-sm">All dictation happens locally on your machine. No data is sent to the cloud, ensuring absolute privacy.</p>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="badge" style="margin-bottom: var(--space-4);">Performance</div>
+                        <h4 style="font-size: 1.5rem;">Lightning Fast</h4>
+                        <p class="text-body-sm">Built with Rust and Tauri for native performance that barely touches your CPU or battery life.</p>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="badge" style="margin-bottom: var(--space-4);">Integration</div>
+                        <h4 style="font-size: 1.5rem;">Any App</h4>
+                        <p class="text-body-sm">Type with your voice directly into Word, Chrome, Slack, or any other application instantly.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Animation Styles -->
+        <section id="animations" class="section">
+            <div class="reveal">
+                <h3 class="text-display-sm">Animation Styles</h3>
+                <p class="text-body-md" style="margin-bottom: var(--space-8); max-width: 700px;">
+                    Cinematic product animations that communicate Kalam's core value propositions. 
+                    Each tells a different story from a unique visual perspective.
+                </p>
+
+                <!-- 1. Dictation Demo — full width, hero-sized -->
+                <div style="margin-bottom: var(--space-16);">
+                    <div style="display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4);">
+                        <span class="badge badge-accent">Flagship</span>
+                        <h4 style="font-size: 1.25rem; margin: 0;">Dictation in Action</h4>
+                    </div>
+                    <p class="text-body-sm" style="margin-bottom: var(--space-4); max-width: 600px;">
+                        A realistic desktop showing the Kalam pill floating above the OS taskbar while dictating 
+                        a message in a Slack-style chat app. Text appears live as a chat bubble with a "dictating" indicator.
+                    </p>
+                    <div style="border-radius: var(--radius-xl); overflow: hidden; border: 1px solid var(--border-subtle); box-shadow: 0 20px 60px rgba(0,0,0,0.4), var(--shadow-glow);">
+                        <video autoplay loop muted playsinline style="width: 100%; height: auto; display: block;">
+                            <source src="assets/videos/dictation-demo.mp4?v=4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+
+                <!-- 2. Smart Privacy — same full width as Dictation -->
+                <div style="margin-bottom: var(--space-16);">
+                    <div style="display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4);">
+                        <span class="badge" style="background: rgba(74, 222, 128, 0.1); color: #4ade80; border-color: rgba(74, 222, 128, 0.2);">Privacy</span>
+                        <h4 style="font-size: 1.25rem; margin: 0;">Smart Privacy</h4>
+                    </div>
+                    <p class="text-body-sm" style="margin-bottom: var(--space-4); max-width: 600px;">
+                        Kalam's Auto mode in action — dictating in Notepad uses fast cloud STT, but when you switch to 
+                        a banking site, Kalam detects the sensitive app and switches to local processing. Your audio never leaves your device.
+                    </p>
+                    <div style="border-radius: var(--radius-xl); overflow: hidden; border: 1px solid var(--border-subtle); box-shadow: 0 20px 60px rgba(0,0,0,0.4), var(--shadow-glow);">
+                        <video autoplay loop muted playsinline style="width: 100%; height: auto; display: block;">
+                            <source src="assets/videos/privacy-comparison.mp4?v=4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+
+                <!-- 3. Cross Platform — same full width as Dictation -->
+                <div>
+                    <div style="display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4);">
+                        <span class="badge" style="background: rgba(167, 139, 250, 0.1); color: #a78bfa; border-color: rgba(167, 139, 250, 0.2);">Universal</span>
+                        <h4 style="font-size: 1.25rem; margin: 0;">Every Platform</h4>
+                    </div>
+                    <p class="text-body-sm" style="margin-bottom: var(--space-4); max-width: 600px;">
+                        App windows (Slack, Word, PowerPoint, Notepad) flow onto screen in 3D perspective at different depths. 
+                        Each receives dictated text in sequence, with Windows, macOS, and Linux checkmarks confirming universal support.
+                    </p>
+                    <div style="border-radius: var(--radius-xl); overflow: hidden; border: 1px solid var(--border-subtle); box-shadow: 0 20px 60px rgba(0,0,0,0.4), var(--shadow-glow);">
+                        <video autoplay loop muted playsinline style="width: 100%; height: auto; display: block;">
+                            <source src="assets/videos/cross-platform.mp4?v=4" type="video/mp4">
+                        </video>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Marquee / Integrations -->
+        <section id="marquee" class="section" style="padding: var(--space-12) 0;">
+            <div class="reveal">
+                <div style="text-align: center; margin-bottom: var(--space-6);">
+                    <h3 class="text-display-sm" style="font-size: 1.5rem;">Works everywhere you do</h3>
+                </div>
+                <div class="marquee-container">
+                    <div class="marquee-content">
+                        <!-- Duplicated for infinite scroll. Icons: Simple Icons (jsDelivr) — https://simpleicons.org -->
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/windows.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Windows</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/apple.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> macOS</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/linux.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Linux</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/slack.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Slack</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/discord.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Discord</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftteams.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Teams</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/zoom.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Zoom</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/notion.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Notion</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/obsidian.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Obsidian</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/googlechrome.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Chrome</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/visualstudiocode.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> VS Code</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftword.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Word</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftpowerpoint.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> PowerPoint</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftexcel.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Excel</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftoutlook.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Outlook</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/figma.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Figma</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/telegram.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Telegram</div>
+
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/windows.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Windows</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/apple.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> macOS</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/linux.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Linux</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/slack.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Slack</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/discord.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Discord</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftteams.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Teams</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/zoom.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Zoom</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/notion.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Notion</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/obsidian.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Obsidian</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/googlechrome.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Chrome</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/visualstudiocode.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> VS Code</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftword.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Word</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftpowerpoint.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> PowerPoint</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftexcel.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Excel</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/microsoftoutlook.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Outlook</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/figma.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Figma</div>
+                        <div class="marquee-item"><span class="marquee-si-wrap"><img class="marquee-si" src="https://cdn.jsdelivr.net/npm/simple-icons/icons/telegram.svg" alt="" width="32" height="32" loading="lazy" decoding="async" referrerpolicy="no-referrer"></span> Telegram</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Comparison: Kalam vs Wispr Flow vs Superwhisper -->
+        <section id="compare" class="section compare-section">
+            <div class="reveal">
+                <h3 class="text-display-sm">Comparison table</h3>
+                <p class="text-body-md compare-lede">
+                    Kalam is <strong>free and open source</strong>: you can read the code, audit behavior, and self-host your workflow.
+                    Commercial tools like <a href="https://wisprflow.ai/" rel="noopener noreferrer">Wispr Flow</a> and
+                    <a href="https://superwhisper.com/" rel="noopener noreferrer">Superwhisper</a> optimize for polish and managed AI—this pattern
+                    highlights where Kalam differs (Linux, BYOK, forking).
+                </p>
+
+                <div class="compare-scroll" role="region" aria-label="Feature comparison" tabindex="0">
+                    <table class="compare-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Feature</th>
+                                <th scope="col">
+                                    <div style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);">
+                                        <span>Kalam</span>
+                                        <span class="badge badge-accent" style="font-size: 0.65rem; padding: 0.15rem 0.5rem; letter-spacing: 0.05em; margin-left: auto;">Open Source</span>
+                                    </div>
+                                </th>
+                                <th scope="col">Wispr Flow</th>
+                                <th scope="col">Superwhisper</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <th scope="row">Pricing model</th>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>Free app, BYOK</td>
+                                <td><i class="ri-close-line compare-icon compare-icon-x"></i>Freemium, limits</td>
+                                <td><i class="ri-close-line compare-icon compare-icon-x"></i>Freemium, limits</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">Linux desktop</th>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>Native support</td>
+                                <td><i class="ri-close-line compare-icon compare-icon-x"></i>No</td>
+                                <td><i class="ri-close-line compare-icon compare-icon-x"></i>No</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">Dictate into any app</th>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>Global hotkey</td>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>System-wide</td>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>System-wide</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">Offline / local STT</th>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>100% offline capable</td>
+                                <td><i class="ri-close-line compare-icon compare-icon-x"></i>Primarily cloud</td>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>Offline available</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">BYOK (your API keys)</th>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>Groq, OpenAI</td>
+                                <td><i class="ri-close-line compare-icon compare-icon-x"></i>Billed through Wispr</td>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>Pro tier only</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">Workspace extras</th>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>Notes, tasks, snippets</td>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>Command mode, snippets</td>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>Modes, vocabulary</td>
+                            </tr>
+                            <tr>
+                                <th scope="row">Mobile apps</th>
+                                <td><i class="ri-close-line compare-icon compare-icon-x"></i>Desktop-first</td>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>iOS &amp; Android</td>
+                                <td><i class="ri-check-line compare-icon compare-icon-check"></i>iOS companion</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="compare-foot">
+                    Rows reflect Kalam’s current <a href="https://github.com/afaraha8403/kalam" rel="noopener noreferrer">README</a> and public positioning on
+                    <a href="https://kalam.stream/" rel="noopener noreferrer">kalam.stream</a>.
+                    Competitor features and pricing change — confirm on
+                    <a href="https://wisprflow.ai/" rel="noopener noreferrer">wisprflow.ai</a> and
+                    <a href="https://superwhisper.com/" rel="noopener noreferrer">superwhisper.com</a>.
+                </p>
+            </div>
+        </section>
+
+        <!-- Review Wall -->
+        <section id="reviews" class="section">
+            <div class="reveal">
+                <h3 class="text-display-sm">Review Wall</h3>
+                <p class="text-body-md" style="margin-bottom: var(--space-8);">
+                    Testimonials scroll in alternating directions; cards fade in at the edges and pause on hover.
+                </p>
+
+                <div class="review-wall" aria-label="User testimonials">
+                    <!-- Column 1: scroll up -->
+                    <div class="review-wall-col review-wall-col--up">
+                        <div class="review-wall-track">
+                            <div class="review-card">
+                                <div class="review-header">
+                                    <div class="review-avatar">S</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Sarah Jenkins</div>
+                                        <div class="text-body-sm">Software Engineer</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "This is the Whisperflow alternative I've been waiting for. The fact that it works offline and respects my privacy is a game-changer for my daily workflow."
+                                </p>
+                            </div>
+                            <div class="review-card">
+                                <div class="review-header">
+                                    <div class="review-avatar">M</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Marcus T.</div>
+                                        <div class="text-body-sm">Technical Writer</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "Lightning fast. I hit the hotkey, speak, and the text is instantly in my document. No subscription fees makes this an absolute no-brainer."
+                                </p>
+                            </div>
+                            <div class="review-card" aria-hidden="true">
+                                <div class="review-header">
+                                    <div class="review-avatar">S</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Sarah Jenkins</div>
+                                        <div class="text-body-sm">Software Engineer</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "This is the Whisperflow alternative I've been waiting for. The fact that it works offline and respects my privacy is a game-changer for my daily workflow."
+                                </p>
+                            </div>
+                            <div class="review-card" aria-hidden="true">
+                                <div class="review-header">
+                                    <div class="review-avatar">M</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Marcus T.</div>
+                                        <div class="text-body-sm">Technical Writer</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "Lightning fast. I hit the hotkey, speak, and the text is instantly in my document. No subscription fees makes this an absolute no-brainer."
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Column 2: scroll down -->
+                    <div class="review-wall-col review-wall-col--down">
+                        <div class="review-wall-track">
+                            <div class="review-card">
+                                <div class="review-header">
+                                    <div class="review-avatar">E</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Elena R.</div>
+                                        <div class="text-body-sm">Product Manager</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-half-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "I use it across my Mac at work and my Windows PC at home. The experience is perfectly consistent. Setup was incredibly straightforward."
+                                </p>
+                            </div>
+                            <div class="review-card">
+                                <div class="review-header">
+                                    <div class="review-avatar">D</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">David Chen</div>
+                                        <div class="text-body-sm">Developer</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "Love that it's open source and built with Rust/Tauri. It barely uses any memory compared to Electron apps. Highly recommended."
+                                </p>
+                            </div>
+                            <div class="review-card" aria-hidden="true">
+                                <div class="review-header">
+                                    <div class="review-avatar">E</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Elena R.</div>
+                                        <div class="text-body-sm">Product Manager</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-half-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "I use it across my Mac at work and my Windows PC at home. The experience is perfectly consistent. Setup was incredibly straightforward."
+                                </p>
+                            </div>
+                            <div class="review-card" aria-hidden="true">
+                                <div class="review-header">
+                                    <div class="review-avatar">D</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">David Chen</div>
+                                        <div class="text-body-sm">Developer</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "Love that it's open source and built with Rust/Tauri. It barely uses any memory compared to Electron apps. Highly recommended."
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Column 3: scroll up (Marcus + Elena) -->
+                    <div class="review-wall-col review-wall-col--up">
+                        <div class="review-wall-track">
+                            <div class="review-card">
+                                <div class="review-header">
+                                    <div class="review-avatar">M</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Marcus T.</div>
+                                        <div class="text-body-sm">Technical Writer</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "Lightning fast. I hit the hotkey, speak, and the text is instantly in my document. No subscription fees makes this an absolute no-brainer."
+                                </p>
+                            </div>
+                            <div class="review-card">
+                                <div class="review-header">
+                                    <div class="review-avatar">E</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Elena R.</div>
+                                        <div class="text-body-sm">Product Manager</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-half-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "I use it across my Mac at work and my Windows PC at home. The experience is perfectly consistent. Setup was incredibly straightforward."
+                                </p>
+                            </div>
+                            <div class="review-card" aria-hidden="true">
+                                <div class="review-header">
+                                    <div class="review-avatar">M</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Marcus T.</div>
+                                        <div class="text-body-sm">Technical Writer</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "Lightning fast. I hit the hotkey, speak, and the text is instantly in my document. No subscription fees makes this an absolute no-brainer."
+                                </p>
+                            </div>
+                            <div class="review-card" aria-hidden="true">
+                                <div class="review-header">
+                                    <div class="review-avatar">E</div>
+                                    <div>
+                                        <div style="font-weight: 600; color: var(--fg-primary);">Elena R.</div>
+                                        <div class="text-body-sm">Product Manager</div>
+                                    </div>
+                                </div>
+                                <div class="review-stars">
+                                    <i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-fill"></i><i class="ri-star-half-fill"></i>
+                                </div>
+                                <p class="text-body-sm" style="color: var(--fg-primary);">
+                                    "I use it across my Mac at work and my Windows PC at home. The experience is perfectly consistent. Setup was incredibly straightforward."
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- FAQ / Accordions -->
+        <section id="faq" class="section">
+            <div class="reveal">
+                <h3 class="text-display-sm">Frequently Asked Questions</h3>
+                <p class="text-body-md" style="margin-bottom: var(--space-8);">
+                    Sleek, expanding accordion components for dense information.
+                </p>
+
+                <div style="max-width: 800px;">
+                    <div class="accordion">
+                        <div class="accordion-header">
+                            Is Kalam really free?
+                            <i class="ri-arrow-down-s-line accordion-icon"></i>
+                        </div>
+                        <div class="accordion-content">
+                            <p style="margin-top: var(--space-2);">Yes. Kalam is completely free and open-source for noncommercial use under the MIT license. You can use it personally, for education, or in a non-profit setting without paying anything.</p>
+                        </div>
+                    </div>
+
+                    <div class="accordion">
+                        <div class="accordion-header">
+                            Does my audio leave my device?
+                            <i class="ri-arrow-down-s-line accordion-icon"></i>
+                        </div>
+                        <div class="accordion-content">
+                            <p style="margin-top: var(--space-2);">It depends on your settings. In Offline mode, everything is processed locally on your machine. In Cloud mode, audio is sent to the STT provider you configure (like OpenAI). Kalam itself never stores your audio or sends it to our servers.</p>
+                        </div>
+                    </div>
+
+                    <div class="accordion">
+                        <div class="accordion-header">
+                            How does it compare to Wispr Flow?
+                            <i class="ri-arrow-down-s-line accordion-icon"></i>
+                        </div>
+                        <div class="accordion-content">
+                            <p style="margin-top: var(--space-2);">Kalam is an open-source alternative. Unlike Wispr Flow, Kalam doesn't require a subscription, supports Linux (in addition to Windows/Mac), and gives you complete control over your API keys and local processing options.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Pricing / Licensing -->
+        <section id="pricing" class="section">
+            <div class="reveal">
+                <div style="text-align: center; margin-bottom: var(--space-12);">
+                    <span class="badge" style="margin-bottom: var(--space-4);">Licensing</span>
+                    <h3 class="text-display-sm">Simple, transparent licensing</h3>
+                    <p class="text-body-md" style="max-width: 600px; margin: 0 auto;">
+                        Dual-licensed to support both the open-source community and commercial enterprise needs.
+                    </p>
+                </div>
+
+                <div class="pricing-grid">
+                    <!-- Noncommercial -->
+                    <div class="pricing-card">
+                        <h4 style="font-size: 1.5rem; margin-bottom: var(--space-2);">Noncommercial</h4>
+                        <p class="text-body-sm">For personal, educational, and non-profit use.</p>
+                        <div class="pricing-price">
+                            Free <span class="text-body-md" style="font-weight: 500;">forever</span>
+                        </div>
+                        <ul class="pricing-features">
+                            <li><i class="ri-check-line"></i> <span>MIT License</span></li>
+                            <li><i class="ri-check-line"></i> <span>Full feature access</span></li>
+                            <li><i class="ri-check-line"></i> <span>Community support</span></li>
+                            <li><i class="ri-check-line"></i> <span>Open source code</span></li>
+                        </ul>
+                        <button class="btn btn-secondary" style="width: 100%;">Download Now</button>
+                    </div>
+
+                    <!-- Small Team -->
+                    <div class="pricing-card featured">
+                        <h4 style="font-size: 1.5rem; margin-bottom: var(--space-2); color: var(--accent-primary);">Small Team</h4>
+                        <p class="text-body-sm">For independent professionals and small startups.</p>
+                        <div class="pricing-price">
+                            Free <span class="text-body-md" style="font-weight: 500;">no license required</span>
+                        </div>
+                        <ul class="pricing-features">
+                            <li><i class="ri-check-line"></i> <span>Commercial use allowed</span></li>
+                            <li><i class="ri-check-line"></i> <span>Up to 2 team members</span></li>
+                            <li><i class="ri-check-line"></i> <span>Full feature access</span></li>
+                            <li><i class="ri-check-line"></i> <span>Self-hosted or local</span></li>
+                        </ul>
+                        <button class="btn btn-primary" style="width: 100%;">Start Using Kalam</button>
+                    </div>
+
+                    <!-- Enterprise -->
+                    <div class="pricing-card">
+                        <h4 style="font-size: 1.5rem; margin-bottom: var(--space-2);">Enterprise</h4>
+                        <p class="text-body-sm">For larger organizations, resale, or product integration.</p>
+                        <div class="pricing-price">
+                            Custom
+                        </div>
+                        <ul class="pricing-features">
+                            <li><i class="ri-check-line"></i> <span>Separate written license</span></li>
+                            <li><i class="ri-check-line"></i> <span>Unlimited team members</span></li>
+                            <li><i class="ri-check-line"></i> <span>Priority email support</span></li>
+                            <li><i class="ri-check-line"></i> <span>Integration assistance</span></li>
+                        </ul>
+                        <button class="btn btn-secondary" style="width: 100%;">Contact Us</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+    </main>
+
+    <footer class="site-footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-col">
+                    <div style="display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4);">
+                        <img src="assets/logo/kalam-logo_icon.svg" alt="Kalam Logo" style="height: 24px; width: auto; filter: grayscale(1) opacity(0.7);">
+                        <h4 style="margin: 0;">Kalam</h4>
+                    </div>
+                    <p class="text-body-sm" style="max-width: 300px; margin-bottom: var(--space-6);">
+                        Speak, It Types Everywhere. Free & Open-Source Voice Dictation for Windows, macOS, and Linux.
+                    </p>
+                    <div style="display: flex; gap: var(--space-4);">
+                        <a href="https://github.com/afaraha8403/kalam" target="_blank" style="color: var(--fg-secondary); font-size: 1.5rem; transition: color var(--duration-fast);">
+                            <i class="ri-github-fill"></i>
+                        </a>
+                        <a href="#" style="color: var(--fg-secondary); font-size: 1.5rem; transition: color var(--duration-fast);">
+                            <i class="ri-twitter-x-fill"></i>
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="footer-col">
+                    <h4>Product</h4>
+                    <ul>
+                        <li><a href="#">Download</a></li>
+                        <li><a href="#">Documentation</a></li>
+                        <li><a href="#">Changelog</a></li>
+                        <li><a href="#">GitHub Repo</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-col">
+                    <h4>Company</h4>
+                    <ul>
+                        <li><a href="#">About Us</a></li>
+                        <li><a href="#">Sponsors</a></li>
+                        <li><a href="#">Commercial License</a></li>
+                        <li><a href="mailto:hello@balacode.io">Contact</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-col">
+                    <h4>Legal</h4>
+                    <ul>
+                        <li><a href="#">Privacy Policy</a></li>
+                        <li><a href="#">Terms of Service</a></li>
+                        <li><a href="#">License (MIT)</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="footer-bottom">
+                <div>&copy; 2026 Kalam. Noncommercial use: MIT. Commercial by agreement.</div>
+                <div>Created by <a href="https://alifarahat.com" style="color: var(--fg-secondary); text-decoration: underline;">Ali Farahat</a> &amp; <a href="https://balacode.io" style="color: var(--fg-secondary); text-decoration: underline;">Balacode</a>.</div>
+            </div>
         </div>
+    </footer>
 
-      </div>
-    </div>
-  </section>
-
-  <!-- ═══════════════════════════════════════════ HOW IT WORKS ══ -->
-  <section id="how-it-works" class="s-raise divider py-20 sm:py-28 px-5 sm:px-8">
-    <div class="max-w-4xl mx-auto">
-      <div class="text-center mb-14 reveal-on-scroll">
-        <p class="eyebrow">How it works</p>
-        <h2 class="s-heading text-3xl sm:text-4xl mb-4">Three steps. That's it.</h2>
-      </div>
-
-      <div class="grid md:grid-cols-3 gap-8 md:gap-10">
-
-        <div class="step-card flex flex-col gap-4 h-full reveal-on-scroll stagger-1">
-          <div class="step-num">1</div>
-          <div>
-            <h3 class="h3-card text-sm mb-1.5">Press the hotkey</h3>
-            <p class="s-body text-sm leading-relaxed mb-5">Hit <span class="kbd">Ctrl+Win</span> (or <span class="kbd">Ctrl+Cmd</span> on Mac) from any app. Kalam captures focus instantly.</p>
-          </div>
-          <div class="mt-auto img-placeholder w-full h-28 rounded-lg" style="border-radius: 8px;">
-            <iconify-icon icon="ph:keyboard-duotone"></iconify-icon>
-            <span class="text-xs">Hotkey Action</span>
-          </div>
-        </div>
-
-        <div class="step-card flex flex-col gap-4 h-full reveal-on-scroll stagger-2">
-          <div class="step-num">2</div>
-          <div>
-            <h3 class="h3-card text-sm mb-1.5">Speak naturally</h3>
-            <p class="s-body text-sm leading-relaxed mb-5">Talk at your normal pace. Kalam processes your voice instantly using advanced AI models—cloud or on-device.</p>
-          </div>
-          <div class="mt-auto img-placeholder w-full h-28 rounded-lg" style="border-radius: 8px;">
-            <iconify-icon icon="ph:microphone-duotone"></iconify-icon>
-            <span class="text-xs">Recording State</span>
-          </div>
-        </div>
-
-        <div class="step-card flex flex-col gap-4 h-full reveal-on-scroll stagger-3">
-          <div class="step-num">3</div>
-          <div>
-            <h3 class="h3-card text-sm mb-1.5">Text appears</h3>
-            <p class="s-body text-sm leading-relaxed mb-5">Transcribed text is typed directly into your active window. Ready to send, edit, or format.</p>
-          </div>
-          <div class="mt-auto img-placeholder w-full h-28 rounded-lg" style="border-radius: 8px;">
-            <iconify-icon icon="ph:text-aa-duotone"></iconify-icon>
-            <span class="text-xs">Text Injection</span>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </section>
-
-  <!-- ═══════════════════════════════════════════ COMPARE ══ -->
-  <section id="compare" class="s-base divider py-20 sm:py-28 px-5 sm:px-8">
-    <div class="max-w-5xl mx-auto">
-      <div class="text-center mb-10 reveal-on-scroll">
-        <p class="eyebrow">Comparison</p>
-        <h2 class="s-heading text-3xl sm:text-4xl mb-4">How Kalam compares</h2>
-        <p class="s-body text-sm max-w-xl mx-auto">Stacked against <a href="https://wisprflow.ai/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Wispr Flow</a>, <a href="https://otter.ai/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Otter.ai</a>, and <a href="https://superwhisper.com/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Superwhisper</a>.</p>
-      </div>
-      <p class="text-xs text-center mb-3 sm:hidden reveal-on-scroll stagger-1" style="color:var(--text-3)">Scroll right to see all columns →</p>
-      <div class="overflow-x-auto ctable-wrap reveal-on-scroll stagger-2">
-        <div class="ctable min-w-[680px] rounded-2xl overflow-hidden" style="border:1px solid var(--border)">
-          <div class="grid grid-cols-5 text-xs sm:text-sm">
-            <div class="p-3 sm:p-4" style="background:var(--bg-card);color:var(--text-3);font-weight:600"></div>
-            <div class="p-3 sm:p-4 text-center kalam-col-cell kalam-col-first kalam-col-head">Kalam</div>
-            <div class="p-3 sm:p-4 text-center font-medium" style="background:var(--bg-card);color:var(--text-2)">Wispr Flow</div>
-            <div class="p-3 sm:p-4 text-center font-medium" style="background:var(--bg-card);color:var(--text-2)">Otter.ai</div>
-            <div class="p-3 sm:p-4 text-center font-medium" style="background:var(--bg-card);color:var(--text-2)">Superwhisper</div>
-
-            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">Cost</div>
-            <div class="p-3 sm:p-4 text-center font-semibold kalam-col-cell kalam-col-mid" style="color:var(--text)">Free</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-2)">$89–249/mo</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-2)">Free / $19.99+</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-2)">Free / $8+</div>
-
-            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">Open source</div>
-            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-
-            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">Dictate in any app</div>
-            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
-            <div class="p-3 sm:p-4 text-center c-check" style="border-top:1px solid var(--border)"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">Meeting-focused</div>
-            <div class="p-3 sm:p-4 text-center c-check" style="border-top:1px solid var(--border)"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
-
-            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">100% offline</div>
-            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-            <div class="p-3 sm:p-4 text-center c-check" style="border-top:1px solid var(--border)"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
-
-            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">BYOK</div>
-            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">Pro only</div>
-
-            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">Includes Linux</div>
-            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-mid"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">No</div>
-
-            <div class="p-3 sm:p-4" style="border-top:1px solid var(--border);color:var(--text-2)">No word limits</div>
-            <div class="p-3 sm:p-4 text-center c-check kalam-col-cell kalam-col-last"><iconify-icon icon="ph:check-circle-fill" style="font-size:1.1rem" aria-label="Yes"></iconify-icon></div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">2k/wk free</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">Limited free</div>
-            <div class="p-3 sm:p-4 text-center" style="border-top:1px solid var(--border);color:var(--text-3)">Limited free</div>
-          </div>
-        </div>
-      </div>
-      <p class="text-xs text-center mt-4" style="color:var(--text-3)">
-        Kalam is <strong style="color:var(--text-2)">desktop only</strong> (Windows, macOS, Linux). Not building for Android or iOS.
-        Sources: <a href="https://wisprflow.ai/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Wispr Flow</a>,
-        <a href="https://otter.ai/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Otter.ai</a>,
-        <a href="https://superwhisper.com/" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Superwhisper</a>.
-      </p>
-    </div>
-  </section>
-
-  <!-- ═══════════════════════════════════════════ FAQ ══ -->
-  <section id="faq" class="s-raise divider py-20 sm:py-28 px-5 sm:px-8">
-    <div class="max-w-3xl mx-auto">
-      <div class="text-center mb-12 reveal-on-scroll">
-        <p class="eyebrow">FAQ</p>
-        <h2 class="s-heading text-3xl sm:text-4xl">Common questions</h2>
-      </div>
-
-      <div style="border-top:1px solid var(--border)" class="reveal-on-scroll stagger-1">
-        <div class="faq-item">
-          <p class="faq-q text-base">Is Kalam free?</p>
-          <p class="faq-a text-sm">Yes. Open source and free. Use cloud transcription with your own API key (Groq has a free tier) or run fully offline—no subscription ever.</p>
-        </div>
-        <div class="faq-item">
-          <p class="faq-q text-base">Is Kalam like Wispr Flow or Whisperflow?</p>
-          <p class="faq-a text-sm">Same idea—voice typing in any app. Kalam is free, open source, and runs on Windows, Mac, and Linux (desktop only). Wispr Flow is paid and covers mobile too.</p>
-        </div>
-        <div class="faq-item">
-          <p class="faq-q text-base">What platforms does Kalam support?</p>
-          <p class="faq-a text-sm">Windows, macOS, and Linux (desktop only). We are not building for Android or iOS.</p>
-        </div>
-        <div class="faq-item">
-          <p class="faq-q text-base">Does Kalam work offline?</p>
-          <p class="faq-a text-sm">Yes. SenseVoice or Whisper.cpp keeps everything on-device. No API key required for offline mode.</p>
-        </div>
-        <div class="faq-item">
-          <p class="faq-q text-base">Do I need an API key?</p>
-          <p class="faq-a text-sm">Only for cloud transcription (e.g. Groq). Sign up at <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">console.groq.com</a>, get a free key, add it in Settings → STT Provider. Local mode needs no key.</p>
-        </div>
-        <div class="faq-item">
-          <p class="faq-q text-base">Is my audio stored or sent somewhere?</p>
-          <p class="faq-a text-sm">Audio is never stored to disk (in-memory only). Cloud mode sends to the provider over TLS with zero retention. Local mode: nothing leaves your machine.</p>
-        </div>
-        <div class="faq-item">
-          <p class="faq-q text-base">How do I start dictating?</p>
-          <p class="faq-a text-sm">Press <span class="kbd">Ctrl+Win</span> (Windows) or <span class="kbd">Ctrl+Cmd</span> (macOS), hold while you speak, then release. Text appears in whatever app had focus.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ═══════════════════════════════════════════ DOCS CTA ══ -->
-  <section class="s-base divider py-20 sm:py-24 px-5 sm:px-8">
-    <div class="max-w-6xl mx-auto space-y-10 sm:space-y-12">
-      <figure class="m-0 rounded-2xl overflow-hidden shadow-[var(--sh-md)] reveal-on-scroll stagger-1" style="border: 1px solid var(--border); background: var(--bg-card);">
-        <img src="marketing/documentation-watercolor.png" alt="Watercolor painting: soft pages and a gentle path suggesting guides and learning" width="1792" height="768" loading="lazy" decoding="async" class="w-full object-cover lightbox-trigger" style="max-height: min(40vh, 340px); min-height: 200px; object-position: center 42%;" />
-      </figure>
-      <div class="max-w-3xl mx-auto text-center reveal-on-scroll stagger-2">
-        <p class="eyebrow">Documentation</p>
-        <h2 class="s-heading text-3xl sm:text-4xl mb-4">Everything you need to get started</h2>
-        <p class="s-body text-base mb-8 max-w-xl mx-auto">Setup guides, API key instructions, building from source, and a complete user manual—all on this site.</p>
-        <a href="documentation.html" class="btn-ghost mx-auto" style="display:inline-flex">
-          View documentation
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
-        </a>
-        <p class="mt-4 text-sm" style="color:var(--text-3)"><a href="documentation.html#user-manual" style="color:var(--primary)">Jump to User Manual</a></p>
-      </div>
-    </div>
-  </section>
-
-</main>
-
-<!-- ═══════════════════════════════════════════ FOOTER ══ -->
-<footer class="divider py-10 sm:py-12 px-5 sm:px-8" style="background:var(--bg-elevated)">
-  <div class="max-w-6xl mx-auto">
-    <div class="flex flex-col md:flex-row justify-between items-center gap-5">
-      <div class="flex items-center gap-3">
-        <img src="favicon.svg" alt="Kalam" width="36" height="36" style="width:36px;height:36px;opacity:.9">
-        <span class="font-semibold" style="color:var(--text);font-size:1.0625rem;font-family:Inter,sans-serif;letter-spacing:-0.03em">Kalam</span>
-      </div>
-      <div class="flex flex-wrap justify-center gap-5 text-sm font-medium">
-        <a href="documentation.html" class="nav-link">Documentation</a>
-        <a href="index.html#compare"      class="nav-link">Compare</a>
-        <a href="index.html#workspace"    class="nav-link">Workspace</a>
-        <a href="index.html#how-it-works" class="nav-link">How it works</a>
-        <a href="privacy.html"       class="nav-link">Privacy</a>
-        <a href="terms.html"         class="nav-link">Terms</a>
-        <a href="business.html"      class="nav-link">Sponsors &amp; commercial</a>
-        <a href="https://github.com/afaraha8403/kalam"        class="nav-link">GitHub</a>
-        <a href="https://github.com/afaraha8403/kalam/issues" class="nav-link">Report an issue</a>
-      </div>
-    </div>
-    <div class="mt-6 pt-6 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs sm:text-sm" style="border-top:1px solid var(--border);color:var(--text-3)">
-      <p>&copy; 2026 Kalam. Noncommercial use: MIT. <a href="business.html" style="color:var(--primary)">Commercial</a> by agreement.</p>
-      <p>Created by <a href="https://alifarahat.com" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Ali Farahat</a> &amp; <a href="https://balacode.io" target="_blank" rel="noopener noreferrer" style="color:var(--primary)">Balacode</a>.</p>
-    </div>
-  </div>
-</footer>
-
-<!-- Image lightbox -->
-<div id="img-lightbox" class="img-lightbox" hidden role="dialog" aria-modal="true" aria-label="Enlarged image">
-  <button type="button" class="img-lightbox__scrim" aria-label="Close image preview"></button>
-  <div class="img-lightbox__inner">
-    <button type="button" class="img-lightbox__close" aria-label="Close">&times;</button>
-    <img class="img-lightbox__img" alt="" width="1280" height="800" decoding="async" />
-  </div>
-</div>
-
-<!-- Theme toggle -->
-<script>
-(function () {
-  var root = document.documentElement;
-  var btn = document.getElementById('theme-toggle');
-  var mobile = document.querySelector('.theme-toggle-mobile');
-
-  function syncLabel() {
-    var dark = root.getAttribute('data-theme') !== 'light';
-    if (btn) btn.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
-  }
-
-  function setTheme(t) {
-    root.setAttribute('data-theme', t);
-    try { localStorage.setItem('kalam-site-theme', t); } catch (e) { /* ignore */ }
-    syncLabel();
-  }
-
-  function toggle() {
-    // Add a quick rotation class for delight
-    if (btn) {
-      btn.style.transform = 'scale(0.8) rotate(180deg)';
-      setTimeout(() => {
-        btn.style.transform = '';
-      }, 300);
-    }
-    setTheme(root.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
-  }
-
-  syncLabel();
-  if (btn) btn.addEventListener('click', toggle);
-  if (mobile) mobile.addEventListener('click', toggle);
-})();
-
-// Scroll Reveal Animation Observer
-(function() {
-  var observerOptions = {
-    root: null,
-    rootMargin: '0px',
-    threshold: 0.15
-  };
-
-  var observer = new IntersectionObserver(function(entries, observer) {
-    entries.forEach(function(entry) {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('is-visible');
-        observer.unobserve(entry.target); // Only animate once
-      }
-    });
-  }, observerOptions);
-
-  document.querySelectorAll('.reveal-on-scroll').forEach(function(el) {
-    observer.observe(el);
-  });
-})();
-
-// Close details menus when clicking outside
-document.addEventListener('click', function(event) {
-  var detailsElements = document.querySelectorAll('details');
-  detailsElements.forEach(function(details) {
-    if (details.hasAttribute('open') && !details.contains(event.target)) {
-      details.removeAttribute('open');
-    }
-  });
-});
-
-// Close mobile menu when a link is clicked
-document.querySelectorAll('.md\\:hidden details .nav-link').forEach(function(link) {
-  link.addEventListener('click', function() {
-    var details = this.closest('details');
-    if (details) details.removeAttribute('open');
-  });
-});
-
-// Image lightbox
-(function () {
-  var root = document.getElementById('img-lightbox');
-  if (!root) return;
-  var scrim = root.querySelector('.img-lightbox__scrim');
-  var closeBtn = root.querySelector('.img-lightbox__close');
-  var big = root.querySelector('.img-lightbox__img');
-  var lastFocus = null;
-
-  function open(trigger) {
-    if (!trigger || !trigger.src) return;
-    lastFocus = trigger;
-    big.src = trigger.currentSrc || trigger.src;
-    big.alt = trigger.getAttribute('alt') || '';
-    root.hidden = false;
-    root.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('lightbox-open');
-    closeBtn.focus();
-  }
-
-  function close() {
-    root.hidden = true;
-    root.setAttribute('aria-hidden', 'true');
-    document.body.classList.remove('lightbox-open');
-    big.removeAttribute('src');
-    big.alt = '';
-    if (lastFocus && typeof lastFocus.focus === 'function') {
-      try { lastFocus.focus(); } catch (e) { /* ignore */ }
-    }
-    lastFocus = null;
-  }
-
-  document.querySelectorAll('img.lightbox-trigger').forEach(function (img) {
-    img.setAttribute('role', 'button');
-    img.setAttribute('tabindex', '0');
-    img.setAttribute('aria-haspopup', 'dialog');
-    img.addEventListener('click', function (e) {
-      e.preventDefault();
-      open(img);
-    });
-    img.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        open(img);
-      }
-    });
-  });
-
-  scrim.addEventListener('click', close);
-  closeBtn.addEventListener('click', close);
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && !root.hidden) close();
-  });
-})();
-</script>
-
-<!-- Smart download detection (preserved exactly) -->
-<script>
-    (function() {
-      var REPO = 'afaraha8403/kalam';
-      var RELEASES_URL = 'https://api.github.com/repos/' + REPO + '/releases?per_page=20';
-
-      function detectOSSync() {
-        var ua = navigator.userAgent || '';
-        var plat = navigator.platform || '';
-        if (/Win(dows|32|64|CE)/i.test(ua) || plat === 'Win32') return { os: 'windows', arch: 'x64' };
-        if (/Mac|Darwin/i.test(ua) || plat === 'MacIntel' || plat === 'MacPPC') {
-          if (/iPhone|iPad/i.test(ua)) return { os: null, arch: null };
-          return { os: 'mac', arch: null };
-        }
-        if (/Linux|X11|Ubuntu/i.test(ua) || plat === 'Linux x86_64' || plat === 'Linux aarch64') {
-          var linuxArch = /aarch64|arm64/i.test(ua) || plat === 'Linux aarch64' ? 'arm64' : 'amd64';
-          return { os: 'linux', arch: linuxArch };
-        }
-        return { os: null, arch: null };
-      }
-
-      function resolveMacArch() {
-        if (navigator.userAgentData && typeof navigator.userAgentData.getHighEntropyValues === 'function') {
-          return navigator.userAgentData.getHighEntropyValues(['architecture'])
-            .then(function(v) {
-              var arch = (v && v.architecture) ? String(v.architecture).toLowerCase() : '';
-              return (arch === 'arm') ? 'aarch64' : (arch === 'x86' || arch === 'x64') ? 'x86_64' : null;
-            })
-            .catch(function() { return null; });
-        }
-        return Promise.resolve(null);
-      }
-
-      function detectOS() {
-        return resolveMacArch().then(function(macArch) {
-          var info = detectOSSync();
-          if (info.os === 'mac' && info.arch === null) {
-            info.arch = macArch !== null ? macArch : 'aarch64';
-          }
-          return info;
-        });
-      }
-
-      function macAssetMatchesArch(nameLower, arch) {
-        if (arch === 'aarch64') return nameLower.indexOf('aarch64') !== -1 || nameLower.indexOf('arm64') !== -1;
-        if (arch === 'x86_64') return nameLower.indexOf('x86_64') !== -1 || nameLower.indexOf('_x64') !== -1 || (nameLower.indexOf('x64') !== -1 && nameLower.indexOf('aarch64') === -1 && nameLower.indexOf('arm64') === -1);
-        return false;
-      }
-
-      function assetMatchesNewPattern(nameLower, platform, arch) {
-        if (platform === 'darwin') {
-          return (arch === 'aarch64' && (nameLower.indexOf('-darwin-aarch64') !== -1 || nameLower.indexOf('_darwin_aarch64') !== -1)) ||
-                 (arch === 'x86_64' && (nameLower.indexOf('-darwin-x64') !== -1 || nameLower.indexOf('_darwin_x64') !== -1));
-        }
-        if (platform === 'windows') return nameLower.indexOf('-windows-x64') !== -1 || nameLower.indexOf('_windows_x64') !== -1;
-        if (platform === 'linux') {
-          return (arch === 'amd64' && (nameLower.indexOf('-linux-x64') !== -1 || nameLower.indexOf('-linux-amd64') !== -1 || nameLower.indexOf('_linux_x64') !== -1 || nameLower.indexOf('_linux_amd64') !== -1)) ||
-                 (arch === 'arm64' && (nameLower.indexOf('-linux-arm64') !== -1 || nameLower.indexOf('-linux-aarch64') !== -1 || nameLower.indexOf('_linux_arm64') !== -1));
-        }
-        return false;
-      }
-
-      function pickAssetForOS(assets, osInfo) {
-        if (!assets || !assets.length) return null;
-        var os = osInfo.os, arch = osInfo.arch;
-        var platform = os === 'mac' ? 'darwin' : os === 'windows' ? 'windows' : os === 'linux' ? 'linux' : null;
-        var winExt = ['.msi', '.exe'];
-        var macExt = ['.pkg', '.dmg', '.app.tar.gz'];
-        var linuxExt = ['.AppImage', '.deb'];
-        var byOs = { windows: winExt, mac: macExt, linux: linuxExt };
-        var exts = os ? byOs[os] : [].concat(winExt, macExt, linuxExt);
-        var name = function(a) { return (a.name || '').toLowerCase(); };
-        for (var e = 0; e < exts.length; e++) {
-          var ext = exts[e].toLowerCase();
-          var candidates = assets.filter(function(a) { return name(a).endsWith(ext); });
-          if (candidates.length === 0) continue;
-          if (platform && arch && candidates.length > 1) {
-            var newPatternMatch = candidates.filter(function(a) { return assetMatchesNewPattern(name(a), platform, arch); });
-            if (newPatternMatch.length) return newPatternMatch[0];
-          }
-          if (os === 'mac' && arch && candidates.length > 1) {
-            var pref = candidates.filter(function(a) { return macAssetMatchesArch(name(a), arch); });
-            if (pref.length) return pref[0];
-            return candidates[0];
-          }
-          if (os === 'linux' && arch && candidates.length > 1) {
-            var linuxPref = candidates.filter(function(a) {
-              var n = name(a);
-              if (arch === 'amd64') return n.indexOf('amd64') !== -1 || n.indexOf('x64') !== -1;
-              if (arch === 'arm64') return n.indexOf('arm64') !== -1 || n.indexOf('aarch64') !== -1;
-              return false;
-            });
-            if (linuxPref.length) return linuxPref[0];
-          }
-          return candidates[0];
-        }
-        return assets[0];
-      }
-
-      function run() {
-        var primary = document.getElementById('download-primary');
-        var primaryText = document.getElementById('download-primary-text');
-        var secondary = document.getElementById('download-secondary');
-        if (!primary || !primaryText) return;
-
-        /* Primary CTA always goes to download.html; that page picks the right asset and lists all files. */
-        var downloadPageUrl = 'download.html';
-        var fallbackLabel = 'Download Latest Release';
-
-        detectOS().then(function(osInfo) {
-          return fetch(RELEASES_URL, { headers: { 'Accept': 'application/vnd.github.v3+json' } })
-            .then(function(r) { return r.json(); })
-            .then(function(releases) {
-            primary.href = downloadPageUrl;
-            if (!Array.isArray(releases) || releases.length === 0) {
-              primaryText.textContent = fallbackLabel;
-              secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">all releases</a> for other platforms.';
-              return;
-            }
-            var stable = releases.find(function(r) { return !r.prerelease; });
-            var beta = releases.find(function(r) { return r.prerelease; });
-            var useRelease = stable || releases[0];
-            var isStable = !!stable && useRelease === stable;
-            var tag = useRelease.tag_name;
-            var assets = useRelease.assets || [];
-            var asset = pickAssetForOS(assets, osInfo);
-            var osLabel = osInfo.os === 'windows' ? 'Windows' : osInfo.os === 'mac' ? 'macOS' : osInfo.os === 'linux' ? 'Linux' : '';
-
-            primary.href = downloadPageUrl;
-            if (osLabel && asset) {
-              var archLabel = '';
-              if (osInfo.os === 'mac' && osInfo.arch) archLabel = osInfo.arch === 'aarch64' ? ' (Apple Silicon)' : ' (Intel)';
-              primaryText.textContent = 'Download for ' + osLabel + archLabel + (isStable ? ' (v' + tag.replace(/^v/, '') + ')' : ' (beta)');
+    <script>
+        // Theme Toggle
+        const themeToggle = document.getElementById('theme-toggle');
+        const themeIcon = document.getElementById('theme-icon');
+        
+        const setTheme = (theme) => {
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+            
+            if (theme === 'light') {
+                themeIcon.classList.remove('ri-moon-line');
+                themeIcon.classList.add('ri-sun-line');
             } else {
-              primaryText.textContent = isStable ? 'Download ' + tag : 'Download (beta)';
+                themeIcon.classList.remove('ri-sun-line');
+                themeIcon.classList.add('ri-moon-line');
             }
-
-            var parts = [];
-            if (stable && beta) {
-              parts.push('<a href="' + beta.html_url + '" style="color:var(--primary)">Beta</a> available. ');
-            }
-            parts.push('<a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">Other platforms &amp; releases</a>');
-            secondary.innerHTML = parts.join('');
-            });
-          });
-        }).catch(function() {
-          primary.href = downloadPageUrl;
-          primaryText.textContent = fallbackLabel;
-          secondary.innerHTML = 'See <a href="https://github.com/' + REPO + '/releases" style="color:var(--primary)">all releases</a> for other platforms.';
+        };
+        
+        // Initialize theme icon based on the script at the top of body
+        const currentTheme = document.documentElement.getAttribute('data-theme');
+        if (currentTheme === 'light') {
+            themeIcon.classList.remove('ri-moon-line');
+            themeIcon.classList.add('ri-sun-line');
+        }
+        
+        themeToggle.addEventListener('click', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            setTheme(currentTheme === 'dark' ? 'light' : 'dark');
         });
-      }
 
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', run);
-      } else {
-        run();
-      }
-    })();
-</script>
+        // Accordion functionality
+        document.querySelectorAll('.accordion-header').forEach(header => {
+            header.addEventListener('click', () => {
+                const accordion = header.parentElement;
+                const isOpen = accordion.classList.contains('open');
+                
+                // Close all accordions
+                document.querySelectorAll('.accordion').forEach(a => {
+                    a.classList.remove('open');
+                });
+                
+                // Toggle clicked accordion
+                if (!isOpen) {
+                    accordion.classList.add('open');
+                }
+            });
+        });
+
+        // Showcase: light/dark screenshot toggle
+        function setShowcaseTheme(mode) {
+            const lightBtn = document.getElementById('showcase-light-btn');
+            const darkBtn = document.getElementById('showcase-dark-btn');
+            lightBtn.setAttribute('aria-pressed', mode === 'light');
+            darkBtn.setAttribute('aria-pressed', mode === 'dark');
+
+            document.querySelectorAll('#showcase-grid img[data-light]').forEach(img => {
+                img.src = mode === 'dark' ? img.dataset.dark : img.dataset.light;
+            });
+        }
+
+        // Showcase: lightbox
+        function openShowcaseLightbox(item) {
+            const src = item.querySelector('img').src;
+            const lb = document.getElementById('showcase-lightbox');
+            document.getElementById('showcase-lightbox-img').src = src;
+            lb.classList.add('open');
+            document.body.style.overflow = 'hidden';
+        }
+        function closeShowcaseLightbox() {
+            const lb = document.getElementById('showcase-lightbox');
+            lb.classList.remove('open');
+            document.body.style.overflow = '';
+        }
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeShowcaseLightbox();
+        });
+
+        // Simple scroll reveal
+        document.addEventListener('DOMContentLoaded', () => {
+            const reveals = document.querySelectorAll('.reveal');
+            
+            const revealOnScroll = () => {
+                const windowHeight = window.innerHeight;
+                const elementVisible = 100;
+                
+                reveals.forEach(reveal => {
+                    const elementTop = reveal.getBoundingClientRect().top;
+                    if (elementTop < windowHeight - elementVisible) {
+                        reveal.style.animationPlayState = 'running';
+                    } else {
+                        reveal.style.animationPlayState = 'paused';
+                    }
+                });
+            };
+            
+            // Pause animations initially if they are below fold
+            reveals.forEach(reveal => {
+                const elementTop = reveal.getBoundingClientRect().top;
+                if (elementTop > window.innerHeight) {
+                    reveal.style.animationPlayState = 'paused';
+                }
+            });
+            
+            window.addEventListener('scroll', revealOnScroll);
+        });
+    </script>
 </body>
 </html>

@@ -9,6 +9,7 @@
       "notification:default",
       "updater:default",
       "shell:default",
+      "opener:default",
       "autostart:default"
     ]
   }

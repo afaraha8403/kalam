@@ -9,18 +9,20 @@
   // T6: earliest trace in overlay JS (latency debugging; only when KALAM_LATENCY_DEBUG=1)
   invoke('trace_latency', { event: 'T6', jsTimestamp: Date.now() * 1000 }).catch(() => {})
 
-  const KINDS = ['Hidden', 'Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error', 'Status', 'Cancelling'] as const
+  const KINDS = ['Hidden', 'Collapsed', 'Listening', 'ShortPress', 'Recording', 'Processing', 'Success', 'Error', 'Status', 'Cancelling', 'SensitiveAppPeek'] as const
   type OverlayEvent =
     | { kind: 'Hidden' }
     | { kind: 'Collapsed' }
-    | { kind: 'Listening' }
+    | { kind: 'Listening'; sensitive_app?: boolean }
     | { kind: 'ShortPress' }
-    | { kind: 'Recording'; level: number; is_command: boolean }
+    | { kind: 'Recording'; level: number; is_command: boolean; sensitive_app?: boolean }
     | { kind: 'Processing'; elapsed_secs?: number; expected_secs?: number; attempt?: number; message?: string | null }
     | { kind: 'Success' }
     | { kind: 'Error'; message: string }
     | { kind: 'Status'; message: string; highlight?: string }
     | { kind: 'Cancelling' }
+    /** Focus moved to a sensitive app while idle — same lock UI as listening; auto-collapses. */
+    | { kind: 'SensitiveAppPeek' }
 
   let state: OverlayEvent = { kind: 'Hidden' }
   let waveformStyle: WaveformStyle = 'Aurora'
@@ -35,10 +37,15 @@
     if (!p || typeof p !== 'object') return false
     const k = (p as { kind?: string }).kind
     if (typeof k !== 'string' || !KINDS.includes(k as typeof KINDS[number])) return false
+    if (k === 'Listening') {
+      const li = p as { sensitive_app?: unknown }
+      if (li.sensitive_app !== undefined && typeof li.sensitive_app !== 'boolean') return false
+    }
     if (k === 'Recording') {
-      const rec = p as { level?: unknown, is_command?: unknown }
+      const rec = p as { level?: unknown, is_command?: unknown, sensitive_app?: unknown }
       if (rec.level !== undefined && typeof rec.level !== 'number') return false
       if (rec.is_command !== undefined && typeof rec.is_command !== 'boolean') return false
+      if (rec.sensitive_app !== undefined && typeof rec.sensitive_app !== 'boolean') return false
     }
     if (k === 'Processing') {
       const proc = p as { elapsed_secs?: unknown, expected_secs?: unknown, attempt?: unknown, message?: unknown }
@@ -58,6 +65,22 @@
     }
   }
 
+  function dismissOverlayMessage() {
+    if (statusTimeout) clearTimeout(statusTimeout)
+    statusTimeout = null
+    state = { kind: 'Collapsed' }
+  }
+
+  /** Audio is already gone; focus main window so the user can dictate again. */
+  async function retryAfterError() {
+    dismissOverlayMessage()
+    try {
+      await invoke('focus_main_window')
+    } catch (e) {
+      console.error('focus_main_window failed:', e)
+    }
+  }
+
   $: showCancelButton = state.kind === 'Processing' && (isHovered || (state.elapsed_secs ?? 0) >= 5)
   $: processingElapsed = state.kind === 'Processing' ? (state.elapsed_secs ?? 0) : 0
   $: processingExpected = state.kind === 'Processing' ? (state.expected_secs ?? 120) : 120
@@ -71,7 +94,14 @@
   $: rawLevel = state.kind === 'Recording' ? Number(state.level) || 0 : 0
   $: isCommand = state.kind === 'Recording' ? Boolean(state.is_command) : false
 
-  $: isExpanded = state.kind !== 'Collapsed' && state.kind !== 'Hidden'
+  /** Hybrid/Auto forced local STT due to sensitive app patterns — amber pill + waveform. */
+  $: isSensitiveApp =
+    state.kind === 'SensitiveAppPeek' ||
+    (state.kind === 'Listening' && Boolean(state.sensitive_app)) ||
+    (state.kind === 'Recording' && Boolean(state.sensitive_app))
+
+  $: isExpanded =
+    state.kind !== 'Collapsed' && state.kind !== 'Hidden'
 
   let isHovered = false
   let showHoverExpansion = false
@@ -100,6 +130,8 @@
   }
 
   let resizeTimeout: ReturnType<typeof setTimeout> | null = null
+  /** Auto-collapse after Success / Status / Error; cleared on manual dismiss. */
+  let statusTimeout: ReturnType<typeof setTimeout> | null = null
   $: {
     if (requiresLargeWindow) {
       if (resizeTimeout != null) {
@@ -152,8 +184,13 @@
 
     const padded = paddedLevels()
     const cmd = isCommand
-    const stroke = cmd ? '#fb7185' : '#4fc1ff'
-    const strokeSoft = cmd ? 'rgba(251, 113, 133,' : 'rgba(79, 193, 255,'
+    // Command mode (rose) > sensitive app (amber) > default (blue).
+    const stroke = cmd ? '#fb7185' : isSensitiveApp ? '#f59e0b' : '#4fc1ff'
+    const strokeSoft = cmd
+      ? 'rgba(251, 113, 133,'
+      : isSensitiveApp
+        ? 'rgba(245, 158, 11,'
+        : 'rgba(79, 193, 255,'
 
     if (waveformStyle === 'Oscilloscope') {
       ctx.beginPath()
@@ -179,19 +216,26 @@
       ctx.globalCompositeOperation = 'screen'
       ctx.filter = 'blur(8px)'
 
-      const colors = cmd 
+      const colors = cmd
         ? [
             'rgba(251, 113, 133, 0.9)', // Rose
-            'rgba(244, 63, 94, 0.8)',   // Darker Rose
-            'rgba(245, 158, 11, 0.8)',  // Amber
-            'rgba(255, 255, 255, 0.4)'  // White highlight
+            'rgba(244, 63, 94, 0.8)', // Darker Rose
+            'rgba(245, 158, 11, 0.8)', // Amber
+            'rgba(255, 255, 255, 0.4)', // White highlight
           ]
-        : [
-            'rgba(79, 193, 255, 0.9)',  // Blue
-            'rgba(16, 185, 129, 0.8)',  // Emerald
-            'rgba(139, 92, 246, 0.8)',  // Purple
-            'rgba(255, 255, 255, 0.4)'  // White highlight
-          ]
+        : isSensitiveApp
+          ? [
+              'rgba(245, 158, 11, 0.9)', // Amber
+              'rgba(251, 191, 36, 0.8)', // Amber light
+              'rgba(234, 179, 8, 0.75)', // Yellow
+              'rgba(255, 255, 255, 0.4)', // White highlight
+            ]
+          : [
+              'rgba(79, 193, 255, 0.9)', // Blue
+              'rgba(16, 185, 129, 0.8)', // Emerald
+              'rgba(139, 92, 246, 0.8)', // Purple
+              'rgba(255, 255, 255, 0.4)', // White highlight
+            ]
 
       for (let layer = 0; layer < 4; layer++) {
         const phase = snakeOffset * (0.5 + layer * 0.2) + layer * 2.0
@@ -369,7 +413,6 @@
   onMount(() => {
     let unlisten: (() => void) | null = null
     let unlistenSettings: (() => void) | null = null
-    let statusTimeout: ReturnType<typeof setTimeout> | null = null
     let pendingSuccessTimer: ReturnType<typeof setTimeout> | null = null
     let retryHoldUntil: number | null = null
     let lastSeenProcessingAttempt = 1
@@ -493,10 +536,18 @@
       state = p
       traceAfterState()
       if (statusTimeout) clearTimeout(statusTimeout)
-      if (p.kind === 'Status' || p.kind === 'Error' || p.kind === 'Cancelling') {
+      if (p.kind === 'Status' || p.kind === 'Cancelling') {
         statusTimeout = setTimeout(() => {
           state = { kind: 'Collapsed' }
         }, 3000)
+      } else if (p.kind === 'SensitiveAppPeek') {
+        statusTimeout = setTimeout(() => {
+          state = { kind: 'Collapsed' }
+        }, 2600)
+      } else if (p.kind === 'Error') {
+        statusTimeout = setTimeout(() => {
+          state = { kind: 'Collapsed' }
+        }, 10000)
       }
     }).then((fn) => {
       unlisten = fn
@@ -531,6 +582,7 @@
     class:processing-long={state.kind === 'Processing' && processingPastHalfExpected}
     class:success={state.kind === 'Success'}
     class:error={state.kind === 'Error'}
+    class:sensitive-app={isSensitiveApp}
     data-tauri-drag-region
     on:mouseenter={onBlipMouseEnter}
     on:mouseleave={onBlipMouseLeave}
@@ -541,9 +593,35 @@
         <span class="label">Press <span class="hotkey-highlight">{hotkeyDisplayStr}</span> to dictate</span>
       </div>
     {:else if state.kind === 'Listening'}
-      <div class="content listening">
-        <div class="listen-dot" />
-        <span class="label">Listening</span>
+      <div class="content listening" class:sensitive={isSensitiveApp}>
+        {#if isSensitiveApp}
+          <svg class="lock-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M7 11V8a5 5 0 0 1 10 0v3M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span class="label sensitive-label">Sensitive app detected</span>
+        {:else}
+          <div class="listen-dot" />
+          <span class="label">Listening</span>
+        {/if}
+      </div>
+    {:else if state.kind === 'SensitiveAppPeek'}
+      <div class="content listening sensitive">
+        <svg class="lock-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M7 11V8a5 5 0 0 1 10 0v3M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z"
+            stroke="currentColor"
+            stroke-width="1.75"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <span class="label sensitive-label">Sensitive app detected</span>
       </div>
     {:else if state.kind === 'ShortPress'}
       <div class="content hint">
@@ -563,7 +641,13 @@
         {#if waveformStyle === 'SiriWave' || waveformStyle === 'Oscilloscope' || waveformStyle === 'Aurora'}
           <canvas bind:this={waveCanvas} class="wave-canvas" aria-hidden="true"></canvas>
         {:else}
-          <div bind:this={cssVizEl} class="viz-css" class:viz-cmd={isCommand} data-viz={waveformStyle}>
+          <div
+            bind:this={cssVizEl}
+            class="viz-css"
+            class:viz-cmd={isCommand}
+            class:viz-sensitive={!isCommand && isSensitiveApp}
+            data-viz={waveformStyle}
+          >
             {#if waveformStyle === 'EchoRing'}
               <div class="viz-echo">
                 <div class="ring r3"></div>
@@ -615,11 +699,15 @@
         </svg>
       </div>
     {:else if state.kind === 'Error'}
-      <div class="content status-message error-message">
-        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" style="margin-right: 6px; flex-shrink: 0;">
+      <div class="content status-message error-message error-message-with-actions">
+        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" class="error-icon" aria-hidden="true">
           <path d="M5 5L13 13M13 5L5 13" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
-        <span class="label" style="color: #fca5a5 !important;">{state.message || 'Error'}</span>
+        <span class="label error-text">{state.message || 'Something went wrong'}</span>
+        <div class="error-actions">
+          <button type="button" class="error-retry-btn" on:click={retryAfterError}>Retry</button>
+          <button type="button" class="error-dismiss-btn" on:click={dismissOverlayMessage} aria-label="Dismiss">×</button>
+        </div>
       </div>
     {/if}
   </div>
@@ -734,6 +822,16 @@
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   }
 
+  /* Hybrid/Auto: sensitive app matched — warm amber frame (privacy assurance, not an error). */
+  .blip.sensitive-app {
+    border-color: rgba(245, 158, 11, 0.4);
+    box-shadow: 0 1px 6px rgba(245, 158, 11, 0.25);
+  }
+
+  .blip.sensitive-app.recording {
+    box-shadow: 0 1px 6px rgba(245, 158, 11, 0.3);
+  }
+
   /* ── Content wrapper (inside the pill) ── */
   .content {
     display: flex;
@@ -760,6 +858,17 @@
     border-radius: 50%;
     background: #4fc1ff;
     animation: dot-blink 1.2s ease-in-out infinite;
+  }
+
+  .listening.sensitive .lock-icon {
+    color: #fbbf24;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.35));
+  }
+
+  .sensitive-label {
+    color: #fbbf24 !important;
+    font-weight: 600;
   }
 
   .label {
@@ -791,6 +900,58 @@
     color: #4ade80;
     font-weight: 600;
     margin-left: 2px;
+  }
+
+  .error-message-with-actions {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 6px 10px;
+    max-width: min(280px, 92vw);
+  }
+
+  .error-message-with-actions .error-text {
+    white-space: normal;
+    max-width: 200px;
+    color: #fca5a5 !important;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .error-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .error-retry-btn {
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(252, 165, 165, 0.45);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fecaca;
+    cursor: pointer;
+  }
+
+  .error-dismiss-btn {
+    font-size: 18px;
+    line-height: 1;
+    padding: 0 6px;
+    border: none;
+    background: transparent;
+    color: #fca5a5;
+    cursor: pointer;
+    opacity: 0.85;
+  }
+
+  .error-dismiss-btn:hover {
+    opacity: 1;
+  }
+
+  .error-icon {
+    flex-shrink: 0;
+    margin-top: 2px;
   }
 
   .hover-hint {
@@ -886,6 +1047,9 @@
   .viz-cmd .viz-echo .core { background: #fb7185; }
   .viz-cmd .viz-echo .ring { border-color: #fb7185; }
 
+  .viz-sensitive .viz-echo .core { background: #f59e0b; }
+  .viz-sensitive .viz-echo .ring { border-color: #f59e0b; }
+
   .viz-bars {
     display: flex;
     align-items: center;
@@ -923,6 +1087,11 @@
     box-shadow: 0 0 6px rgba(251, 113, 133, 0.4);
   }
 
+  .viz-sensitive .viz-bars span {
+    background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.45);
+  }
+
   .viz-aura {
     display: flex;
     align-items: center;
@@ -944,6 +1113,11 @@
   .viz-cmd .aura-orb {
     background: radial-gradient(circle at 40% 40%, rgba(255, 170, 190, 0.95), rgba(251, 113, 133, 0.4) 60%, transparent 80%);
     box-shadow: 0 0 calc(var(--aura-glow, 4) * 1px) rgba(251, 113, 133, 0.6);
+  }
+
+  .viz-sensitive .aura-orb {
+    background: radial-gradient(circle at 40% 40%, rgba(253, 224, 171, 0.95), rgba(245, 158, 11, 0.45) 60%, transparent 80%);
+    box-shadow: 0 0 calc(var(--aura-glow, 4) * 1px) rgba(245, 158, 11, 0.55);
   }
 
   .viz-neon {
@@ -968,6 +1142,12 @@
     background: #fb7185;
     box-shadow: 0 0 calc(5px + var(--neon-g, 0) * 15px) #fb7185,
                 0 0 calc(10px + var(--neon-g, 0) * 30px) rgba(251, 113, 133, 0.5);
+  }
+
+  .viz-sensitive .viz-neon .beam {
+    background: #f59e0b;
+    box-shadow: 0 0 calc(5px + var(--neon-g, 0) * 15px) #f59e0b,
+                0 0 calc(10px + var(--neon-g, 0) * 30px) rgba(245, 158, 11, 0.5);
   }
 
   /* ── Processing dots ── */

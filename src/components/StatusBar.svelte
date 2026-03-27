@@ -105,8 +105,8 @@
 
   $: latencyTitle =
     lastLatencyMs != null
-      ? `⚡ Last transcription: ${lastLatencyMs} ms`
-      : '⚡ Latency — shown after your first transcription in this session'
+      ? `⚡ Last response time: ${lastLatencyMs} ms`
+      : '⚡ Response time appears after your first transcription this session'
 
   $: sttMode = config?.stt_config?.mode ?? 'Cloud'
   $: sttProvider = config?.stt_config?.provider ?? 'groq'
@@ -146,17 +146,17 @@
 
   $: readyTitle =
     config && lastLatencyMs != null
-      ? `✅ Ready · ${sttDetailTitle} · Last latency ${lastLatencyMs} ms`
+      ? `✅ Ready · ${sttDetailTitle} · Last response ${lastLatencyMs} ms`
       : config
         ? `✅ Ready · ${sttDetailTitle}`
         : '🔄 Loading app configuration…'
 
   $: dbTitle =
     dbStatus === null
-      ? '💾 Checking database…'
+      ? '💾 Checking storage…'
       : dbStatus.ok
-        ? '💾 Database connected'
-        : '💾 Database disconnected — click to retry'
+        ? '💾 Storage ready'
+        : '💾 Storage unavailable — click to retry'
 
   /** Emoji only for DB row (aligned with title). */
   $: dbEmoji = dbStatus === null ? '⏳' : dbStatus.ok ? '✅' : '⚠️'
@@ -243,14 +243,14 @@
     title={dbTitle}
     disabled={dbStatus === null || dbStatus.ok}
     aria-label={dbStatus === null
-      ? 'Database: checking connection'
+      ? 'Storage: checking connection'
       : dbStatus.ok
-        ? 'Database: connected'
-        : 'Database: disconnected — click to retry'}
+        ? 'Storage: connected'
+        : 'Storage: disconnected — click to retry'}
     on:click={onDbClick}
   >
     <span class="emoji-cell" aria-hidden="true">{dbEmoji}</span>
-    <span class="db-label">Database</span>
+    <span class="db-label">Storage</span>
   </button>
 
   <div class="stt-wrap" bind:this={sttWrapEl}>
@@ -302,7 +302,7 @@
   </span>
 
   {#if showLangBadge}
-    <span class="segment lang-badge" title={`🌍 Recognition language: ${languageLabel(activeLangCode)} (${activeLangCode})`}>
+    <span class="segment lang-badge" title={`🌍 Language: ${languageLabel(activeLangCode)}`}>
       <span class="emoji-cell" aria-hidden="true">🌍</span>
       {activeLangShort}
     </span>
