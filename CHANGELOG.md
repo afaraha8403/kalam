@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.1.0-beta.2]
+## [0.1.0-beta.3]
 - **Fix:** **Docs site** mobile nav panel: stronger frosted scrim (**`color-mix`** with theme surfaces), **48px** backdrop blur, **`isolation`**, and noise layer **`z-index: 0`** with links above it so page text no longer reads clearly through the menu.
 
 ### Fixes
