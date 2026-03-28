@@ -36,6 +36,7 @@
   let apiKeyInput = ''
   let addLanguageCode = ''
   let logEmpty = true
+  let logBackendMismatch = false
   let logExportMessage: string | null = null
   let saveError: string | null = null
   let appDataPath: string | null = null
@@ -946,6 +947,18 @@
       logEmpty = await invoke('get_app_log_empty') as boolean
     } catch {
       logEmpty = true
+    }
+    // Cross-check: verify the backend's effective logging config matches
+    // what the UI shows, so we can warn on desync.
+    try {
+      const backendState = await invoke('get_logging_state') as { enabled: boolean; level: string }
+      if (config?.logging) {
+        logBackendMismatch =
+          backendState.enabled !== config.logging.enabled ||
+          backendState.level !== config.logging.level
+      }
+    } catch {
+      logBackendMismatch = false
     }
   }
 
@@ -2979,8 +2992,10 @@
                   </button>
                 </div>
                 <p class="hint">
-                  {#if logEmpty}
-                    No log entries yet. Enable logging to capture entries.
+                  {#if logBackendMismatch}
+                    <span style="color:var(--error,#e74c3c)">Warning: Backend logging state differs from settings. Try saving again or restart the app.</span>
+                  {:else if logEmpty}
+                    No log entries yet. {#if config?.logging?.enabled}Logs will appear after app activity.{:else}Enable logging to capture entries.{/if}
                   {:else}
                     Download current buffer or full history from the database.
                   {/if}

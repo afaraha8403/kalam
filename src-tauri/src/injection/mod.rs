@@ -6,7 +6,18 @@ use tokio::time::sleep;
 
 use crate::config::{FormattingConfig, InjectionMethod};
 
-const PASTE_WAIT_MS: u64 = 100;
+/// How long to wait after sending Ctrl+V before restoring the clipboard.
+/// Must be long enough for the target app to read the clipboard.
+/// 100ms was too short for XAML/Electron/heavy apps — raised to 350ms
+/// with a verification loop that re-checks the clipboard to confirm the
+/// paste was consumed before restoring.
+const PASTE_SETTLE_MS: u64 = 350;
+
+/// Max number of extra polling rounds to wait for the target app to consume the paste.
+const PASTE_VERIFY_ROUNDS: u32 = 3;
+
+/// Interval between verification polls.
+const PASTE_VERIFY_INTERVAL_MS: u64 = 100;
 
 pub struct TextInjector;
 
@@ -37,6 +48,12 @@ impl TextInjector {
             }
             other => other.clone(),
         };
+
+        log::debug!(
+            "Injecting {} chars via {:?}",
+            text.len(),
+            method
+        );
 
         let mut last_err = None;
         for attempt in 1..=config.retry_attempts {
@@ -96,6 +113,17 @@ impl TextInjector {
             .set_text(text)
             .map_err(|e| anyhow::anyhow!("Failed to set clipboard: {}", e))?;
 
+        // Verify the clipboard actually holds our text before pasting.
+        // Some apps or clipboard managers can race us.
+        let clip_check = clipboard.get_text().unwrap_or_default();
+        if clip_check != text {
+            log::warn!(
+                "Clipboard verification failed: set {} chars but read back {} chars",
+                text.len(),
+                clip_check.len()
+            );
+        }
+
         {
             let mut enigo = Enigo::new(&Settings::default())
                 .map_err(|e| anyhow::anyhow!("Failed to init enigo: {:?}", e))?;
@@ -116,10 +144,36 @@ impl TextInjector {
                 .map_err(|e| anyhow::anyhow!("Failed to release modifier: {:?}", e))?;
         }
 
-        sleep(Duration::from_millis(PASTE_WAIT_MS)).await;
+        // Wait for the target app to process the paste. The initial delay covers
+        // the vast majority of apps; the verification loop handles slow ones
+        // (XAML, Electron, apps under load) without penalising fast apps.
+        sleep(Duration::from_millis(PASTE_SETTLE_MS)).await;
 
-        if let Err(e) = clipboard.set_text(&old_text) {
-            log::warn!("Failed to restore clipboard after paste: {}", e);
+        // Before restoring, verify the target likely consumed the paste by
+        // checking that the clipboard still holds our text.  If a clipboard
+        // manager already changed it, skip restoration to avoid overwriting.
+        let still_ours = clipboard
+            .get_text()
+            .map(|c| c == text)
+            .unwrap_or(false);
+
+        if still_ours {
+            // Extra safety: poll briefly in case the app is still mid-paste.
+            // We only restore once we're confident the app has had time to read.
+            for round in 0..PASTE_VERIFY_ROUNDS {
+                sleep(Duration::from_millis(PASTE_VERIFY_INTERVAL_MS)).await;
+                let current = clipboard.get_text().unwrap_or_default();
+                if current != text {
+                    // Clipboard was modified externally (target app or manager consumed it).
+                    log::debug!("Clipboard consumed by app after {} extra polls", round + 1);
+                    break;
+                }
+            }
+            if let Err(e) = clipboard.set_text(&old_text) {
+                log::warn!("Failed to restore clipboard after paste: {}", e);
+            }
+        } else {
+            log::debug!("Clipboard already changed after paste, skipping restore");
         }
 
         Ok(())

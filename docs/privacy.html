@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy — Kalam</title>
+    <meta name="description" content="Kalam privacy policy. How we handle audio, transcription data, API keys, telemetry, and your rights under GDPR and CCPA.">
+    <link rel="icon" href="assets/logo/kalam-logo_icon.svg" type="image/svg+xml">
+    <link rel="canonical" href="https://kalam.stream/privacy.html">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <link rel="stylesheet" href="theme.css">
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-F3WK2BDF59"></script>
+    <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-F3WK2BDF59');</script>
+
+    <style>
+        .legal-content { max-width: 800px; padding-top: var(--space-16); padding-bottom: var(--space-16); }
+        .legal-content h1 { margin-bottom: var(--space-2); }
+        .legal-content .last-updated { color: var(--fg-tertiary); font-size: 0.875rem; margin-bottom: var(--space-8); }
+        .legal-content h2 { margin-top: var(--space-12); font-size: 1.5rem; }
+        .legal-content h3 { margin-top: var(--space-8); font-size: 1.125rem; }
+        .legal-content p, .legal-content ul, .legal-content ol { margin-bottom: var(--space-4); color: var(--fg-secondary); line-height: 1.7; }
+        .legal-content ul, .legal-content ol { padding-left: var(--space-6); }
+        .legal-content li { margin-bottom: var(--space-2); }
+        .legal-content strong { color: var(--fg-primary); }
+        .legal-content a { color: var(--accent-primary); }
+        .tldr-card {
+            background: rgba(74, 187, 199, 0.05); border: 1px solid rgba(74, 187, 199, 0.15);
+            border-radius: var(--radius-xl); padding: var(--space-6); margin-bottom: var(--space-8);
+        }
+        .tldr-card h3 { color: var(--accent-primary); font-size: 1rem; margin-bottom: var(--space-3); }
+        .tldr-card ul { list-style: none; padding: 0; margin: 0; }
+        .tldr-card li { display: flex; align-items: flex-start; gap: var(--space-3); margin-bottom: var(--space-2); color: var(--fg-secondary); font-size: 0.9375rem; }
+        .tldr-card li i { color: var(--accent-primary); margin-top: 2px; }
+        .legal-table { width: 100%; border-collapse: collapse; margin: var(--space-4) 0 var(--space-6); font-size: 0.9375rem; }
+        .legal-table th, .legal-table td { padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); text-align: left; color: var(--fg-secondary); }
+        .legal-table th { background: var(--bg-surface); color: var(--fg-primary); font-weight: 600; }
+    </style>
+</head>
+<body>
+    <script>
+        (function(){var t=localStorage.getItem('kalam-site-theme')||(window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t);})();
+    </script>
+
+    <!-- Skip to content for accessibility -->
+    <a href="#main-content" class="skip-to-content">Skip to content</a>
+
+    <header class="site-header">
+        <div class="container">
+            <a href="/" class="site-header-logo"><img src="assets/logo/kalam-logo_icon.svg" alt=""><span>Kalam</span></a>
+            <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation"><i class="ri-menu-line" id="nav-toggle-icon"></i></button>
+            <nav class="site-nav" id="site-nav">
+                <a href="/">Home</a>
+                <a href="download.html">Download</a>
+                <a href="documentation.html">Docs</a>
+                <a href="business.html">Commercial</a>
+                <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener" class="site-nav-github"><i class="ri-github-fill" aria-hidden="true"></i> GitHub</a>
+                <button class="btn btn-ghost btn-sm" id="theme-toggle" aria-label="Toggle theme" style="height:2.25rem;padding:0 var(--space-3);"><i class="ri-moon-line" id="theme-icon"></i></button>
+            </nav>
+        </div>
+    </header>
+
+    <main id="main-content" class="container">
+        <div class="legal-content">
+            <h1 class="text-display-sm">Privacy Policy</h1>
+            <p class="last-updated">Last updated: March 27, 2026</p>
+
+            <div class="tldr-card">
+                <h3><i class="ri-shield-check-line" style="margin-right: var(--space-2);"></i> TL;DR</h3>
+                <ul>
+                    <li><i class="ri-check-line"></i> <span>Audio is never written to disk. It's processed in memory and discarded.</span></li>
+                    <li><i class="ri-check-line"></i> <span>In Offline mode, nothing leaves your device — ever.</span></li>
+                    <li><i class="ri-check-line"></i> <span>In Cloud mode, audio goes to the STT provider <strong>you</strong> configure (Groq or OpenAI).</span></li>
+                    <li><i class="ri-check-line"></i> <span>Dictation history is stored locally on your device.</span></li>
+                    <li><i class="ri-check-line"></i> <span>Telemetry is opt-in. No audio or text is ever included.</span></li>
+                </ul>
+            </div>
+
+            <h2>1. Who We Are</h2>
+            <p>Kalam is developed by Ali Farahat / Balacode.</p>
+            <p><strong>Ali Farahat</strong><br>Email: <a href="mailto:hello@balacode.io">hello@balacode.io</a><br>Website: <a href="https://balacode.io">balacode.io</a></p>
+            <p><strong>Data controller note:</strong> Kalam is a desktop application that processes and stores data locally on your device. For all locally-stored data (audio, transcription history, API keys, workspace data), <strong>you are the data controller</strong>. We act as data controller only for data we actually receive — specifically, website analytics data collected through this Site and any email address you voluntarily provide.</p>
+
+            <h2>2. What Data We Collect</h2>
+
+            <h3>Audio &amp; Transcription</h3>
+            <table class="legal-table">
+                <thead><tr><th>Mode</th><th>Audio Processing</th><th>Data Destination</th></tr></thead>
+                <tbody>
+                    <tr><td>Offline</td><td>Processed locally via Whisper model</td><td>Stays on your device</td></tr>
+                    <tr><td>Cloud</td><td>Sent to your configured STT provider</td><td>Groq or OpenAI (per their privacy policies)</td></tr>
+                    <tr><td>Auto</td><td>Cloud by default; local for sensitive apps</td><td>Depends on active app</td></tr>
+                </tbody>
+            </table>
+            <p>In all modes, audio is processed in memory and <strong>never written to disk</strong> by Kalam.</p>
+
+            <h3>Onboarding Email</h3>
+            <p>During onboarding, you may optionally provide an email address. This is stored locally and used only if you opt in to product updates.</p>
+
+            <h3>API Keys</h3>
+            <p>API keys for Groq or OpenAI are stored locally on your device. They are sent only to the respective STT provider during cloud transcription. Kalam never transmits your keys to our servers.</p>
+
+            <h3>Telemetry</h3>
+            <p>Kalam includes optional, anonymous usage telemetry. It is <strong>disabled by default</strong> and must be explicitly enabled in Settings. Telemetry data never includes audio, transcription text, API keys, or personally identifiable information.</p>
+
+            <h3>Website Analytics</h3>
+            <p>This website (kalam.stream) uses Google Analytics (ID: G-F3WK2BDF59) and Google Fonts. Google may collect your IP address per their privacy policies.</p>
+
+            <h2>3. How We Use Your Data</h2>
+            <table class="legal-table">
+                <thead><tr><th>Purpose</th><th>Legal Basis (GDPR)</th></tr></thead>
+                <tbody>
+                    <tr><td>Provide voice dictation functionality</td><td>Performance of contract / legitimate interest</td></tr>
+                    <tr><td>Store dictation history locally</td><td>Legitimate interest (user productivity)</td></tr>
+                    <tr><td>Anonymous telemetry (if opted in)</td><td>Consent</td></tr>
+                    <tr><td>Website analytics</td><td>Legitimate interest</td></tr>
+                </tbody>
+            </table>
+
+            <h2>4. Who We Share Data With</h2>
+            <ul>
+                <li><strong>STT Providers</strong> — Groq or OpenAI, only in Cloud/Auto mode, only audio data for transcription.</li>
+                <li><strong>Google Analytics</strong> — Anonymous website usage data.</li>
+                <li><strong>GitHub</strong> — If you open issues, sponsor, or interact with the repository.</li>
+            </ul>
+            <p>We do not sell, rent, or trade your personal data.</p>
+            <p><strong>Third-party disclaimer:</strong> When you use cloud transcription, audio data is transmitted directly from your device to the STT provider you configure. We have <strong>no control over</strong> and accept <strong>no responsibility for</strong> how those third-party providers collect, store, process, or retain your data. You should review the privacy policy of your chosen provider before using cloud mode:</p>
+            <ul>
+                <li><a href="https://groq.com/privacy-policy/" target="_blank" rel="noopener">Groq Privacy Policy</a></li>
+                <li><a href="https://openai.com/policies/privacy-policy" target="_blank" rel="noopener">OpenAI Privacy Policy</a></li>
+            </ul>
+
+            <h2>5. Data Retention and Deletion</h2>
+            <ul>
+                <li><strong>Audio</strong> — Ephemeral. Processed in memory, never persisted.</li>
+                <li><strong>Dictation history</strong> — Stored locally. Retention period configurable in Settings. You can clear history at any time.</li>
+                <li><strong>App data</strong> — To fully reset, delete the Kalam data directory on your system.</li>
+            </ul>
+
+            <h2>6. Your Rights</h2>
+            <h3>EEA / UK (GDPR)</h3>
+            <p>You have the right to access, rectify, erase, restrict processing, data portability, and object to processing of your personal data. Contact us at <a href="mailto:hello@balacode.io">hello@balacode.io</a>.</p>
+
+            <h3>California (CCPA)</h3>
+            <p>California residents have the right to know what personal information is collected, request deletion, and opt out of sale. We do not sell personal information.</p>
+
+            <h2>7. Security</h2>
+            <p>We implement reasonable technical measures to protect your data. API keys are stored using your operating system's secure storage where available. All cloud STT requests use HTTPS.</p>
+            <p><strong>However, no method of electronic storage or internet transmission is 100% secure.</strong> We cannot and do not guarantee the absolute security of your data. You acknowledge that you provide data at your own risk, and we are not responsible for any unauthorized access to, or breach of, data stored on your device or transmitted to third-party services.</p>
+
+            <h2>8. Children's Privacy</h2>
+            <p>Kalam is not directed at children under 13 (or 16 in the EEA). We do not knowingly collect data from children. If you believe a child has provided us with personal data, contact us and we will delete it.</p>
+
+            <h2>9. Third-Party Links</h2>
+            <p>Kalam and this website may link to third-party services (GitHub, Groq, OpenAI). We are not responsible for their privacy practices and accept no liability for any data processing carried out by third parties.</p>
+
+            <h2>10. International Data Transfers</h2>
+            <p>If you use cloud transcription, your audio data may be transmitted to STT providers located outside your country of residence — including to the United States. These providers may be subject to different data protection laws than those in your jurisdiction. By choosing to use cloud mode, you acknowledge and consent to this transfer. We encourage you to review the data handling practices of your chosen STT provider.</p>
+            <p>Website analytics data collected via Google Analytics may also be processed in the United States by Google LLC.</p>
+
+            <h2>11. Cookies and Tracking</h2>
+            <p><strong>The Kalam desktop application does not use cookies.</strong></p>
+            <p>This website (kalam.stream) uses cookies set by Google Analytics to distinguish unique visitors and track page views. These are third-party cookies governed by Google's privacy policy. The website also stores a theme preference in <code>localStorage</code> (not a cookie) which never leaves your browser.</p>
+            <p>You can block cookies via your browser settings or by using a browser extension. Blocking cookies does not affect the functionality of the website.</p>
+
+            <h2>12. Limitation of Liability</h2>
+            <p>To the maximum extent permitted by applicable law, we are <strong>not liable</strong> for any loss, damage, or claim arising from:</p>
+            <ul>
+                <li>The processing of your data by any third-party STT provider.</li>
+                <li>Unauthorized access to data stored on your device.</li>
+                <li>Any inaccuracy in transcription output.</li>
+                <li>Your failure to secure your API keys or credentials.</li>
+                <li>Any action taken by you in reliance on transcription output.</li>
+            </ul>
+            <p>This section supplements, and does not limit, the limitation of liability and disclaimer of warranties in our <a href="terms.html">Terms of Service</a>.</p>
+
+            <h2>13. Changes to This Policy</h2>
+            <p>We may update this policy from time to time. Material changes will be noted on this page with an updated "Last updated" date.</p>
+
+            <h2>14. Contact</h2>
+            <p>For privacy-related questions or requests:</p>
+            <p><strong>Email:</strong> <a href="mailto:hello@balacode.io">hello@balacode.io</a><br>We aim to respond within 30 days.</p>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-col">
+                    <div class="footer-brand-row"><img src="assets/logo/kalam-logo_icon.svg" alt="" class="footer-brand-mark"><h4>Kalam</h4></div>
+                    <p class="text-body-sm" style="max-width:300px;margin-bottom:var(--space-6);">Speak, It Types Everywhere. Free &amp; open-source voice dictation.</p>
+                    <div style="display: flex; gap: var(--space-4);"><a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener" aria-label="Kalam on GitHub" style="color: var(--fg-secondary); font-size: 1.5rem;"><i class="ri-github-fill"></i></a></div>
+                </div>
+                <div class="footer-col"><h4>Product</h4><ul><li><a href="download.html">Download</a></li><li><a href="documentation.html">Documentation</a></li><li><a href="https://github.com/afaraha8403/kalam/releases" target="_blank" rel="noopener">Changelog</a></li><li><a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener">GitHub Repo</a></li></ul></div>
+                <div class="footer-col"><h4>Company</h4><ul><li><a href="business.html">Commercial License</a></li><li><a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener">Sponsors</a></li><li><a href="mailto:hello@balacode.io">Contact</a></li></ul></div>
+                <div class="footer-col"><h4>Legal</h4><ul><li><a href="privacy.html">Privacy Policy</a></li><li><a href="terms.html">Terms of Service</a></li></ul></div>
+            </div>
+            <div class="footer-bottom">
+                <div>&copy; 2026 Kalam. MIT License &mdash; noncommercial use and limited commercial use; expanded commercial licensing by agreement.</div>
+                <div>Created by <a href="https://alifarahat.com" style="color:var(--fg-secondary);text-decoration:underline;">Ali Farahat</a> &amp; <a href="https://balacode.io" style="color:var(--fg-secondary);text-decoration:underline;">Balacode</a>.</div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="site.js"></script>
+</body>
+</html>

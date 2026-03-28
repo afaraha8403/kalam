@@ -965,6 +965,7 @@ pub fn run() {
             download_model,
             get_app_log,
             get_app_log_empty,
+            get_logging_state,
             save_log_to_file,
             save_logs_csv_to_file,
             get_app_data_path,
@@ -2161,6 +2162,14 @@ fn get_app_log() -> Result<String, String> {
 #[tauri::command]
 fn get_app_log_empty() -> Result<bool, String> {
     Ok(app_log::is_empty())
+}
+
+/// Returns the effective logging config the backend is actually using, so the
+/// UI can confirm it matches what the user expects.
+#[tauri::command]
+fn get_logging_state() -> Result<serde_json::Value, String> {
+    let config = app_log::current_config();
+    serde_json::to_value(&config).map_err(|e| e.to_string())
 }
 
 /// Show a native "Save as" dialog and write the in-memory log buffer to the chosen file.
@@ -4071,7 +4080,13 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                 len,
                                 Some(prev_ref),
                             );
-                            log::info!("Transcription completed, length: {}", formatted.len());
+                            log::info!(
+                                "Transcription completed: raw_len={} formatted_len={} actions={} injection={:?}",
+                                transcription_result.text.len(),
+                                formatted.len(),
+                                actions.len(),
+                                config.formatting.injection_method
+                            );
                             let words_count = formatted.split_whitespace().count() as u32;
                             let meta = crate::history::HistorySaveMeta {
                                 word_count: words_count,
@@ -4168,6 +4183,18 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                     {
                                         log::error!("Failed to inject text: {}", e);
                                     } else {
+                                        // Log enough to verify the right text was injected,
+                                        // without logging full PII (first 5 words only).
+                                        let preview: String = formatted
+                                            .split_whitespace()
+                                            .take(5)
+                                            .collect::<Vec<_>>()
+                                            .join(" ");
+                                        log::info!(
+                                            "Injection success: {} chars, preview: {:?}…",
+                                            formatted.len(),
+                                            preview
+                                        );
                                         last_injected_len.store(formatted.len(), Ordering::SeqCst);
                                         *last_injected_text.lock().await = formatted;
                                         if config.notifications.show_completion {

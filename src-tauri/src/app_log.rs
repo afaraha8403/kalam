@@ -42,6 +42,12 @@ static APP_LOG_STATE: Lazy<Mutex<AppLogState>> = Lazy::new(|| {
 
 const STDERR_FILTER: log::LevelFilter = log::LevelFilter::Info;
 
+/// Write directly to stderr, bypassing the log framework. Used when the
+/// log mutex is poisoned or when diagnosing logger failures.
+fn stderr_fallback(msg: &str) {
+    let _ = writeln!(std::io::stderr(), "[app_log FALLBACK] {}", msg);
+}
+
 fn push_to_buffer_and_db(
     record_level: log::Level,
     line: &str,
@@ -50,7 +56,11 @@ fn push_to_buffer_and_db(
 ) {
     let mut state = match APP_LOG_STATE.lock() {
         Ok(s) => s,
-        Err(_) => return,
+        Err(poisoned) => {
+            stderr_fallback(&format!("Log mutex poisoned, recovering: {}", line));
+            // Recover the inner state so logging doesn't permanently die.
+            poisoned.into_inner()
+        }
     };
     if !state.config.enabled {
         return;
@@ -66,6 +76,7 @@ fn push_to_buffer_and_db(
     while state.buffer.len() > max {
         state.buffer.pop_front();
     }
+    // Format message and release the lock before DB I/O to reduce contention.
     let msg = message.to_string();
     drop(state);
     if let Ok(conn) = db::open_db() {
@@ -113,19 +124,67 @@ static LOGGER: AppLoggerStatic = AppLoggerStatic {
     stderr_filter: STDERR_FILTER,
 };
 
-/// Initialize the app log with default config and set it as the global logger.
-/// Call once at startup (e.g. from main or start of run()).
+/// Try to load just the logging config from the config file on disk.
+/// Falls back to `default_config` on any failure (missing file, parse error, etc.).
+pub fn load_logging_config_from_disk(default_config: LoggingConfig) -> LoggingConfig {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    if home.is_empty() {
+        return default_config;
+    }
+    let config_path = std::path::PathBuf::from(home)
+        .join(".kalam")
+        .join("config.json");
+    let contents = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => return default_config,
+    };
+    // Parse just enough to extract the logging section.
+    let value: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(v) => v,
+        Err(_) => return default_config,
+    };
+    let Some(logging_value) = value.get("logging") else {
+        return default_config;
+    };
+    serde_json::from_value::<LoggingConfig>(logging_value.clone()).unwrap_or(default_config)
+}
+
+/// Initialize the app log and set it as the global logger.
+/// Reads the user's config file to pick up persisted logging settings so that
+/// logs captured during early startup (before full config load) are not lost.
+/// Call once at startup from main().
 pub fn init(default_config: LoggingConfig) {
     if INITIALIZED.swap(true, Ordering::SeqCst) {
         return;
     }
+    let effective_config = load_logging_config_from_disk(default_config);
     {
         let mut state = APP_LOG_STATE.lock().unwrap();
-        state.config = default_config;
+        state.config = effective_config.clone();
         state.buffer.clear();
     }
-    let _ = log::set_logger(&LOGGER);
+    if log::set_logger(&LOGGER).is_err() {
+        stderr_fallback(
+            "CRITICAL: log::set_logger failed — another logger was already registered. \
+             In-app logging will not work.",
+        );
+    }
     log::set_max_level(log::LevelFilter::Debug);
+    // Confirm logging state at startup so it's visible in the buffer and stderr.
+    if effective_config.enabled {
+        log::info!(
+            "App logging active at startup (level={:?}, max_records={})",
+            effective_config.level,
+            effective_config.max_records
+        );
+    } else {
+        let _ = writeln!(
+            std::io::stderr(),
+            "[app_log] Logging disabled in config. Enable in Settings > Advanced."
+        );
+    }
 }
 
 /// Reconfigure in-app logging (e.g. after user changes settings).
@@ -133,12 +192,34 @@ pub fn init(default_config: LoggingConfig) {
 pub fn reconfigure(config: LoggingConfig) {
     let mut state = match APP_LOG_STATE.lock() {
         Ok(s) => s,
-        Err(_) => return,
+        Err(poisoned) => {
+            stderr_fallback("Log mutex poisoned during reconfigure, recovering");
+            poisoned.into_inner()
+        }
     };
+    let was_enabled = state.config.enabled;
     state.config = config;
     let max = state.config.max_records as usize;
     while state.buffer.len() > max {
         state.buffer.pop_front();
+    }
+    // Emit a confirmation so the first log entry proves reconfigure worked.
+    if state.config.enabled && !was_enabled {
+        let line = format!(
+            "{} INFO [app_log] Logging enabled (level={:?}, max_records={})",
+            format_timestamp(),
+            state.config.level,
+            state.config.max_records
+        );
+        state.buffer.push_back(line);
+    }
+}
+
+/// Return the current effective logging config (for diagnostic UI).
+pub fn current_config() -> LoggingConfig {
+    match APP_LOG_STATE.lock() {
+        Ok(s) => s.config.clone(),
+        Err(poisoned) => poisoned.into_inner().config.clone(),
     }
 }
 
@@ -146,7 +227,7 @@ pub fn reconfigure(config: LoggingConfig) {
 pub fn is_empty() -> bool {
     let state = match APP_LOG_STATE.lock() {
         Ok(s) => s,
-        Err(_) => return true,
+        Err(poisoned) => poisoned.into_inner(),
     };
     state.buffer.is_empty()
 }
@@ -155,7 +236,7 @@ pub fn is_empty() -> bool {
 pub fn get_snapshot() -> String {
     let state = match APP_LOG_STATE.lock() {
         Ok(s) => s,
-        Err(_) => return String::new(),
+        Err(poisoned) => poisoned.into_inner(),
     };
     state.buffer.iter().cloned().collect::<Vec<_>>().join("\n")
 }

@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Download Kalam — Free Voice Dictation for Windows, Mac &amp; Linux</title>
+    <meta name="description" content="Download Kalam for free. Voice dictation that works in every app — offline or cloud. Available for Windows, macOS, and Linux.">
+    <link rel="icon" href="assets/logo/kalam-logo_icon.svg" type="image/svg+xml">
+    <link rel="canonical" href="https://kalam.stream/download.html">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <link rel="stylesheet" href="theme.css">
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-F3WK2BDF59"></script>
+    <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-F3WK2BDF59');</script>
+
+    <style>
+        .dl-hero { padding-top: var(--space-24); padding-bottom: var(--space-16); text-align: center; }
+        /* Shared pill sizing so OS chip and download status align visually */
+        .dl-hero-status {
+            display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+            gap: var(--space-3); margin-bottom: var(--space-8);
+        }
+        .dl-os-chip,
+        .dl-status {
+            display: inline-flex; align-items: center; gap: var(--space-3);
+            padding: var(--space-3) var(--space-6); border-radius: var(--radius-full);
+            font-family: var(--font-display); font-weight: 600; font-size: 0.9375rem;
+            line-height: 1.25; min-height: 2.75rem; box-sizing: border-box;
+        }
+        .dl-status {
+            background: var(--bg-surface); border: 1px solid var(--border-subtle);
+            color: var(--fg-secondary); margin-bottom: 0;
+        }
+        .dl-status .spinner {
+            width: 18px; height: 18px; border: 2px solid var(--border-strong);
+            border-top-color: var(--accent-primary); border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .dl-status.done { border-color: rgba(16, 185, 129, 0.3); color: var(--success); }
+        .dl-status.done .spinner { display: none; }
+        .dl-status.error { border-color: rgba(239, 68, 68, 0.3); color: var(--error); }
+        .dl-status.error .spinner { display: none; }
+
+        #manual-dl { display: none; margin-top: var(--space-4); }
+
+        /* Points users to the full release list further down the page */
+        .dl-hero-scroll-hint { margin-top: var(--space-8); }
+        .dl-hero-scroll-link {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            gap: var(--space-3);
+            max-width: 20rem;
+            margin: 0 auto;
+            text-decoration: none;
+            color: var(--fg-tertiary);
+            transition: color var(--duration-fast);
+        }
+        .dl-hero-scroll-link:hover { color: var(--accent-primary); }
+        .dl-hero-scroll-link:focus-visible {
+            outline: 2px solid var(--accent-primary);
+            outline-offset: 4px;
+            border-radius: var(--radius-sm);
+        }
+        .dl-hero-scroll-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.75rem;
+            line-height: 1;
+            color: var(--accent-primary);
+            animation: dl-hero-nudge-down 1.5s ease-in-out infinite;
+        }
+        @keyframes dl-hero-nudge-down {
+            0%, 100% { transform: translateY(0); opacity: 0.75; }
+            50% { transform: translateY(8px); opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .dl-hero-scroll-icon { animation: none; opacity: 1; }
+        }
+        .dl-hero-scroll-text {
+            font-family: var(--font-body);
+            font-size: 0.875rem;
+            line-height: 1.45;
+            margin: 0;
+        }
+
+        .dl-os-chip {
+            background: rgba(74, 187, 199, 0.1); border: 1px solid rgba(74, 187, 199, 0.2);
+            color: var(--accent-primary); margin-bottom: 0;
+        }
+        .dl-os-chip img { height: 16px; width: auto; }
+        [data-theme="dark"] .dl-os-chip img { filter: brightness(0) invert(1); }
+
+        /* Info section: lede + permissions + security (clear hierarchy, design-system aligned) */
+        .dl-info-wrap {
+            max-width: 56rem;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-12);
+            text-align: left;
+        }
+        .dl-info-lede { padding: var(--space-8); }
+        .dl-info-lede-inner {
+            display: flex;
+            gap: var(--space-6);
+            align-items: flex-start;
+        }
+        .dl-info-lede-icon {
+            flex-shrink: 0;
+            width: 3.25rem;
+            height: 3.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-lg);
+            background: rgba(74, 187, 199, 0.12);
+            border: 1px solid rgba(74, 187, 199, 0.22);
+            color: var(--accent-primary);
+            font-size: 1.75rem;
+        }
+        .dl-info-lede-title {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: clamp(1.375rem, 2.5vw, 1.75rem);
+            line-height: 1.2;
+            margin: 0 0 var(--space-3);
+            color: var(--fg-primary);
+        }
+        .dl-info-lede .text-body-md { margin: 0; color: var(--fg-secondary); line-height: 1.65; }
+        @media (max-width: 640px) {
+            .dl-info-lede-inner { flex-direction: column; align-items: center; text-align: center; }
+        }
+        .dl-info-eyebrow {
+            font-size: 0.6875rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--accent-primary);
+            margin: 0 0 var(--space-2);
+        }
+        .dl-info-heading {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 1.375rem;
+            margin: 0 0 var(--space-2);
+            color: var(--fg-primary);
+        }
+        .dl-info-desc { margin: 0 0 var(--space-6); color: var(--fg-tertiary); max-width: 40rem; line-height: 1.5; }
+        .perm-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: var(--space-4);
+        }
+        .dl-info .perm-grid .card.perm-card {
+            padding: var(--space-6);
+        }
+        .perm-card {
+            text-align: left;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-3);
+        }
+        .perm-card .perm-icon {
+            font-size: 1.5rem;
+            color: var(--accent-primary);
+            margin: 0;
+            line-height: 1;
+        }
+        .perm-card-title {
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 1rem;
+            margin: 0;
+            color: var(--fg-primary);
+        }
+        .dl-security-stack { display: flex; flex-direction: column; gap: var(--space-4); }
+        .dl-security-stack .accordion { margin-bottom: 0; }
+        .dl-info code {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.875em;
+            background: var(--bg-surface);
+            padding: 0.12em 0.4em;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-subtle);
+        }
+
+        /* All downloads grid */
+        .assets-section { margin-top: var(--space-12); }
+        .asset-group-title {
+            font-family: var(--font-display); font-weight: 700; font-size: 1.25rem;
+            margin-bottom: var(--space-4); display: flex; align-items: baseline; gap: var(--space-3);
+        }
+        .asset-group-title .badge { flex-shrink: 0; line-height: 1; transform: translateY(0.04em); }
+        .asset-group-title--channels {
+            flex-wrap: wrap; align-items: center; row-gap: var(--space-2);
+            column-gap: var(--space-3);
+        }
+        .asset-channel-part {
+            display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2);
+        }
+        .asset-channel-sep {
+            color: var(--fg-tertiary); font-weight: 600; user-select: none; padding: 0 var(--space-1);
+        }
+        .badge-asset-stable {
+            background: rgba(74, 187, 199, 0.1); color: var(--accent-primary);
+            border: 1px solid rgba(74, 187, 199, 0.22);
+        }
+        .badge-asset-beta {
+            background: rgba(167, 139, 250, 0.1); color: #a78bfa;
+            border: 1px solid rgba(167, 139, 250, 0.2);
+        }
+        .asset-channel-version { color: var(--fg-primary); font-weight: 700; }
+        .asset-channel-na { color: var(--fg-tertiary); font-weight: 600; font-size: 0.9375rem; }
+        .asset-channel-eyebrow {
+            font-family: var(--font-display); font-weight: 700; font-size: 0.8125rem;
+            letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg-tertiary);
+            margin: var(--space-8) 0 var(--space-4);
+        }
+        .asset-group-title--channels + .asset-channel-eyebrow { margin-top: var(--space-2); }
+        .asset-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-8); }
+        .asset-item {
+            display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+            padding: var(--space-4) var(--space-6); border-radius: var(--radius-lg);
+            background: var(--bg-surface); border: 1px solid var(--border-subtle);
+            transition: border-color var(--duration-fast), transform var(--duration-fast);
+            text-decoration: none; color: var(--fg-primary);
+        }
+        .asset-item:hover { border-color: var(--accent-primary); transform: translateY(-2px); text-decoration: none; color: var(--fg-primary); }
+        .asset-name {
+            font-family: var(--font-display); font-weight: 600; font-size: 0.9375rem;
+            display: flex; flex-direction: column; align-items: flex-start;
+            overflow: visible;
+        }
+        .asset-filename { word-break: break-all; font-weight: 600; }
+        .asset-meta { font-size: 0.8125rem; color: var(--fg-tertiary); white-space: nowrap; }
+        .asset-item .dl-icon { font-size: 1.25rem; color: var(--accent-primary); flex-shrink: 0; }
+
+        .beta-assets .asset-item { border-color: rgba(167, 139, 250, 0.2); }
+        .beta-assets .asset-item:hover { border-color: #a78bfa; }
+
+        /* Gold “sticker” badge — lifted off the row so it reads like a label peeling from the card */
+        .asset-recommended {
+            display: inline-flex; align-items: center; gap: 0.3rem;
+            font-family: var(--font-display); font-weight: 700;
+            font-size: 0.6875rem; letter-spacing: 0.05em; text-transform: uppercase;
+            position: relative;
+            margin-bottom: var(--space-3);
+            padding: 0.22rem 0.55rem; border-radius: var(--radius-full);
+            white-space: nowrap; line-height: 1.35;
+            color: #92400e;
+            background: linear-gradient(155deg, #fffbeb 0%, #fde68a 42%, #fbbf24 88%);
+            border: 1px solid rgba(180, 83, 9, 0.35);
+            transform: translateY(-4px) rotate(-2deg);
+            box-shadow:
+                0 4px 12px rgba(0, 0, 0, 0.12),
+                0 2px 4px rgba(180, 83, 9, 0.2),
+                inset 0 1px 0 rgba(255, 255, 255, 0.75);
+        }
+        [data-theme="dark"] .asset-recommended {
+            color: #fef08a;
+            background: linear-gradient(155deg, rgba(251, 191, 36, 0.28) 0%, rgba(217, 119, 6, 0.22) 55%, rgba(180, 83, 9, 0.35) 100%);
+            border-color: rgba(251, 191, 36, 0.5);
+            box-shadow:
+                0 5px 16px rgba(0, 0, 0, 0.4),
+                0 0 0 1px rgba(251, 191, 36, 0.12),
+                inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        }
+        .asset-recommended i { font-size: 0.75rem; color: inherit; opacity: 0.95; }
+        @media (prefers-reduced-motion: reduce) {
+            .asset-recommended { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12); }
+            [data-theme="dark"] .asset-recommended { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); }
+        }
+        .asset-item.asset-item--recommended { border-color: rgba(74, 187, 199, 0.35); }
+        .asset-item.asset-item--recommended:hover { border-color: var(--accent-primary); }
+        .beta-assets .asset-item.asset-item--recommended { border-color: rgba(74, 187, 199, 0.35); }
+        .beta-assets .asset-item.asset-item--recommended:hover { border-color: var(--accent-primary); }
+        /* Subheadings under each release; IDs on latest/stable block only (hero deep-links) */
+        .download-os-subtitle {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 1rem;
+            margin: 0 0 var(--space-3);
+            color: var(--fg-primary);
+        }
+        .download-os-target { scroll-margin-top: calc(4rem + var(--space-6)); }
+    </style>
+</head>
+<body>
+    <script>
+        (function(){
+            var t = localStorage.getItem('kalam-site-theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+
+    <!-- Skip to content for accessibility -->
+    <a href="#main-content" class="skip-to-content">Skip to content</a>
+
+    <!-- Header -->
+    <header class="site-header">
+        <div class="container">
+            <a href="/" class="site-header-logo">
+                <img src="assets/logo/kalam-logo_icon.svg" alt="">
+                <span>Kalam</span>
+            </a>
+            <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
+                <i class="ri-menu-line" id="nav-toggle-icon"></i>
+            </button>
+            <nav class="site-nav" id="site-nav">
+                <a href="/">Home</a>
+                <a href="download.html" class="active" aria-current="page">Download</a>
+                <a href="documentation.html">Docs</a>
+                <a href="business.html">Commercial</a>
+                <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener" class="site-nav-github"><i class="ri-github-fill" aria-hidden="true"></i> GitHub</a>
+                <button class="btn btn-ghost btn-sm" id="theme-toggle" aria-label="Toggle theme" style="height:2.25rem;padding:0 var(--space-3);"><i class="ri-moon-line" id="theme-icon"></i></button>
+            </nav>
+        </div>
+    </header>
+
+    <main id="main-content" class="container">
+        <!-- Hero -->
+        <section class="dl-hero">
+            <div class="reveal">
+                <span class="badge badge-accent" style="margin-bottom: var(--space-4);">Download</span>
+                <h1 class="text-display-md">Almost there.<br>Your build is on the way.</h1>
+
+                <div class="dl-hero-status">
+                    <div id="os-chip" class="dl-os-chip" style="display: none;"></div>
+                    <div class="dl-status" id="dl-status">
+                        <div class="spinner"></div>
+                        <span id="dl-status-text">Preparing your download…</span>
+                    </div>
+                </div>
+
+                <a href="#" id="manual-dl" class="text-body-md" style="color: var(--accent-primary);">
+                    Download didn't start? Click here.
+                </a>
+
+                <p class="dl-hero-scroll-hint">
+                    <a href="#all-downloads" class="dl-hero-scroll-link">
+                        <span class="dl-hero-scroll-icon" aria-hidden="true"><i class="ri-arrow-down-line"></i></span>
+                        <span class="dl-hero-scroll-text">All downloads for every platform — including beta builds — are listed below.</span>
+                    </a>
+                </p>
+            </div>
+        </section>
+
+        <!-- Info -->
+        <section class="section dl-info">
+            <div class="reveal">
+                <div class="dl-info-wrap">
+                    <div class="card dl-info-lede">
+                        <div class="dl-info-lede-inner">
+                            <div class="dl-info-lede-icon" aria-hidden="true"><i class="ri-shield-check-line"></i></div>
+                            <div>
+                                <h2 class="dl-info-lede-title">Before you install</h2>
+                                <p class="text-body-md">Kalam is distributed outside app stores. The first time you run it, your OS may show a security warning — that is expected for open-source builds that are not store-notarized.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p class="dl-info-eyebrow">What to expect</p>
+                        <h3 class="dl-info-heading">Permissions</h3>
+                        <p class="dl-info-desc">Kalam only asks for what it needs to dictate and respect your privacy settings.</p>
+                        <div class="perm-grid">
+                            <div class="perm-card card">
+                                <div class="perm-icon"><i class="ri-mic-line" aria-hidden="true"></i></div>
+                                <h4 class="perm-card-title">Microphone</h4>
+                                <p class="text-body-sm" style="margin: 0; color: var(--fg-secondary); line-height: 1.6;">Required for voice dictation. Audio is processed locally or sent only to the STT provider you configure.</p>
+                            </div>
+                            <div class="perm-card card">
+                                <div class="perm-icon"><i class="ri-keyboard-line" aria-hidden="true"></i></div>
+                                <h4 class="perm-card-title">Accessibility / input</h4>
+                                <p class="text-body-sm" style="margin: 0; color: var(--fg-secondary); line-height: 1.6;">Needed to insert text into other apps and to detect the active window for Smart Privacy mode.</p>
+                            </div>
+                            <div class="perm-card card">
+                                <div class="perm-icon"><i class="ri-notification-3-line" aria-hidden="true"></i></div>
+                                <h4 class="perm-card-title">Notifications</h4>
+                                <p class="text-body-sm" style="margin: 0; color: var(--fg-secondary); line-height: 1.6;">Optional — for reminders and due dates from the built-in workspace.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p class="dl-info-eyebrow">First launch</p>
+                        <h3 class="dl-info-heading">Security prompts</h3>
+                        <p class="dl-info-desc">We matched a guide to your system. Expand for step-by-step help.</p>
+                        <div class="dl-security-stack">
+                            <div class="accordion security-guide" id="guide-windows" style="display: none;">
+                                <div class="accordion-header">Windows — SmartScreen<i class="ri-arrow-down-s-line accordion-icon"></i></div>
+                                <div class="accordion-content">
+                                    <p style="margin: 0; line-height: 1.65;">SmartScreen may show &ldquo;Windows protected your PC.&rdquo; Choose <strong>More info</strong>, then <strong>Run anyway</strong>. This appears because the installer is not signed with an EV certificate — the app is open-source and safe to use.</p>
+                                </div>
+                            </div>
+                            <div class="accordion security-guide" id="guide-mac" style="display: none;">
+                                <div class="accordion-header">macOS — Gatekeeper<i class="ri-arrow-down-s-line accordion-icon"></i></div>
+                                <div class="accordion-content">
+                                    <p style="margin: 0; line-height: 1.65;">If you see &ldquo;from an unidentified developer,&rdquo; open <strong>System Settings → Privacy &amp; Security</strong>, scroll down, and click <strong>Open Anyway</strong>. Or right-click the app and choose <strong>Open</strong>.</p>
+                                </div>
+                            </div>
+                            <div class="accordion security-guide" id="guide-linux" style="display: none;">
+                                <div class="accordion-header">Linux — AppImage / .deb<i class="ri-arrow-down-s-line accordion-icon"></i></div>
+                                <div class="accordion-content">
+                                    <p style="margin: 0; line-height: 1.65;"><strong>AppImage:</strong> <code>chmod +x Kalam*.AppImage</code> then run. <strong>.deb:</strong> <code>sudo dpkg -i kalam*.deb</code>. Some distros may need a <code>--no-sandbox</code> flag.</p>
+                                </div>
+                            </div>
+                            <div class="accordion security-guide" id="guide-unknown">
+                                <div class="accordion-header">Other / unknown OS<i class="ri-arrow-down-s-line accordion-icon"></i></div>
+                                <div class="accordion-content">
+                                    <p style="margin: 0; line-height: 1.65;">Kalam is a desktop app for Windows, macOS, and Linux. If detection missed your platform, choose an installer from the list below or use <a href="https://github.com/afaraha8403/kalam/releases" target="_blank" rel="noopener">GitHub Releases</a>.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- All Downloads -->
+        <section class="section assets-section" id="all-downloads">
+            <div class="reveal">
+                <h3 class="text-display-sm" style="margin-bottom: var(--space-2);">All downloads</h3>
+                <p class="text-body-md" id="release-tag-line" style="margin-bottom: var(--space-8);"></p>
+
+                <div id="all-assets"></div>
+
+                <p class="text-body-sm" style="margin-top: var(--space-4);">
+                    Looking for older versions? <a href="https://github.com/afaraha8403/kalam/releases" target="_blank" rel="noopener">Browse all releases on GitHub</a>.
+                </p>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-col">
+                    <div class="footer-brand-row">
+                        <img src="assets/logo/kalam-logo_icon.svg" alt="" class="footer-brand-mark">
+                        <h4>Kalam</h4>
+                    </div>
+                    <p class="text-body-sm" style="max-width: 300px; margin-bottom: var(--space-6);">Speak, It Types Everywhere. Free &amp; open-source voice dictation.</p>
+                    <div style="display: flex; gap: var(--space-4);"><a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener" aria-label="Kalam on GitHub" style="color: var(--fg-secondary); font-size: 1.5rem;"><i class="ri-github-fill"></i></a></div>
+                </div>
+                <div class="footer-col"><h4>Product</h4><ul><li><a href="download.html">Download</a></li><li><a href="documentation.html">Documentation</a></li><li><a href="https://github.com/afaraha8403/kalam/releases" target="_blank" rel="noopener">Changelog</a></li><li><a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener">GitHub Repo</a></li></ul></div>
+                <div class="footer-col"><h4>Company</h4><ul><li><a href="business.html">Commercial License</a></li><li><a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener">Sponsors</a></li><li><a href="mailto:hello@balacode.io">Contact</a></li></ul></div>
+                <div class="footer-col"><h4>Legal</h4><ul><li><a href="privacy.html">Privacy Policy</a></li><li><a href="terms.html">Terms of Service</a></li><li><a href="https://github.com/afaraha8403/kalam/blob/main/LICENSE" target="_blank" rel="noopener">License (MIT)</a></li></ul></div>
+            </div>
+            <div class="footer-bottom">
+                <div>&copy; 2026 Kalam. MIT License &mdash; noncommercial use and limited commercial use; expanded commercial licensing by agreement.</div>
+                <div>Created by <a href="https://alifarahat.com" style="color: var(--fg-secondary); text-decoration: underline;">Ali Farahat</a> &amp; <a href="https://balacode.io" style="color: var(--fg-secondary); text-decoration: underline;">Balacode</a>.</div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="site.js"></script>
+    <script>
+        /* ── Download logic ── */
+        (function() {
+            var REPO = 'afaraha8403/kalam';
+            var API  = 'https://api.github.com/repos/' + REPO + '/releases?per_page=10';
+
+            /* OS detection */
+            function detectOSSync() {
+                var ua = navigator.userAgent.toLowerCase();
+                var p  = (navigator.platform || '').toLowerCase();
+                if (p.indexOf('win') === 0 || ua.indexOf('windows') !== -1) return { os: 'windows', arch: ua.indexOf('arm') !== -1 ? 'arm64' : 'x64' };
+                if (p.indexOf('mac') === 0 || ua.indexOf('macintosh') !== -1) return { os: 'mac', arch: null };
+                if (p.indexOf('linux') !== -1 || ua.indexOf('linux') !== -1) return { os: 'linux', arch: ua.indexOf('aarch64') !== -1 || ua.indexOf('arm') !== -1 ? 'arm64' : 'amd64' };
+                return { os: null, arch: null };
+            }
+            function resolveMacArch(info) {
+                if (info.os !== 'mac') return Promise.resolve(info);
+                if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+                    return navigator.userAgentData.getHighEntropyValues(['architecture']).then(function(v) {
+                        info.arch = (v.architecture || '').indexOf('arm') !== -1 ? 'aarch64' : 'x86_64';
+                        return info;
+                    }).catch(function() { info.arch = 'aarch64'; return info; });
+                }
+                info.arch = 'aarch64';
+                return Promise.resolve(info);
+            }
+            function detectOS() { return resolveMacArch(detectOSSync()); }
+
+            /* Asset matching */
+            function assetMatches(name, os, arch) {
+                var n = name.toLowerCase();
+                if (os === 'windows') return (n.indexOf('.msi') !== -1 || n.indexOf('.exe') !== -1) && (n.indexOf('x64') !== -1 || n.indexOf('x86_64') !== -1 || !arch || arch === 'x64');
+                if (os === 'mac') {
+                    var isMac = n.indexOf('darwin') !== -1 || n.indexOf('macos') !== -1 || n.indexOf('mac') !== -1;
+                    if (!isMac) return false;
+                    if (arch === 'aarch64') return n.indexOf('aarch64') !== -1 || n.indexOf('arm64') !== -1 || n.indexOf('apple') !== -1;
+                    if (arch === 'x86_64') return n.indexOf('x86_64') !== -1 || n.indexOf('intel') !== -1;
+                    return true;
+                }
+                if (os === 'linux') return (n.indexOf('.appimage') !== -1 || n.indexOf('.deb') !== -1) && (n.indexOf('amd64') !== -1 || n.indexOf('x86_64') !== -1 || !arch || arch === 'amd64');
+                return false;
+            }
+            function pickAsset(assets, info) {
+                if (!info.os) return null;
+                var exts = info.os === 'windows' ? ['.msi','.exe'] : info.os === 'mac' ? ['.pkg','.dmg','.app.tar.gz'] : ['.appimage','.deb'];
+                for (var e = 0; e < exts.length; e++) {
+                    for (var a = 0; a < assets.length; a++) {
+                        var n = assets[a].name.toLowerCase();
+                        if (n.indexOf(exts[e]) !== -1 && assetMatches(assets[a].name, info.os, info.arch)) return assets[a];
+                    }
+                }
+                return null;
+            }
+
+            /* Helpers */
+            function formatBytes(b) { if (b < 1024) return b+' B'; if (b < 1048576) return (b/1024).toFixed(1)+' KB'; return (b/1048576).toFixed(1)+' MB'; }
+            function fileKind(name) {
+                var n = name.toLowerCase();
+                if (n.endsWith('.msi')) return 'MSI Installer';
+                if (n.endsWith('.exe')) return 'NSIS Installer';
+                if (n.endsWith('.pkg')) return 'macOS Package';
+                if (n.endsWith('.dmg')) return 'Disk Image';
+                if (n.endsWith('.appimage')) return 'AppImage';
+                if (n.endsWith('.deb')) return 'Debian Package';
+                if (n.endsWith('.tar.gz')) return 'Archive';
+                if (n.endsWith('.sig')) return 'Signature';
+                if (n.endsWith('.json')) return 'Update Manifest';
+                return 'File';
+            }
+            function triggerDownload(url) { var a = document.createElement('a'); a.href = url; a.style.display = 'none'; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
+
+            /* UI helpers */
+            function showGuide(os) {
+                document.querySelectorAll('.security-guide').forEach(function(x) { x.classList.remove('open'); });
+                ['windows','mac','linux','unknown'].forEach(function(id) {
+                    var el = document.getElementById('guide-' + id);
+                    if (!el) return;
+                    if (os === null) {
+                        el.style.display = id === 'unknown' ? '' : 'none';
+                    } else {
+                        el.style.display = id === os ? '' : 'none';
+                    }
+                });
+                if (os === null) {
+                    var u = document.getElementById('guide-unknown');
+                    if (u) u.classList.add('open');
+                    return;
+                }
+                if (os && os !== 'unknown') {
+                    var g = document.getElementById('guide-' + os);
+                    if (g) g.classList.add('open');
+                } else if (os === 'unknown') {
+                    var unk = document.getElementById('guide-unknown');
+                    if (unk) unk.classList.add('open');
+                }
+            }
+            function setChip(info) {
+                var chip = document.getElementById('os-chip');
+                if (!info.os) return;
+                var labels = { windows: 'Windows', mac: 'macOS', linux: 'Linux' };
+                var icons  = { windows: 'assets/logos/os/microsoft-windows.svg', mac: 'assets/logos/os/apple.svg', linux: 'https://cdn.jsdelivr.net/npm/simple-icons/icons/linux.svg' };
+                chip.innerHTML = '<img src="' + icons[info.os] + '" alt=""> Detected: ' + labels[info.os] + (info.arch ? ' (' + info.arch + ')' : '');
+                chip.style.display = '';
+            }
+            function setStatus(text, cls) {
+                var el = document.getElementById('dl-status');
+                document.getElementById('dl-status-text').textContent = text;
+                el.className = 'dl-status' + (cls ? ' ' + cls : '');
+            }
+            /* Bucket filenames for grouped installers (hero links: #downloads-windows | macos | linux) */
+            function assetOsBucket(name) {
+                var n = name.toLowerCase();
+                if (n.endsWith('.sig') || n === 'latest.json') return null;
+                if (n.endsWith('.msi') || n.endsWith('.exe')) return 'windows';
+                if (n.endsWith('.pkg') || n.endsWith('.dmg')) return 'mac';
+                if (n.endsWith('.tar.gz') && (n.indexOf('darwin') !== -1 || n.indexOf('macos') !== -1 || n.indexOf('apple') !== -1)) return 'mac';
+                if (n.endsWith('.appimage') || n.endsWith('.deb')) return 'linux';
+                return 'other';
+            }
+            function escapeHtml(str) {
+                if (str == null) return '';
+                return String(str)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;');
+            }
+            /* One row: Stable + Beta tags, with “Not available, coming soon” when a channel has no release. */
+            function appendDualChannelTitle(container, stableRelease, betaRelease) {
+                var el = document.createElement('div');
+                el.className = 'asset-group-title asset-group-title--channels';
+                var sText = stableRelease
+                    ? '<span class="asset-channel-version">' + escapeHtml(stableRelease.tag_name) + '</span>'
+                    : '<span class="asset-channel-na">Not available, coming soon</span>';
+                var bText = betaRelease
+                    ? '<span class="asset-channel-version">' + escapeHtml(betaRelease.tag_name) + '</span>'
+                    : '<span class="asset-channel-na">Not available, coming soon</span>';
+                el.innerHTML =
+                    '<span class="asset-channel-part"><span class="badge badge-asset-stable">Stable</span> ' + sText + '</span>' +
+                    '<span class="asset-channel-sep" aria-hidden="true">·</span>' +
+                    '<span class="asset-channel-part"><span class="badge badge-asset-beta">Beta</span> ' + bText + '</span>';
+                container.appendChild(el);
+            }
+            function appendAssetGridLinks(grid, list, osInfo, osBucket) {
+                /* osBucket is the OS group this list belongs to (windows/mac/linux/other) */
+                var isMatch = osInfo && osInfo.os && (
+                    (osBucket === 'windows' && osInfo.os === 'windows') ||
+                    (osBucket === 'mac'     && osInfo.os === 'mac') ||
+                    (osBucket === 'linux'   && osInfo.os === 'linux')
+                );
+                list.forEach(function(a) {
+                    var link = document.createElement('a');
+                    link.href = a.browser_download_url;
+                    link.className = 'asset-item' + (isMatch ? ' asset-item--recommended' : '');
+                    var badge = isMatch ? '<span class="asset-recommended"><i class="ri-star-fill" aria-hidden="true"></i> Recommended</span>' : '';
+                    link.innerHTML = '<div><div class="asset-name">' + badge + '<span class="asset-filename">' + a.name + '</span></div><div class="asset-meta">' + fileKind(a.name) + ' · ' + formatBytes(a.size) + '</div></div><i class="ri-download-2-line dl-icon"></i>';
+                    grid.appendChild(link);
+                });
+            }
+            function renderAssets(assets, container, isBeta, assignOsAnchorIds, osInfo, channelEyebrow) {
+                if (channelEyebrow) {
+                    var eyebrow = document.createElement('div');
+                    eyebrow.className = 'asset-channel-eyebrow';
+                    eyebrow.textContent = channelEyebrow;
+                    container.appendChild(eyebrow);
+                }
+                var buckets = { windows: [], mac: [], linux: [], other: [] };
+                assets.forEach(function(a) {
+                    var b = assetOsBucket(a.name);
+                    if (b) buckets[b].push(a);
+                });
+                var order = ['windows', 'mac', 'linux', 'other'];
+                var labels = { windows: 'Windows', mac: 'macOS', linux: 'Linux', other: 'Other files' };
+                var anchorIds = { windows: 'downloads-windows', mac: 'downloads-macos', linux: 'downloads-linux' };
+                order.forEach(function(key) {
+                    var list = buckets[key];
+                    if (!list.length) return;
+                    var h = document.createElement('h4');
+                    h.className = 'download-os-subtitle';
+                    if (assignOsAnchorIds && anchorIds[key]) {
+                        h.id = anchorIds[key];
+                        h.classList.add('download-os-target');
+                    }
+                    h.textContent = labels[key];
+                    container.appendChild(h);
+                    var grid = document.createElement('div');
+                    grid.className = 'asset-list' + (isBeta ? ' beta-assets' : '');
+                    appendAssetGridLinks(grid, list, osInfo, key);
+                    container.appendChild(grid);
+                });
+            }
+            function scrollToDownloadOsHash() {
+                var id = (location.hash || '').replace(/^#/, '');
+                if (id !== 'downloads-windows' && id !== 'downloads-macos' && id !== 'downloads-linux') return;
+                var el = document.getElementById(id);
+                if (!el) return;
+                var instant = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                requestAnimationFrame(function() {
+                    el.scrollIntoView({ behavior: instant ? 'auto' : 'smooth', block: 'start' });
+                });
+            }
+
+            /* Skip timed auto-download when user chose a platform section (query or hash). */
+            function shouldSuppressAutoDownload() {
+                var p = new URLSearchParams(location.search);
+                if (p.has('noautodl')) {
+                    var v = (p.get('noautodl') || '').toLowerCase();
+                    if (v !== '0' && v !== 'false') return true;
+                }
+                var id = (location.hash || '').replace(/^#/, '');
+                return id === 'downloads-windows' || id === 'downloads-macos' || id === 'downloads-linux';
+            }
+
+            /* Main */
+            function run() {
+                detectOS().then(function(osInfo) {
+                    showGuide(osInfo.os || 'unknown');
+                    setChip(osInfo);
+
+                    fetch(API, { headers: { Accept: 'application/vnd.github.v3+json' } })
+                    .then(function(r) { return r.json(); })
+                    .then(function(releases) {
+                        var stable = null, beta = null;
+                        for (var i = 0; i < releases.length; i++) {
+                            var r = releases[i];
+                            if (r.draft) continue;
+                            if (!r.prerelease && !stable) stable = r;
+                            if (r.prerelease && !beta) beta = r;
+                            if (stable && beta) break;
+                        }
+
+                        var primary = stable || beta;
+                        if (!primary) { setStatus('No releases found. Check GitHub.', 'error'); return; }
+
+                        var hasBoth = stable && beta;
+                        var container = document.getElementById('all-assets');
+                        container.innerHTML = '';
+                        var stableLabel = stable ? stable.tag_name : 'Not available, coming soon';
+                        var betaLabel = beta ? beta.tag_name : 'Not available, coming soon';
+                        document.getElementById('release-tag-line').textContent = 'Stable: ' + stableLabel + ' · Beta: ' + betaLabel;
+
+                        appendDualChannelTitle(container, stable, beta);
+                        if (stable) {
+                            renderAssets(stable.assets, container, false, true, osInfo, hasBoth ? 'Stable release' : null);
+                        }
+                        if (hasBoth && beta) {
+                            renderAssets(beta.assets, container, true, false, osInfo, 'Beta release');
+                        } else if (!stable && beta) {
+                            renderAssets(beta.assets, container, true, true, osInfo, null);
+                        }
+                        scrollToDownloadOsHash();
+
+                        var picked = pickAsset(primary.assets, osInfo);
+                        var skipAuto = shouldSuppressAutoDownload();
+                        if (picked) {
+                            var manualLink = document.getElementById('manual-dl');
+                            manualLink.href = picked.browser_download_url;
+                            manualLink.style.display = '';
+                            manualLink.textContent = (primary.prerelease ? 'Download Beta' : 'Download') + " didn't start? Click here.";
+
+                            if (skipAuto) {
+                                setStatus('Choose an installer below — auto-download is off for this link.', '');
+                                document.querySelector('.dl-status .spinner').style.display = 'none';
+                            } else {
+                                var delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1500;
+                                setTimeout(function() {
+                                    triggerDownload(picked.browser_download_url);
+                                    setStatus('Your download has started!', 'done');
+                                }, delay);
+                            }
+                        } else {
+                            setStatus('Choose your platform below', '');
+                            document.querySelector('.dl-status .spinner').style.display = 'none';
+                        }
+
+                        /* Beta CTA if both exist */
+                        if (hasBoth && picked) {
+                            var betaPick = pickAsset(beta.assets, osInfo);
+                            if (betaPick) {
+                                var p = document.createElement('p');
+                                p.className = 'text-body-sm';
+                                p.style.marginTop = 'var(--space-4)';
+                                p.innerHTML = '<i class="ri-flask-line" style="color:#a78bfa;margin-right:var(--space-2);"></i> Want to try the latest beta? <a href="' + betaPick.browser_download_url + '" style="color:#a78bfa;">' + beta.tag_name + '</a>';
+                                document.getElementById('manual-dl').parentElement.appendChild(p);
+                            }
+                        }
+                    })
+                    .catch(function() {
+                        setStatus('Could not reach GitHub. Download manually.', 'error');
+                        var manualLink = document.getElementById('manual-dl');
+                        manualLink.href = 'https://github.com/' + REPO + '/releases/latest';
+                        manualLink.style.display = '';
+                        manualLink.textContent = 'Go to GitHub Releases';
+                        showGuide(null);
+                    });
+                });
+            }
+
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
+            else run();
+        })();
+    </script>
+</body>
+</html>

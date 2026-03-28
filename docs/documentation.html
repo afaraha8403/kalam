@@ -1,0 +1,1716 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Documentation — Kalam Voice Dictation</title>
+    <meta name="description" content="Get started with Kalam. Installation guides, configuration, hotkeys, STT modes, workspace features, and troubleshooting.">
+    <link rel="icon" href="assets/logo/kalam-logo_icon.svg" type="image/svg+xml">
+    <link rel="canonical" href="https://kalam.stream/documentation.html">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=Manrope:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <link rel="stylesheet" href="theme.css">
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-F3WK2BDF59"></script>
+    <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-F3WK2BDF59');</script>
+
+    <style>
+        /* ── Docs-specific tokens ── */
+        :root {
+            --docs-sidebar-w: 260px;
+            --docs-content-max: 780px;
+            --docs-toc-w: 200px;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+        }
+        @keyframes docs-hero-spin { to { transform: rotate(360deg); } }
+
+        /* ── Hero banner ── */
+        .docs-hero {
+            padding-top: var(--space-16);
+            padding-bottom: var(--space-12);
+            border-bottom: 1px solid var(--border-subtle);
+            position: relative;
+            overflow: hidden;
+        }
+        .docs-hero::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(ellipse at 20% 80%, rgba(74, 187, 199, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(19, 48, 81, 0.12) 0%, transparent 50%);
+            pointer-events: none;
+        }
+        .docs-hero-inner {
+            position: relative;
+            z-index: 1;
+            max-width: 680px;
+        }
+        .docs-hero-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-2);
+            margin-bottom: var(--space-4);
+        }
+        .docs-hero h1 {
+            font-size: clamp(2.25rem, 4vw, 3.25rem);
+            letter-spacing: -0.035em;
+            line-height: 1.05;
+            margin-bottom: var(--space-4);
+        }
+        .docs-hero-sub {
+            font-size: 1.2rem;
+            color: var(--fg-secondary);
+            line-height: 1.65;
+            max-width: 560px;
+        }
+        .docs-hero-sub a {
+            color: var(--accent-primary);
+            font-weight: 500;
+        }
+        /* Release channel pills (filled from GitHub API; data-fallback-* used if fetch fails) */
+        .docs-hero-versions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: var(--space-2);
+            margin-top: var(--space-6);
+        }
+        .docs-hero-version-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--space-2);
+            padding: var(--space-2) var(--space-4);
+            border-radius: var(--radius-full);
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            font-size: 0.8125rem;
+            color: var(--fg-tertiary);
+            font-family: var(--font-mono);
+        }
+        .docs-hero-version-pill i {
+            font-size: 0.875rem;
+        }
+        .docs-hero-version-pill--stable i {
+            color: var(--accent-primary);
+        }
+        .docs-hero-version-pill--beta i {
+            color: #a78bfa;
+        }
+        .docs-hero-version-pill--beta {
+            border-color: rgba(167, 139, 250, 0.22);
+        }
+        .docs-hero-version-pill--loading i {
+            color: var(--fg-tertiary);
+            animation: docs-hero-spin 0.8s linear infinite;
+        }
+        a.docs-hero-version-pill {
+            color: var(--fg-secondary);
+            text-decoration: none;
+            transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+        }
+        a.docs-hero-version-pill:hover {
+            color: var(--accent-primary);
+            border-color: rgba(74, 187, 199, 0.35);
+            background: rgba(74, 187, 199, 0.06);
+        }
+        a.docs-hero-version-pill i { color: var(--accent-primary); }
+
+        /* ── Layout ── */
+        .docs-layout {
+            display: grid;
+            grid-template-columns: var(--docs-sidebar-w) minmax(0, 1fr);
+            gap: var(--space-12);
+            padding: var(--space-12) 0 var(--space-24);
+            align-items: start;
+        }
+        @media (max-width: 960px) {
+            .docs-layout { grid-template-columns: 1fr; gap: var(--space-8); }
+        }
+
+        /* ── Sidebar ── */
+        .docs-sidebar {
+            position: sticky;
+            top: 5.5rem;
+            align-self: start;
+            max-height: calc(100vh - 7rem);
+            overflow-y: auto;
+            padding-right: var(--space-4);
+            scrollbar-width: thin;
+        }
+        .docs-sidebar::-webkit-scrollbar { width: 4px; }
+        .docs-sidebar::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 4px; }
+
+        .docs-sidebar-group { margin-bottom: var(--space-6); }
+        .docs-sidebar-title {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 0.6875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--fg-tertiary);
+            margin-bottom: var(--space-3);
+            padding-left: var(--space-3);
+        }
+        .docs-sidebar ul { list-style: none; }
+        .docs-sidebar ul li { margin-bottom: 1px; }
+        .docs-sidebar ul a {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+            padding: var(--space-2) var(--space-3);
+            border-radius: var(--radius-md);
+            color: var(--fg-secondary);
+            font-size: 0.875rem;
+            font-weight: 450;
+            transition: all 150ms ease;
+            text-decoration: none;
+            border-left: 2px solid transparent;
+            margin-left: -2px;
+        }
+        .docs-sidebar ul a i {
+            font-size: 1rem;
+            opacity: 0.5;
+            flex-shrink: 0;
+            width: 18px;
+            text-align: center;
+        }
+        .docs-sidebar ul a:hover {
+            color: var(--fg-primary);
+            background: var(--bg-surface);
+        }
+        .docs-sidebar ul a:hover i { opacity: 0.8; }
+        .docs-sidebar ul a.active {
+            color: var(--accent-primary);
+            background: rgba(74, 187, 199, 0.06);
+            font-weight: 600;
+        }
+        .docs-sidebar ul a.active i { opacity: 1; color: var(--accent-primary); }
+
+        @media (max-width: 960px) {
+            .docs-sidebar {
+                position: relative;
+                top: 0;
+                max-height: none;
+                overflow: visible;
+                padding-right: 0;
+                display: flex;
+                gap: var(--space-2);
+                flex-wrap: wrap;
+                padding-bottom: var(--space-4);
+                border-bottom: 1px solid var(--border-subtle);
+            }
+            .docs-sidebar-group { margin-bottom: 0; }
+            .docs-sidebar-title { display: none; }
+            .docs-sidebar ul { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+            .docs-sidebar ul a {
+                border-left: none;
+                margin-left: 0;
+                padding: var(--space-1) var(--space-3);
+                font-size: 0.8125rem;
+                border-radius: var(--radius-full);
+                border: 1px solid var(--border-subtle);
+            }
+            .docs-sidebar ul a.active {
+                border-color: var(--accent-primary);
+                background: rgba(74, 187, 199, 0.1);
+            }
+        }
+
+        /* ── Content ── */
+        .docs-content {
+            max-width: var(--docs-content-max);
+            min-width: 0;
+        }
+
+        /* Sections */
+        .docs-section {
+            padding-bottom: var(--space-12);
+            margin-bottom: var(--space-12);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .docs-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        /* Headings */
+        .docs-content h2 {
+            font-size: 1.75rem;
+            letter-spacing: -0.03em;
+            margin-bottom: var(--space-2);
+            scroll-margin-top: 6rem;
+        }
+        .docs-content .section-lead {
+            font-size: 1.0625rem;
+            color: var(--fg-secondary);
+            line-height: 1.7;
+            margin-bottom: var(--space-8);
+            max-width: 600px;
+        }
+        .docs-content h3 {
+            font-size: 1.25rem;
+            letter-spacing: -0.02em;
+            margin-top: var(--space-8);
+            margin-bottom: var(--space-3);
+            color: var(--fg-primary);
+        }
+        .docs-content h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-top: var(--space-6);
+            margin-bottom: var(--space-2);
+            color: var(--fg-primary);
+        }
+        .docs-content p,
+        .docs-content ul,
+        .docs-content ol {
+            margin-bottom: var(--space-4);
+            color: var(--fg-secondary);
+            line-height: 1.75;
+            font-size: 0.9375rem;
+        }
+        .docs-content ul,
+        .docs-content ol {
+            padding-left: var(--space-6);
+        }
+        .docs-content li {
+            margin-bottom: var(--space-2);
+        }
+        .docs-content li::marker {
+            color: var(--fg-tertiary);
+        }
+        .docs-content strong {
+            color: var(--fg-primary);
+            font-weight: 600;
+        }
+
+        /* Inline code */
+        .docs-content code {
+            background: var(--bg-surface);
+            padding: 0.125em 0.375em;
+            border-radius: var(--radius-sm);
+            font-size: 0.85em;
+            font-family: var(--font-mono);
+            color: var(--accent-primary);
+            border: 1px solid var(--border-subtle);
+        }
+
+        /* Code blocks */
+        .docs-content pre {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-6);
+            overflow-x: auto;
+            margin-bottom: var(--space-6);
+            font-size: 0.8125rem;
+            line-height: 1.7;
+            position: relative;
+        }
+        .docs-content pre code {
+            background: none;
+            padding: 0;
+            border: none;
+            color: var(--fg-primary);
+            font-size: inherit;
+        }
+        .code-label {
+            position: absolute;
+            top: 0;
+            right: 0;
+            padding: var(--space-1) var(--space-3);
+            font-size: 0.6875rem;
+            font-family: var(--font-mono);
+            color: var(--fg-tertiary);
+            background: var(--bg-surface-hover);
+            border-bottom-left-radius: var(--radius-md);
+            border-top-right-radius: calc(var(--radius-lg) - 1px);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* Keyboard keys */
+        .kbd {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.75em;
+            padding: 0.15em 0.55em;
+            border-radius: var(--radius-sm);
+            background: var(--bg-surface);
+            border: 1px solid var(--border-strong);
+            font-family: var(--font-body);
+            font-size: 0.8em;
+            font-weight: 600;
+            color: var(--fg-primary);
+            box-shadow: 0 2px 0 rgba(0,0,0,0.2);
+            line-height: 1.4;
+            white-space: nowrap;
+        }
+        [data-theme="light"] .kbd {
+            box-shadow: 0 2px 0 rgba(0,0,0,0.08);
+        }
+
+        /* ── Callouts ── */
+        .docs-callout {
+            display: flex;
+            gap: var(--space-4);
+            padding: var(--space-4) var(--space-6);
+            border-radius: var(--radius-lg);
+            margin-bottom: var(--space-6);
+            font-size: 0.9375rem;
+            line-height: 1.7;
+            color: var(--fg-secondary);
+        }
+        .docs-callout-icon {
+            flex-shrink: 0;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-sm);
+            font-size: 0.875rem;
+            margin-top: 2px;
+        }
+        .docs-callout-body strong {
+            color: var(--fg-primary);
+        }
+
+        /* Tip — teal */
+        .docs-callout-tip {
+            background: rgba(74, 187, 199, 0.05);
+            border-left: 3px solid var(--accent-primary);
+        }
+        .docs-callout-tip .docs-callout-icon {
+            color: var(--accent-primary);
+        }
+
+        /* Warning — amber */
+        .docs-callout-warning {
+            background: rgba(245, 158, 11, 0.05);
+            border-left: 3px solid var(--warning);
+        }
+        .docs-callout-warning .docs-callout-icon {
+            color: var(--warning);
+        }
+
+        /* Info — blue */
+        .docs-callout-info {
+            background: rgba(59, 130, 246, 0.05);
+            border-left: 3px solid #3b82f6;
+        }
+        .docs-callout-info .docs-callout-icon {
+            color: #3b82f6;
+        }
+
+        /* ── Screenshot placeholders ── */
+        .docs-screenshot {
+            position: relative;
+            border-radius: var(--radius-xl);
+            overflow: hidden;
+            margin: var(--space-6) 0;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            transition: border-color var(--duration-fast);
+        }
+        .docs-screenshot:hover {
+            border-color: var(--border-strong);
+        }
+        .docs-screenshot img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border-radius: inherit;
+        }
+        /* Placeholder state when no image is loaded yet */
+        .docs-screenshot-placeholder {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-3);
+            min-height: 280px;
+            padding: var(--space-8);
+            text-align: center;
+            background:
+                linear-gradient(135deg, rgba(74, 187, 199, 0.03) 0%, transparent 50%),
+                var(--bg-surface);
+        }
+        .docs-screenshot-placeholder i {
+            font-size: 2rem;
+            color: var(--fg-tertiary);
+            opacity: 0.4;
+        }
+        .docs-screenshot-placeholder .screenshot-label {
+            font-size: 0.8125rem;
+            color: var(--fg-tertiary);
+            max-width: 320px;
+            line-height: 1.5;
+        }
+        .docs-screenshot-placeholder .screenshot-label strong {
+            color: var(--fg-secondary);
+            display: block;
+            margin-bottom: var(--space-1);
+            font-size: 0.875rem;
+        }
+
+        .docs-screenshot-caption {
+            padding: var(--space-3) var(--space-4);
+            font-size: 0.75rem;
+            color: var(--fg-tertiary);
+            border-top: 1px solid var(--border-subtle);
+            background: var(--bg-surface);
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+        }
+        .docs-screenshot-caption i {
+            font-size: 0.875rem;
+            opacity: 0.5;
+        }
+
+        /* ── Feature cards (for STT modes, workspace tools) ── */
+        .docs-card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: var(--space-4);
+            margin: var(--space-6) 0;
+        }
+        .docs-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: var(--space-6);
+            transition: border-color var(--duration-fast), transform var(--duration-fast);
+        }
+        .docs-card:hover {
+            border-color: var(--border-strong);
+            transform: translateY(-2px);
+        }
+        .docs-card-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.125rem;
+            margin-bottom: var(--space-3);
+        }
+        .docs-card h4 {
+            margin-top: 0;
+            margin-bottom: var(--space-2);
+            font-size: 0.9375rem;
+        }
+        .docs-card p {
+            font-size: 0.8125rem;
+            margin-bottom: 0;
+        }
+
+        /* Card accent colors */
+        .docs-card-teal .docs-card-icon { background: rgba(74, 187, 199, 0.1); color: var(--accent-primary); }
+        .docs-card-amber .docs-card-icon { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
+        .docs-card-blue .docs-card-icon { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+        .docs-card-green .docs-card-icon { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+        .docs-card-rose .docs-card-icon { background: rgba(244, 63, 94, 0.1); color: #f43f5e; }
+        .docs-card-violet .docs-card-icon { background: rgba(139, 92, 246, 0.1); color: #8b5cf6; }
+
+        /* ── Hotkey table ── */
+        .docs-hotkey-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: var(--space-6) 0;
+            font-size: 0.875rem;
+        }
+        .docs-hotkey-table th,
+        .docs-hotkey-table td {
+            padding: var(--space-3) var(--space-4);
+            text-align: left;
+            border-bottom: 1px solid var(--border-subtle);
+            color: var(--fg-secondary);
+        }
+        .docs-hotkey-table th {
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--fg-tertiary);
+            background: var(--bg-surface);
+        }
+        .docs-hotkey-table th:first-child { border-radius: var(--radius-md) 0 0 0; }
+        .docs-hotkey-table th:last-child { border-radius: 0 var(--radius-md) 0 0; }
+        .docs-hotkey-table td:first-child {
+            font-weight: 500;
+            color: var(--fg-primary);
+        }
+        .docs-hotkey-table tr:last-child td { border-bottom: none; }
+        .docs-hotkey-table tr:hover td { background: rgba(74, 187, 199, 0.02); }
+
+        /* ── Steps / numbered list ── */
+        .docs-steps {
+            counter-reset: docs-step;
+            margin: var(--space-6) 0;
+        }
+        .docs-step {
+            counter-increment: docs-step;
+            display: flex;
+            gap: var(--space-4);
+            padding: var(--space-4) 0;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+        .docs-step:last-child { border-bottom: none; }
+        .docs-step-num {
+            flex-shrink: 0;
+            width: 28px;
+            height: 28px;
+            border-radius: var(--radius-full);
+            background: rgba(74, 187, 199, 0.1);
+            color: var(--accent-primary);
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 0.8125rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .docs-step-num::before { content: counter(docs-step); }
+        .docs-step-body h4 {
+            margin-top: 0;
+            margin-bottom: var(--space-1);
+        }
+        .docs-step-body p {
+            margin-bottom: 0;
+        }
+
+        /* ── OS tabs ── */
+        .docs-os-tabs {
+            display: flex;
+            gap: var(--space-1);
+            margin-bottom: var(--space-6);
+            padding: var(--space-1);
+            background: var(--bg-surface);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-subtle);
+            width: fit-content;
+        }
+        .docs-os-tab {
+            display: flex;
+            align-items: center;
+            gap: var(--space-2);
+            padding: var(--space-2) var(--space-4);
+            border-radius: var(--radius-md);
+            font-size: 0.8125rem;
+            font-weight: 500;
+            color: var(--fg-tertiary);
+            cursor: pointer;
+            transition: all 150ms ease;
+            border: none;
+            background: none;
+            font-family: var(--font-body);
+        }
+        .docs-os-tab:hover {
+            color: var(--fg-secondary);
+            background: var(--bg-surface-hover);
+        }
+        .docs-os-tab.active {
+            color: var(--fg-primary);
+            background: var(--bg-base);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .docs-os-tab img {
+            width: 16px;
+            height: 16px;
+        }
+        [data-theme="dark"] .docs-os-tab img { filter: brightness(0) invert(1); opacity: 0.7; }
+        .docs-os-tab.active img { opacity: 1; }
+
+        .docs-os-panel { display: none; }
+        .docs-os-panel.active { display: block; }
+
+        /* ── Divider with label ── */
+        .docs-divider {
+            display: flex;
+            align-items: center;
+            gap: var(--space-4);
+            margin: var(--space-8) 0;
+            color: var(--fg-tertiary);
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .docs-divider::before,
+        .docs-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border-subtle);
+        }
+
+        /* ── Bottom nav (prev/next) ── */
+        .docs-bottom-nav {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--space-4);
+            margin-top: var(--space-12);
+            padding-top: var(--space-8);
+            border-top: 1px solid var(--border-subtle);
+        }
+        .docs-bottom-nav a {
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-1);
+            padding: var(--space-4) var(--space-6);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-subtle);
+            text-decoration: none;
+            transition: all 150ms ease;
+        }
+        .docs-bottom-nav a:hover {
+            border-color: var(--border-strong);
+            background: var(--bg-surface);
+            text-decoration: none;
+        }
+        .docs-bottom-nav a:last-child { text-align: right; }
+        .docs-bottom-nav-label {
+            font-size: 0.6875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--fg-tertiary);
+            font-weight: 600;
+        }
+        .docs-bottom-nav-title {
+            font-family: var(--font-display);
+            font-weight: 600;
+            font-size: 0.9375rem;
+            color: var(--fg-primary);
+        }
+
+        /* ── Reveal animation ── */
+        .docs-reveal {
+            opacity: 0;
+            transform: translateY(12px);
+            animation: docsReveal 0.6s var(--ease-out-expo) forwards;
+        }
+        .docs-reveal-d1 { animation-delay: 80ms; }
+        .docs-reveal-d2 { animation-delay: 160ms; }
+        .docs-reveal-d3 { animation-delay: 240ms; }
+        @keyframes docsReveal { to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+    <script>
+        (function(){var t=localStorage.getItem('kalam-site-theme')||(window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',t);})();
+    </script>
+
+    <!-- ═══ HEADER ═══ -->
+    <header class="site-header">
+        <div class="container">
+            <a href="/" class="site-header-logo"><img src="assets/logo/kalam-logo_icon.svg" alt="Kalam"><span>Kalam</span></a>
+            <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation"><i class="ri-menu-line" id="nav-toggle-icon"></i></button>
+            <nav class="site-nav" id="site-nav">
+                <a href="/">Home</a>
+                <a href="download.html">Download</a>
+                <a href="documentation.html" class="active">Docs</a>
+                <a href="business.html">Commercial</a>
+                <a href="https://github.com/afaraha8403/kalam" target="_blank" rel="noopener" class="site-nav-github"><i class="ri-github-fill" aria-hidden="true"></i> GitHub</a>
+                <button class="btn btn-ghost btn-sm" id="theme-toggle" aria-label="Toggle theme" style="height:2.25rem;padding:0 var(--space-3);"><i class="ri-moon-line" id="theme-icon"></i></button>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <!-- ═══ HERO ═══ -->
+        <section class="docs-hero container">
+            <div class="docs-hero-inner docs-reveal">
+                <div class="docs-hero-eyebrow">
+                    <span class="badge badge-accent"><i class="ri-book-open-line" style="margin-right:4px;font-size:0.7rem;"></i> Documentation</span>
+                </div>
+                <h1>Everything you need<br>to get started.</h1>
+                <p class="docs-hero-sub">
+                    From installation to advanced configuration — this guide covers every feature in Kalam. New here? Start with the <a href="#quick-start">Quick Start</a> below.
+                </p>
+                <div class="docs-hero-versions" id="docs-hero-versions" data-fallback-beta="v0.1.0-beta.2" aria-live="polite">
+                    <span class="docs-hero-version-pill docs-hero-version-pill--loading"><i class="ri-loader-4-line" aria-hidden="true"></i> Releases…</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ DOCS BODY ═══ -->
+        <div class="container">
+            <div class="docs-layout">
+
+                <!-- ── Sidebar ── -->
+                <aside class="docs-sidebar docs-reveal docs-reveal-d1">
+                    <div class="docs-sidebar-group">
+                        <div class="docs-sidebar-title">Getting Started</div>
+                        <ul>
+                            <li><a href="#quick-start" class="active"><i class="ri-flashlight-line"></i> Quick Start</a></li>
+                            <li><a href="#installation"><i class="ri-install-line"></i> Installation</a></li>
+                            <li><a href="#first-dictation"><i class="ri-mic-line"></i> First Dictation</a></li>
+                        </ul>
+                    </div>
+                    <div class="docs-sidebar-group">
+                        <div class="docs-sidebar-title">Core Features</div>
+                        <ul>
+                            <li><a href="#stt-modes"><i class="ri-brain-line"></i> STT Modes</a></li>
+                            <li><a href="#hotkeys"><i class="ri-keyboard-box-line"></i> Hotkeys & Controls</a></li>
+                            <li><a href="#overview"><i class="ri-pie-chart-line"></i> Overview Dashboard</a></li>
+                            <li><a href="#history"><i class="ri-time-line"></i> Dictation History</a></li>
+                            <li><a href="#workspace"><i class="ri-dashboard-3-line"></i> Workspace</a></li>
+                            <li><a href="#command-mode"><i class="ri-terminal-box-line"></i> Command Mode</a></li>
+                            <li><a href="#dictionary"><i class="ri-book-open-line"></i> Dictionary</a></li>
+                        </ul>
+                    </div>
+                    <div class="docs-sidebar-group">
+                        <div class="docs-sidebar-title">Configuration</div>
+                        <ul>
+                            <li><a href="#privacy-settings"><i class="ri-shield-check-line"></i> Privacy Settings</a></li>
+                            <li><a href="#api-keys"><i class="ri-key-2-line"></i> API Keys</a></li>
+                        </ul>
+                    </div>
+                    <div class="docs-sidebar-group">
+                        <div class="docs-sidebar-title">Help</div>
+                        <ul>
+                            <li><a href="#troubleshooting"><i class="ri-bug-line"></i> Troubleshooting</a></li>
+                        </ul>
+                    </div>
+                </aside>
+
+                <!-- ── Content ── -->
+                <div class="docs-content docs-reveal docs-reveal-d2">
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- QUICK START                              -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="quick-start">
+                        <h2>Quick Start</h2>
+                        <p class="section-lead">Get from zero to dictating in under a minute. Kalam runs on Windows, macOS, and Linux.</p>
+
+                        <div class="docs-steps">
+                            <div class="docs-step">
+                                <div class="docs-step-num"></div>
+                                <div class="docs-step-body">
+                                    <h4>Download & install</h4>
+                                    <p>Grab the installer for your OS from the <a href="download.html">download page</a>. No account or sign-up required.</p>
+                                </div>
+                            </div>
+                            <div class="docs-step">
+                                <div class="docs-step-num"></div>
+                                <div class="docs-step-body">
+                                    <h4>Grant permissions</h4>
+                                    <p>Kalam needs <strong>microphone access</strong> to hear you and <strong>accessibility / input permissions</strong> to type into other apps. The onboarding wizard walks you through each one.</p>
+                                </div>
+                            </div>
+                            <div class="docs-step">
+                                <div class="docs-step-num"></div>
+                                <div class="docs-step-body">
+                                    <h4>Hold, speak, release</h4>
+                                    <p>Press and hold your dictation hotkey (default: <span class="kbd">Ctrl</span> + <span class="kbd">Win</span> on Windows, <span class="kbd">Ctrl</span> + <span class="kbd">Super</span> on Linux/macOS), speak naturally, then release. Your words appear wherever your cursor is — any app, any text field.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Onboarding wizard</strong>
+                                    The first-run setup showing permission grants and STT mode selection.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> Kalam's onboarding walks you through permissions and engine setup</div>
+                        </div>
+
+                        <div class="docs-callout docs-callout-tip">
+                            <div class="docs-callout-icon"><i class="ri-lightbulb-line"></i></div>
+                            <div class="docs-callout-body">
+                                <strong>Tip:</strong> Kalam defaults to <strong>Cloud mode</strong> with Groq for fast transcription — just add your API key in <strong>Settings → Audio & Dictation</strong>. For fully offline use, switch to <strong>Local mode</strong> and download a Whisper model. No internet required after that.
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- INSTALLATION                             -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="installation">
+                        <h2>Installation</h2>
+                        <p class="section-lead">Platform-specific guides for installing Kalam. All installers are available on the <a href="download.html">download page</a>.</p>
+
+                        <!-- OS Tabs -->
+                        <div class="docs-os-tabs" id="os-tabs">
+                            <button class="docs-os-tab active" data-os="windows">
+                                <img src="assets/logos/os/microsoft-windows.svg" alt=""> Windows
+                            </button>
+                            <button class="docs-os-tab" data-os="macos">
+                                <img src="assets/logos/os/apple.svg" alt=""> macOS
+                            </button>
+                            <button class="docs-os-tab" data-os="linux">
+                                <img src="https://cdn.jsdelivr.net/npm/simple-icons/icons/linux.svg" alt="" width="16" height="16"> Linux
+                            </button>
+                        </div>
+
+                        <!-- Windows -->
+                        <div class="docs-os-panel active" id="os-windows">
+                            <h3>Windows 10+</h3>
+                            <p>Download the <code>.exe</code> (NSIS) installer from the <a href="download.html">download page</a>. Run the installer and follow the prompts.</p>
+
+                            <div class="docs-callout docs-callout-warning">
+                                <div class="docs-callout-icon"><i class="ri-shield-line"></i></div>
+                                <div class="docs-callout-body">
+                                    <strong>Windows SmartScreen:</strong> Because Kalam is a new open-source app, Windows may show a "Windows protected your PC" warning. Click <strong>More info</strong> → <strong>Run anyway</strong> to proceed.
+                                </div>
+                            </div>
+
+                            <div class="docs-screenshot">
+                                <div class="docs-screenshot-placeholder">
+                                    <i class="ri-image-line"></i>
+                                    <div class="screenshot-label">
+                                        <strong>Screenshot: Windows SmartScreen prompt</strong>
+                                        The "More info → Run anyway" dialog that appears on first install.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <h4>Permissions needed</h4>
+                            <ul>
+                                <li><strong>Microphone</strong> — Windows Settings → Privacy → Microphone. Ensure "Allow apps to access your microphone" is on.</li>
+                                <li><strong>Accessibility</strong> — No extra setup on Windows. Kalam uses standard input APIs.</li>
+                            </ul>
+                        </div>
+
+                        <!-- macOS -->
+                        <div class="docs-os-panel" id="os-macos">
+                            <h3>macOS 11+</h3>
+                            <p>Download the <code>.pkg</code> or <code>.dmg</code> file. For <code>.pkg</code>, double-click to install. For <code>.dmg</code>, drag Kalam to Applications.</p>
+
+                            <div class="docs-callout docs-callout-warning">
+                                <div class="docs-callout-icon"><i class="ri-shield-line"></i></div>
+                                <div class="docs-callout-body">
+                                    <strong>Gatekeeper:</strong> If macOS blocks the app, go to <strong>System Settings → Privacy & Security</strong> and click <strong>Open Anyway</strong> next to the Kalam message.
+                                </div>
+                            </div>
+
+                            <h4>Permissions needed</h4>
+                            <ul>
+                                <li><strong>Microphone</strong> — System Settings → Privacy & Security → Microphone. Toggle Kalam on.</li>
+                                <li><strong>Accessibility</strong> — System Settings → Privacy & Security → Accessibility. Add Kalam to the list.</li>
+                                <li><strong>Input Monitoring</strong> — System Settings → Privacy & Security → Input Monitoring. This allows Kalam to detect your global hotkey.</li>
+                            </ul>
+
+                            <div class="docs-screenshot">
+                                <div class="docs-screenshot-placeholder">
+                                    <i class="ri-image-line"></i>
+                                    <div class="screenshot-label">
+                                        <strong>Screenshot: macOS Privacy & Security</strong>
+                                        The Accessibility and Input Monitoring toggles for Kalam in System Settings.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Linux -->
+                        <div class="docs-os-panel" id="os-linux">
+                            <h3>Linux (Ubuntu, Debian, and others)</h3>
+                            <p>Download the <code>.AppImage</code> or <code>.deb</code> package.</p>
+
+                            <div style="position:relative;">
+                                <pre><code><span style="color:var(--fg-tertiary);"># AppImage</span>
+chmod +x Kalam*.AppImage
+./Kalam*.AppImage
+
+<span style="color:var(--fg-tertiary);"># Debian / Ubuntu</span>
+sudo dpkg -i kalam*.deb</code></pre>
+                                <span class="code-label">Terminal</span>
+                            </div>
+
+                            <h4>Permissions needed</h4>
+                            <ul>
+                                <li><strong>Microphone</strong> — Usually granted automatically. Check PulseAudio/PipeWire settings if audio isn't detected.</li>
+                                <li><strong>Accessibility</strong> — On X11, Kalam uses <code>xdotool</code>. On Wayland, some compositors may require XDG portal configuration.</li>
+                            </ul>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- FIRST DICTATION                          -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="first-dictation">
+                        <h2>Your First Dictation</h2>
+                        <p class="section-lead">Once installed, here's what a typical dictation flow looks like.</p>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Dictation in action</strong>
+                                    The overlay pill showing the recording waveform while dictating into a text editor. Show the pill in its expanded/recording state with the waveform visible.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> The floating overlay pill appears when you hold your hotkey</div>
+                        </div>
+
+                        <ol>
+                            <li>Click into any text field in any application — a browser, Word, Slack, VS Code, anything.</li>
+                            <li>Press and hold your dictation hotkey (default: <span class="kbd">Ctrl</span> + <span class="kbd">Win</span> on Windows).</li>
+                            <li>A small <strong>floating pill</strong> appears on screen with a waveform animation — this means Kalam is listening.</li>
+                            <li>Speak naturally. Kalam captures your audio in real time.</li>
+                            <li>Release the key. Your transcribed text is typed into the active field.</li>
+                        </ol>
+
+                        <div class="docs-callout docs-callout-info">
+                            <div class="docs-callout-icon"><i class="ri-information-line"></i></div>
+                            <div class="docs-callout-body">
+                                <strong>Toggle mode:</strong> Prefer hands-free? Switch to <strong>Toggle mode</strong> in Settings → General. Press once to start, press again to stop — no holding required.
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- STT MODES                                -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="stt-modes">
+                        <h2>Speech-to-Text Modes</h2>
+                        <p class="section-lead">Kalam supports four transcription modes. Choose the one that fits your workflow and privacy needs.</p>
+
+                        <div class="docs-card-grid">
+                            <div class="docs-card docs-card-green">
+                                <div class="docs-card-icon"><i class="ri-wifi-off-line"></i></div>
+                                <h4>Local (Offline)</h4>
+                                <p>Uses a Whisper model running on your machine. Audio never leaves your device. No internet required.</p>
+                            </div>
+                            <div class="docs-card docs-card-blue">
+                                <div class="docs-card-icon"><i class="ri-cloud-line"></i></div>
+                                <h4>Cloud</h4>
+                                <p>Sends audio to your configured provider (Groq or OpenAI) for faster, more accurate transcription. Requires an API key.</p>
+                            </div>
+                            <div class="docs-card docs-card-violet">
+                                <div class="docs-card-icon"><i class="ri-swap-line"></i></div>
+                                <h4>Hybrid</h4>
+                                <p>Uses cloud by default but switches to local processing when a sensitive app is detected. Similar to Auto with broader sensitivity coverage.</p>
+                            </div>
+                            <div class="docs-card docs-card-teal">
+                                <div class="docs-card-icon"><i class="ri-shield-check-line"></i></div>
+                                <h4>Auto</h4>
+                                <p>Uses cloud normally but automatically switches to local when a sensitive app is detected (banking, password managers, etc.).</p>
+                            </div>
+                        </div>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Settings → Audio & Dictation</strong>
+                                    The STT mode selector showing the four mode cards (Auto, Hybrid, Cloud, Local) with the description panel below.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> Select your preferred STT mode in Settings → Audio & Dictation</div>
+                        </div>
+
+                        <h3>Choosing the right mode</h3>
+                        <div style="overflow-x: auto; margin: var(--space-6) 0;">
+                            <table class="docs-hotkey-table" style="margin: 0; min-width: 500px;">
+                                <thead>
+                                    <tr>
+                                        <th>Priority</th>
+                                        <th>Recommended Mode</th>
+                                        <th>Why</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Maximum privacy</td>
+                                        <td><strong>Local</strong></td>
+                                        <td>Audio never leaves your device</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Speed & accuracy</td>
+                                        <td><strong>Cloud</strong></td>
+                                        <td>Near-instant results with Groq</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Privacy + speed</td>
+                                        <td><strong>Auto</strong></td>
+                                        <td>Cloud speed with automatic local fallback for sensitive apps</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Balanced</td>
+                                        <td><strong>Hybrid</strong></td>
+                                        <td>Cloud by default, local for sensitive apps</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="docs-callout docs-callout-tip">
+                            <div class="docs-callout-icon"><i class="ri-lightbulb-line"></i></div>
+                            <div class="docs-callout-body">
+                                <strong>BYOK (Bring Your Own Key):</strong> Kalam never provides API keys. You bring your own from <a href="https://console.groq.com/" target="_blank" rel="noopener">Groq</a> or <a href="https://platform.openai.com/" target="_blank" rel="noopener">OpenAI</a>. Keys are stored locally on your device and never sent to Kalam servers.
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- HOTKEYS                                  -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="hotkeys">
+                        <h2>Hotkeys & Controls</h2>
+                        <p class="section-lead">Kalam supports two dictation modes and a customizable hotkey. Configure everything in Settings → General.</p>
+
+                        <h3>Dictation modes</h3>
+                        <div style="overflow-x: auto; margin: var(--space-6) 0;">
+                            <table class="docs-hotkey-table" style="margin: 0; min-width: 500px;">
+                                <thead>
+                                    <tr>
+                                        <th>Mode</th>
+                                        <th>How it works</th>
+                                        <th>Best for</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Hold-to-dictate</td>
+                                        <td>Press and hold your hotkey. Speak. Release to stop and insert text.</td>
+                                        <td>Quick phrases, short messages</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Toggle</td>
+                                        <td>Press once to start dictating, press again to stop.</td>
+                                        <td>Longer dictation sessions, hands-free use</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Both</td>
+                                        <td>Registers both a hold hotkey and a separate toggle hotkey. Use either depending on the situation.</td>
+                                        <td>Flexibility — the default setting</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Settings → General → Dictation Hotkeys</strong>
+                                    The hotkey configuration section showing the recording mode selector (Hold / Toggle / Both) and the hotkey capture fields.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> Customize your dictation hotkey and recording mode in Settings</div>
+                        </div>
+
+                        <h3>Default hotkeys</h3>
+                        <div style="overflow-x: auto; margin: var(--space-6) 0;">
+                            <table class="docs-hotkey-table" style="margin: 0; min-width: 500px;">
+                                <thead>
+                                    <tr>
+                                        <th>Action</th>
+                                        <th>Default Key</th>
+                                        <th>Notes</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Dictate (hold)</td>
+                                        <td><span class="kbd">Ctrl</span> + <span class="kbd">Win</span></td>
+                                        <td>Hold to record, release to transcribe. On macOS/Linux: <span class="kbd">Ctrl</span> + <span class="kbd">Super</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Dictate (toggle)</td>
+                                        <td><span style="color:var(--fg-tertiary);font-size:0.85em;">Not set by default</span></td>
+                                        <td>Assign a separate toggle key in Settings → General</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Command mode</td>
+                                        <td><span style="color:var(--fg-tertiary);font-size:0.85em;">Not set by default</span></td>
+                                        <td>Enable and assign a key in Settings → Command Mode</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Language toggle</td>
+                                        <td><span style="color:var(--fg-tertiary);font-size:0.85em;">Not set by default</span></td>
+                                        <td>Switch between configured languages mid-session</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="docs-callout docs-callout-info">
+                            <div class="docs-callout-icon"><i class="ri-information-line"></i></div>
+                            <div class="docs-callout-body">
+                                <strong>Custom hotkeys:</strong> You can remap any hotkey in <strong>Settings → General → Dictation Hotkeys</strong>. Click the capture field and press your preferred key combination.
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- OVERVIEW DASHBOARD                       -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="overview">
+                        <h2>Overview Dashboard</h2>
+                        <p class="section-lead">The Overview is your home screen — a snapshot of your dictation activity and productivity stats.</p>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Overview dashboard</strong>
+                                    The home screen showing the 7-day words chart, estimated time saved, word count stats, and recent dictation entries.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> The Overview dashboard with dictation stats and activity charts</div>
+                        </div>
+
+                        <p>The dashboard shows:</p>
+                        <ul>
+                            <li><strong>7-day word chart</strong> — daily dictation volume with estimated time saved vs. typing at 40 WPM.</li>
+                            <li><strong>Total words</strong> — lifetime word count across all dictations.</li>
+                            <li><strong>Time saved</strong> — estimated hours saved by dictating instead of typing.</li>
+                            <li><strong>Top destinations</strong> — which apps you dictate into most often.</li>
+                            <li><strong>Recent dictations</strong> — quick access to your latest transcriptions.</li>
+                        </ul>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- DICTATION HISTORY                        -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="history">
+                        <h2>Dictation History</h2>
+                        <p class="section-lead">Every dictation is logged with its transcription, timestamp, target app, and metadata. Access it from the sidebar.</p>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: History page</strong>
+                                    The dictation history list grouped by date, showing transcription previews, target app icons, and timestamps.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> Dictation history grouped by date with searchable entries</div>
+                        </div>
+
+                        <p>Each history entry includes:</p>
+                        <ul>
+                            <li><strong>Full transcription</strong> — the complete text that was dictated.</li>
+                            <li><strong>Target app</strong> — which application received the text, with app icon and display name.</li>
+                            <li><strong>Metadata</strong> — word count, audio length, response latency, recognition mode (cloud/local), and language.</li>
+                            <li><strong>Sensitive app toggle</strong> — mark the target app as sensitive directly from the history detail view.</li>
+                        </ul>
+
+                        <p>Use the <strong>search bar</strong> to find past dictations by content. Sort by newest or oldest. To clear all history, use the <strong>Clear all</strong> button (with confirmation).</p>
+
+                        <div class="docs-callout docs-callout-info">
+                            <div class="docs-callout-icon"><i class="ri-information-line"></i></div>
+                            <div class="docs-callout-body">
+                                <strong>Retention:</strong> History is automatically pruned based on your retention setting in Settings → Privacy. Audio is never written to disk — only the transcribed text is stored.
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- WORKSPACE                                -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="workspace">
+                        <h2>Workspace</h2>
+                        <p class="section-lead">Beyond the Overview and History, Kalam includes four voice-powered productivity tools. Access them from the sidebar.</p>
+
+                        <div class="docs-card-grid">
+                            <div class="docs-card docs-card-amber">
+                                <div class="docs-card-icon"><i class="ri-sticky-note-line"></i></div>
+                                <h4>Notes</h4>
+                                <p>Color-coded cards with labels, pins, and rich text editing. Great for capturing ideas by voice. Supports archive and trash.</p>
+                            </div>
+                            <div class="docs-card docs-card-blue">
+                                <div class="docs-card-icon"><i class="ri-checkbox-circle-line"></i></div>
+                                <h4>Tasks</h4>
+                                <p>Task management with open/closed states, priority levels (Low, Medium, High), subtasks, and drag-to-reorder.</p>
+                            </div>
+                            <div class="docs-card docs-card-teal">
+                                <div class="docs-card-icon"><i class="ri-text-snippet"></i></div>
+                                <h4>Snippets</h4>
+                                <p>Reusable text shortcuts. Define a trigger phrase and Kalam expands it into your full text automatically during dictation.</p>
+                            </div>
+                            <div class="docs-card docs-card-rose">
+                                <div class="docs-card-icon"><i class="ri-notification-3-line"></i></div>
+                                <h4>Reminders</h4>
+                                <p>Set due dates and get notified. Works with notes and tasks. Supports recurring reminders.</p>
+                            </div>
+                        </div>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Notes workspace</strong>
+                                    The Notes view showing color-coded cards with labels, pins, and the search/filter toolbar. Show a few notes with different colors and at least one pinned.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> Notes with color-coded cards, labels, and pin support</div>
+                        </div>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Tasks workspace</strong>
+                                    The Tasks view showing open and completed tasks with priority badges, subtasks, and the scope/filter toolbar.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> Tasks with priorities, subtasks, and drag-to-reorder</div>
+                        </div>
+
+                        <h3>Voice commands</h3>
+                        <p>Command mode lets you create workspace items by voice. First, enable it in <strong>Settings → Command Mode</strong> and assign a hotkey. Then hold your command hotkey and say a command:</p>
+                        <div style="overflow-x: auto; margin: var(--space-6) 0;">
+                            <table class="docs-hotkey-table" style="margin: 0; min-width: 400px;">
+                                <thead>
+                                    <tr>
+                                        <th>Say this</th>
+                                        <th>What happens</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>"New note buy groceries"</td>
+                                        <td>Creates a note titled "buy groceries"</td>
+                                    </tr>
+                                    <tr>
+                                        <td>"New task review PR"</td>
+                                        <td>Creates a task titled "review PR"</td>
+                                    </tr>
+                                    <tr>
+                                        <td>"New reminder call dentist"</td>
+                                        <td>Creates a note (set the reminder time in the note editor)</td>
+                                    </tr>
+                                    <tr>
+                                        <td>"Online search Rust async patterns"</td>
+                                        <td>Opens a DuckDuckGo search in your browser</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- COMMAND MODE                              -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="command-mode">
+                        <h2>Command Mode</h2>
+                        <p class="section-lead">Use your voice to create notes, tasks, and run web searches — without touching the keyboard. Configure in Settings → Command Mode.</p>
+
+                        <h3>Getting started</h3>
+                        <ol>
+                            <li>Open <strong>Settings → Command Mode</strong>.</li>
+                            <li>Toggle <strong>Enable command mode</strong> on.</li>
+                            <li>Assign a <strong>command hotkey</strong> (e.g. <span class="kbd">Right Alt</span>).</li>
+                            <li>Hold the command hotkey, speak your command, release.</li>
+                        </ol>
+
+                        <h3>Basic commands</h3>
+                        <p>Without LLM enabled, commands must start with a specific prefix:</p>
+                        <div style="overflow-x: auto; margin: var(--space-6) 0;">
+                            <table class="docs-hotkey-table" style="margin: 0; min-width: 400px;">
+                                <thead>
+                                    <tr>
+                                        <th>Say this</th>
+                                        <th>What happens</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>"New note [content]"</td>
+                                        <td>Creates a note with the spoken content as the title</td>
+                                    </tr>
+                                    <tr>
+                                        <td>"New task [content]"</td>
+                                        <td>Creates a task with the spoken content as the title</td>
+                                    </tr>
+                                    <tr>
+                                        <td>"New reminder [content]"</td>
+                                        <td>Creates a note (set the reminder time in the editor)</td>
+                                    </tr>
+                                    <tr>
+                                        <td>"Online search [query]"</td>
+                                        <td>Opens a DuckDuckGo search in your default browser</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <h3>LLM-powered commands (optional)</h3>
+                        <p>For natural language parsing, enable the <strong>LLM</strong> option in Settings → Command Mode and add an API key for one of the supported providers:</p>
+                        <ul>
+                            <li><strong>Groq</strong>, <strong>OpenAI</strong>, <strong>Anthropic</strong>, <strong>OpenRouter</strong>, or <strong>Google Gemini</strong></li>
+                        </ul>
+                        <p>With LLM enabled, you can speak naturally without fixed prefixes — Kalam infers the entry type and extracts fields automatically. For example, "remind me to call the dentist tomorrow at 3pm" creates a note with a reminder set.</p>
+
+                        <div class="docs-callout docs-callout-info">
+                            <div class="docs-callout-icon"><i class="ri-information-line"></i></div>
+                            <div class="docs-callout-body">
+                                <strong>Note:</strong> Command mode is <strong>disabled by default</strong> and has no hotkey assigned. You must enable it and set a hotkey before it will work.
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- DICTIONARY                               -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="dictionary">
+                        <h2>Dictionary</h2>
+                        <p class="section-lead">Add custom words, names, and technical terms to improve transcription accuracy. Manage your dictionary in Settings → Dictionary.</p>
+
+                        <p>The dictionary feeds custom vocabulary to the cloud STT provider, helping it recognize words it might otherwise miss or misspell — like proper nouns, brand names, acronyms, or domain-specific jargon.</p>
+
+                        <h3>Adding terms</h3>
+                        <ol>
+                            <li>Open <strong>Settings → Dictionary</strong>.</li>
+                            <li>Click <strong>Add term</strong>.</li>
+                            <li>Type the word or phrase exactly as you want it transcribed.</li>
+                            <li>The term is saved and included in future cloud transcription requests.</li>
+                        </ol>
+
+                        <p>You can also <strong>edit</strong> existing terms inline or <strong>delete</strong> terms you no longer need.</p>
+
+                        <div class="docs-callout docs-callout-tip">
+                            <div class="docs-callout-icon"><i class="ri-lightbulb-line"></i></div>
+                            <div class="docs-callout-body">
+                                <strong>Tip:</strong> Dictionary terms are most effective with <strong>cloud STT</strong>. They're sent as vocabulary hints to the provider. Local (offline) Whisper models have limited support for custom vocabulary.
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- PRIVACY SETTINGS                         -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="privacy-settings">
+                        <h2>Privacy Settings</h2>
+                        <p class="section-lead">Kalam gives you granular control over your data. Everything is configurable in Settings → Privacy.</p>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Settings → Privacy</strong>
+                                    The Privacy settings panel showing sensitive app detection, history retention, and telemetry toggles.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> Privacy controls in Settings</div>
+                        </div>
+
+                        <h3>Sensitive app detection</h3>
+                        <p>Define which applications trigger automatic offline mode. When using <strong>Hybrid</strong> or <strong>Auto</strong> STT mode and you focus a sensitive app (like a banking site or password manager), Kalam switches to local processing — your audio never leaves your device.</p>
+                        <p>You can add apps from:</p>
+                        <ul>
+                            <li><strong>Currently running processes</strong> — pick from what's open right now</li>
+                            <li><strong>Installed applications</strong> — browse your installed apps</li>
+                            <li><strong>Browse for executable</strong> — select any .exe / .app file</li>
+                        </ul>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Sensitive app picker</strong>
+                                    The full-screen sensitive app picker showing the three tabs (Running / Installed / Browse) with app icons and names.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> Add sensitive apps from running processes, installed apps, or by browsing</div>
+                        </div>
+
+                        <h3>History retention</h3>
+                        <p>Choose how long dictation history is kept: <strong>7 days</strong>, <strong>30 days</strong>, <strong>90 days</strong>, <strong>1 year</strong>, or <strong>Forever</strong>. Entries older than your selected period are automatically removed on startup and after each dictation.</p>
+
+                        <h3>Telemetry</h3>
+                        <p>Anonymous usage analytics are <strong>opt-in only</strong> and <strong>disabled by default</strong>. No audio, no transcription text, and no personal data is ever included in telemetry. See the full <a href="privacy.html">Privacy Policy</a> for details.</p>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- API KEYS                                 -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="api-keys">
+                        <h2>API Keys</h2>
+                        <p class="section-lead">Cloud and hybrid modes require an API key from a supported provider. Kalam stores keys locally — they never touch our servers.</p>
+
+                        <h3>Supported providers</h3>
+                        <div class="docs-card-grid" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+                            <div class="docs-card docs-card-amber">
+                                <div class="docs-card-icon"><i class="ri-speed-line"></i></div>
+                                <h4>Groq</h4>
+                                <p>Blazing-fast inference. Free tier available. Get your key at <a href="https://console.groq.com/" target="_blank" rel="noopener">console.groq.com</a>.</p>
+                            </div>
+                            <div class="docs-card docs-card-green">
+                                <div class="docs-card-icon"><i class="ri-openai-fill"></i></div>
+                                <h4>OpenAI</h4>
+                                <p>Industry-standard Whisper API. Get your key at <a href="https://platform.openai.com/" target="_blank" rel="noopener">platform.openai.com</a>.</p>
+                            </div>
+                        </div>
+
+                        <h3>Adding your key</h3>
+                        <ol>
+                            <li>Open <strong>Settings → Audio & Dictation</strong>.</li>
+                            <li>Select your <strong>Cloud Provider</strong> (Groq or OpenAI).</li>
+                            <li>Paste your API key in the key field.</li>
+                            <li>Click <strong>Validate</strong> to confirm the key works.</li>
+                            <li>A <span style="color:var(--success);font-weight:600;">✓ Configured</span> badge appears when the key is saved.</li>
+                        </ol>
+
+                        <div class="docs-screenshot">
+                            <div class="docs-screenshot-placeholder">
+                                <i class="ri-image-line"></i>
+                                <div class="screenshot-label">
+                                    <strong>Screenshot: Settings → Audio & Dictation → API Key</strong>
+                                    The cloud provider selector and API key field with the "✓ Configured" badge visible.
+                                </div>
+                            </div>
+                            <div class="docs-screenshot-caption"><i class="ri-information-line"></i> API key configuration with provider selection and validation</div>
+                        </div>
+
+                        <div class="docs-callout docs-callout-warning">
+                            <div class="docs-callout-icon"><i class="ri-error-warning-line"></i></div>
+                            <div class="docs-callout-body">
+                                <strong>Keep your keys safe.</strong> API keys are stored in your local app config. Kalam never transmits them to any server other than the STT provider you selected. If you suspect a key is compromised, regenerate it on the provider's dashboard.
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ════════════════════════════════════════ -->
+                    <!-- TROUBLESHOOTING                          -->
+                    <!-- ════════════════════════════════════════ -->
+                    <section class="docs-section" id="troubleshooting">
+                        <h2>Troubleshooting</h2>
+                        <p class="section-lead">Common issues and how to fix them. Can't find your answer? <a href="https://github.com/afaraha8403/kalam/issues" target="_blank" rel="noopener">Open an issue on GitHub</a>.</p>
+
+                        <h3>Microphone not detected</h3>
+                        <p>Ensure Kalam has microphone permission in your OS settings:</p>
+                        <ul>
+                            <li><strong>Windows:</strong> Settings → Privacy → Microphone → ensure "Allow apps to access your microphone" is on.</li>
+                            <li><strong>macOS:</strong> System Settings → Privacy & Security → Microphone → toggle Kalam on.</li>
+                            <li><strong>Linux:</strong> Check PulseAudio / PipeWire settings. Run <code>pavucontrol</code> and verify the input device.</li>
+                        </ul>
+                        <p>You can also change your input device in <strong>Settings → Audio & Dictation</strong> or from the status bar microphone selector.</p>
+
+                        <div class="docs-divider">or</div>
+
+                        <h3>Text not appearing in target app</h3>
+                        <p>Kalam needs accessibility permissions to type into other apps:</p>
+                        <ul>
+                            <li><strong>macOS:</strong> System Settings → Privacy & Security → Accessibility → add Kalam. Also check Input Monitoring.</li>
+                            <li><strong>Linux (Wayland):</strong> Some compositors may require XDG portal configuration. X11 uses <code>xdotool</code> which works out of the box.</li>
+                            <li><strong>Windows:</strong> If running as a standard user and the target app is elevated (admin), Kalam may not be able to inject text. Run Kalam as administrator in that case.</li>
+                        </ul>
+
+                        <div class="docs-divider">or</div>
+
+                        <h3>Offline mode is slow</h3>
+                        <p>Local Whisper model performance depends on your hardware (CPU and available RAM). To improve speed:</p>
+                        <ul>
+                            <li>Try a <strong>smaller model size</strong> in Settings → Audio & Dictation → Local Model.</li>
+                            <li>Close resource-heavy applications to free up RAM.</li>
+                            <li>Switch to <strong>Cloud mode</strong> with a Groq API key for near-instant transcription.</li>
+                        </ul>
+
+                        <div class="docs-divider">or</div>
+
+                        <h3>Dictation cuts off or misses words</h3>
+                        <p>This can happen with quiet microphones or high background noise:</p>
+                        <ul>
+                            <li>Enable the <strong>audio filter</strong> in Settings → Audio & Dictation. The "Light" preset applies peak normalization and a noise gate.</li>
+                            <li>Use the <strong>Test Microphone</strong> feature to record a sample and play it back — check if your voice is coming through clearly.</li>
+                            <li>Try a different microphone or move closer to your current one.</li>
+                        </ul>
+
+                        <div class="docs-divider">or</div>
+
+                        <h3>App won't launch / crashes on startup</h3>
+                        <ul>
+                            <li>Make sure you're running a <strong>supported OS version</strong> (Windows 10+, macOS 11+, or a recent Linux distro).</li>
+                            <li>Try deleting the app data folder and relaunching:
+                                <ul>
+                                    <li><strong>Windows:</strong> <code>%USERPROFILE%\.kalam</code></li>
+                                    <li><strong>macOS:</strong> <code>~/.kalam</code></li>
+                                    <li><strong>Linux:</strong> <code>~/.kalam</code> and <code>~/.local/share/kalam</code></li>
+                                </ul>
+                            </li>
+                            <li>Check Settings → About → Logs for error details, or export logs and attach them to a <a href="https://github.com/afaraha8403/kalam/issues" target="_blank" rel="noopener">GitHub issue</a>.</li>
+                        </ul>
+
+                        <div class="docs-callout docs-callout-tip" style="margin-top: var(--space-8);">
+                            <div class="docs-callout-icon"><i class="ri-customer-service-2-line"></i></div>
+                            <div class="docs-callout-body">
+                                <strong>Still stuck?</strong> Open an issue on <a href="https://github.com/afaraha8403/kalam/issues" target="_blank" rel="noopener">GitHub</a> or email <a href="mailto:hello@balacode.io">hello@balacode.io</a>. Include your OS, Kalam version (Settings → About), and any error messages or logs.
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ── Bottom navigation ── -->
+                    <nav class="docs-bottom-nav">
+                        <a href="download.html">
+                            <span class="docs-bottom-nav-label">← Previous</span>
+                            <span class="docs-bottom-nav-title">Download Kalam</span>
+                        </a>
+                        <a href="business.html">
+                            <span class="docs-bottom-nav-label">Next →</span>
+                            <span class="docs-bottom-nav-title">Commercial Licensing</span>
+                        </a>
+                    </nav>
+
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ═══ FOOTER ═══ -->
+    <footer class="site-footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-col">
+                    <div class="footer-brand-row"><img src="assets/logo/kalam-logo_icon.svg" alt="Kalam" class="footer-brand-mark"><h4>Kalam</h4></div>
+                    <p class="text-body-sm" style="max-width:300px;margin-bottom:var(--space-6);">Speak, It Types Everywhere. Free &amp; open-source voice dictation.</p>
+                </div>
+                <div class="footer-col"><h4>Product</h4><ul><li><a href="download.html">Download</a></li><li><a href="documentation.html">Documentation</a></li><li><a href="https://github.com/afaraha8403/kalam/releases" target="_blank" rel="noopener">Changelog</a></li></ul></div>
+                <div class="footer-col"><h4>Company</h4><ul><li><a href="business.html">Commercial License</a></li><li><a href="https://github.com/sponsors/afaraha8403" target="_blank" rel="noopener">Sponsors</a></li><li><a href="mailto:hello@balacode.io">Contact</a></li></ul></div>
+                <div class="footer-col"><h4>Legal</h4><ul><li><a href="privacy.html">Privacy Policy</a></li><li><a href="terms.html">Terms of Service</a></li></ul></div>
+            </div>
+            <div class="footer-bottom">
+                <div>&copy; 2026 Kalam. MIT License &mdash; noncommercial use and limited commercial use; expanded commercial licensing by agreement.</div>
+                <div>Created by <a href="https://alifarahat.com" style="color:var(--fg-secondary);text-decoration:underline;">Ali Farahat</a> &amp; <a href="https://balacode.io" style="color:var(--fg-secondary);text-decoration:underline;">Balacode</a>.</div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        /* Theme toggle */
+        var themeToggle=document.getElementById('theme-toggle'),themeIcon=document.getElementById('theme-icon');
+        function setTheme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('kalam-site-theme',t);themeIcon.classList.toggle('ri-sun-line',t==='light');themeIcon.classList.toggle('ri-moon-line',t==='dark');}
+        if(document.documentElement.getAttribute('data-theme')==='light'){themeIcon.classList.remove('ri-moon-line');themeIcon.classList.add('ri-sun-line');}
+        themeToggle.addEventListener('click',function(){setTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');});
+
+        /* Mobile nav */
+        var navToggle=document.getElementById('nav-toggle'),navIcon=document.getElementById('nav-toggle-icon'),siteNav=document.getElementById('site-nav');
+        navToggle.addEventListener('click',function(){var o=siteNav.classList.toggle('open');navIcon.classList.toggle('ri-menu-line',!o);navIcon.classList.toggle('ri-close-line',o);});
+
+        /* OS tabs */
+        document.querySelectorAll('.docs-os-tab').forEach(function(tab) {
+            tab.addEventListener('click', function() {
+                var os = this.dataset.os;
+                document.querySelectorAll('.docs-os-tab').forEach(function(t) { t.classList.remove('active'); });
+                document.querySelectorAll('.docs-os-panel').forEach(function(p) { p.classList.remove('active'); });
+                this.classList.add('active');
+                document.getElementById('os-' + os).classList.add('active');
+            });
+        });
+
+        /* Sidebar active state on scroll */
+        (function(){
+            var links = document.querySelectorAll('.docs-sidebar a');
+            var sections = [];
+            links.forEach(function(a) {
+                var id = a.getAttribute('href');
+                if (!id || id.charAt(0) !== '#') return;
+                var el = document.getElementById(id.slice(1));
+                if (el) sections.push({ el: el, link: a });
+            });
+            function update() {
+                var scrollY = window.scrollY + 140;
+                var current = sections[0];
+                for (var i = 0; i < sections.length; i++) {
+                    if (sections[i].el.offsetTop <= scrollY) current = sections[i];
+                }
+                links.forEach(function(a) { a.classList.remove('active'); });
+                if (current) current.link.classList.add('active');
+            }
+            window.addEventListener('scroll', update, { passive: true });
+            update();
+        })();
+
+        /* Smooth scroll for sidebar links */
+        document.querySelectorAll('.docs-sidebar a[href^="#"]').forEach(function(a) {
+            a.addEventListener('click', function(e) {
+                var target = document.getElementById(this.getAttribute('href').slice(1));
+                if (target) {
+                    e.preventDefault();
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    history.pushState(null, '', this.getAttribute('href'));
+                }
+            });
+        });
+
+        /* Docs hero: show Stable and Beta pills when both exist on GitHub (same rules as download.html). */
+        (function() {
+            var REPO = 'afaraha8403/kalam';
+            var API = 'https://api.github.com/repos/' + REPO + '/releases?per_page=10';
+            var el = document.getElementById('docs-hero-versions');
+            if (!el) return;
+
+            function escapeHtml(s) {
+                if (s == null || s === '') return '';
+                var d = document.createElement('div');
+                d.textContent = s;
+                return d.innerHTML;
+            }
+
+            function pill(label, tag, kind) {
+                var isBeta = kind === 'beta';
+                var span = document.createElement('span');
+                span.className = 'docs-hero-version-pill docs-hero-version-pill--' + (isBeta ? 'beta' : 'stable');
+                var icon = isBeta ? 'ri-flask-line' : 'ri-shield-check-line';
+                span.innerHTML = '<i class="' + icon + '" aria-hidden="true"></i> ' +
+                    escapeHtml(label) + ': ' + escapeHtml(tag);
+                return span;
+            }
+
+            function render(stableTag, betaTag) {
+                el.innerHTML = '';
+                var hasStable = stableTag && String(stableTag).trim();
+                var hasBeta = betaTag && String(betaTag).trim();
+                if (hasStable && hasBeta) {
+                    el.appendChild(pill('Stable', stableTag, 'stable'));
+                    el.appendChild(pill('Beta', betaTag, 'beta'));
+                } else if (hasStable) {
+                    el.appendChild(pill('Stable', stableTag, 'stable'));
+                } else if (hasBeta) {
+                    el.appendChild(pill('Beta', betaTag, 'beta'));
+                } else {
+                    var a = document.createElement('a');
+                    a.className = 'docs-hero-version-pill';
+                    a.href = 'https://github.com/' + REPO + '/releases';
+                    a.target = '_blank';
+                    a.rel = 'noopener';
+                    a.innerHTML = '<i class="ri-github-line" aria-hidden="true"></i> View releases on GitHub';
+                    el.appendChild(a);
+                }
+            }
+
+            function fallbackFromDataset() {
+                var fs = (el.getAttribute('data-fallback-stable') || '').trim();
+                var fb = (el.getAttribute('data-fallback-beta') || '').trim();
+                render(fs || null, fb || null);
+            }
+
+            fetch(API, { headers: { Accept: 'application/vnd.github.v3+json' } })
+                .then(function(r) { return r.json(); })
+                .then(function(releases) {
+                    if (!Array.isArray(releases)) { fallbackFromDataset(); return; }
+                    var stable = null, beta = null;
+                    for (var i = 0; i < releases.length; i++) {
+                        var rel = releases[i];
+                        if (rel.draft) continue;
+                        if (!rel.prerelease && !stable) stable = rel;
+                        if (rel.prerelease && !beta) beta = rel;
+                        if (stable && beta) break;
+                    }
+                    var sTag = stable ? stable.tag_name : '';
+                    var bTag = beta ? beta.tag_name : '';
+                    if (sTag || bTag) render(sTag, bTag);
+                    else fallbackFromDataset();
+                })
+                .catch(fallbackFromDataset);
+        })();
+    </script>
+</body>
+</html>
