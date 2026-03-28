@@ -1718,7 +1718,7 @@ fn get_permission_status() -> PermissionStatusPayload {
     #[cfg(windows)]
     {
         let has_mic_device = has_any_audio_input_device();
-        return PermissionStatusPayload {
+        PermissionStatusPayload {
             platform: "windows".to_string(),
             microphone: PermissionStatusItem {
                 state: if has_mic_device {
@@ -1747,7 +1747,7 @@ fn get_permission_status() -> PermissionStatusPayload {
                 message: "No separate Input Monitoring permission is required on Windows."
                     .to_string(),
             },
-        };
+        }
     }
 
     #[cfg(target_os = "linux")]

@@ -145,7 +145,7 @@ fn sanitize_prompt_leakage(text: &str, vocabulary: Option<&str>) -> String {
     // If the text begins with 2+ comma-separated dictionary terms, strip that run.
     // This is conservative enough to avoid deleting normal prose starts.
     let vocab_terms: std::collections::HashSet<String> = vocab
-        .split(|c: char| c == ',' || c == ';' || c == '\n')
+        .split([',', ';', '\n'])
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();

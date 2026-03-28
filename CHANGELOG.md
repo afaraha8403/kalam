@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Fixes
-- Apply rustfmt in `src-tauri` so `cargo fmt --check` passes in the release workflow.
+- Apply rustfmt in `src-tauri` so `cargo fmt --check` passes in the release workflow; fix Clippy (`manual_pattern_char_comparison` in STT vocab split, `needless_return` in Windows permission status) so `cargo clippy -- -D warnings` passes in CI.
 
 ## [0.1.0-beta.3]
 - **Fix:** **Docs site** mobile nav panel: stronger frosted scrim (**`color-mix`** with theme surfaces), **48px** backdrop blur, **`isolation`**, and noise layer **`z-index: 0`** with links above it so page text no longer reads clearly through the menu.
