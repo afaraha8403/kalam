@@ -169,7 +169,9 @@ fn sanitize_prompt_leakage(text: &str, vocabulary: Option<&str>) -> String {
             }
             cleaned = parts[leading_vocab_parts..]
                 .join(",")
-                .trim_start_matches(|c: char| c.is_whitespace() || [',', ';', ':', '-'].contains(&c))
+                .trim_start_matches(|c: char| {
+                    c.is_whitespace() || [',', ';', ':', '-'].contains(&c)
+                })
                 .trim_start()
                 .to_string();
         }

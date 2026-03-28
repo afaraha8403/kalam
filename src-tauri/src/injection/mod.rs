@@ -49,11 +49,7 @@ impl TextInjector {
             other => other.clone(),
         };
 
-        log::debug!(
-            "Injecting {} chars via {:?}",
-            text.len(),
-            method
-        );
+        log::debug!("Injecting {} chars via {:?}", text.len(), method);
 
         let mut last_err = None;
         for attempt in 1..=config.retry_attempts {
@@ -152,10 +148,7 @@ impl TextInjector {
         // Before restoring, verify the target likely consumed the paste by
         // checking that the clipboard still holds our text.  If a clipboard
         // manager already changed it, skip restoration to avoid overwriting.
-        let still_ours = clipboard
-            .get_text()
-            .map(|c| c == text)
-            .unwrap_or(false);
+        let still_ours = clipboard.get_text().map(|c| c == text).unwrap_or(false);
 
         if still_ours {
             // Extra safety: poll briefly in case the app is still mid-paste.

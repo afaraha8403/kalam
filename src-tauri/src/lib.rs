@@ -304,9 +304,7 @@ async fn cancel_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<A
     }
 
     is_recording.store(false, Ordering::SeqCst);
-    state
-        .is_sensitive_app_active
-        .store(false, Ordering::SeqCst);
+    state.is_sensitive_app_active.store(false, Ordering::SeqCst);
     let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Idle);
     // Stop active stream only when recording was fully started. During Starting, start_dictation
     // performs cleanup if cancellation happened after stream startup but before final transition.
@@ -833,10 +831,7 @@ pub fn run() {
                     let now = crate::config::privacy::foreground_matches_sensitive_app(&cfg);
                     let prev = last_idle_sensitive.unwrap_or(false);
                     if now && !prev {
-                        emit_overlay_event(
-                            &sensitive_peek_handle,
-                            OverlayEvent::SensitiveAppPeek,
-                        );
+                        emit_overlay_event(&sensitive_peek_handle, OverlayEvent::SensitiveAppPeek);
                     }
                     last_idle_sensitive = Some(now);
                 }
@@ -1736,7 +1731,8 @@ fn get_permission_status() -> PermissionStatusPayload {
                     "If recording fails, check Windows Privacy > Microphone access for this app."
                         .to_string()
                 } else {
-                    "No input device detected. Connect or enable a microphone, then retry.".to_string()
+                    "No input device detected. Connect or enable a microphone, then retry."
+                        .to_string()
                 },
             },
             accessibility: PermissionStatusItem {
@@ -1770,7 +1766,8 @@ fn get_permission_status() -> PermissionStatusPayload {
                     "Linux permissions vary by distribution and audio stack. Run mic test to confirm capture."
                         .to_string()
                 } else {
-                    "No input device detected. Check PipeWire/PulseAudio and device settings.".to_string()
+                    "No input device detected. Check PipeWire/PulseAudio and device settings."
+                        .to_string()
                 },
             },
             accessibility: PermissionStatusItem {
@@ -3033,10 +3030,7 @@ fn get_foreground_exe_info(hwnd: usize) -> Option<(String, String)> {
 fn sensitive_app_forces_local(config: &AppConfig) -> bool {
     let effective = crate::config::privacy::effective_stt_config(config);
     matches!(effective.mode, STTMode::Local)
-        && matches!(
-            config.stt_config.mode,
-            STTMode::Hybrid | STTMode::Auto
-        )
+        && matches!(config.stt_config.mode, STTMode::Hybrid | STTMode::Auto)
 }
 
 async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<AtomicBool>) {
@@ -3118,12 +3112,7 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     let run = LISTENING_EMIT_RUN.fetch_add(1, Ordering::SeqCst) + 1;
     latency_trace_write(&format!("listening_emit_run_{}", run));
     latency_trace_write("T4_before_emit");
-    emit_overlay_event(
-        &state.app_handle,
-        OverlayEvent::Listening {
-            sensitive_app,
-        },
-    );
+    emit_overlay_event(&state.app_handle, OverlayEvent::Listening { sensitive_app });
     latency_trace_write("after_emit_listening");
     let app_handle = state.app_handle.clone();
     latency_trace_write("T3_before_play_sound");
@@ -3152,9 +3141,7 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
         let mut audio_state = state.audio_state.lock().await;
         *audio_state = AudioState::Idle;
         is_recording.store(false, Ordering::SeqCst);
-        state
-            .is_sensitive_app_active
-            .store(false, Ordering::SeqCst);
+        state.is_sensitive_app_active.store(false, Ordering::SeqCst);
         return;
     }
 
@@ -3164,9 +3151,7 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
         if !matches!(*audio_state, AudioState::Starting) {
             let _ = state.audio_capture.lock().await.stop_recording().await;
             is_recording.store(false, Ordering::SeqCst);
-            state
-                .is_sensitive_app_active
-                .store(false, Ordering::SeqCst);
+            state.is_sensitive_app_active.store(false, Ordering::SeqCst);
             return;
         }
         *audio_state = AudioState::Recording;
@@ -3251,13 +3236,11 @@ async fn run_command_pipeline(
         if query.is_empty() {
             if config.notifications.show_errors {
                 let state = app_handle.state::<AppState>();
-                let _ = state.notification_manager.warning(
-                    "Say \"online search\" followed by what you want to look up.",
-                );
+                let _ = state
+                    .notification_manager
+                    .warning("Say \"online search\" followed by what you want to look up.");
             }
-            return Err(
-                "Say \"online search\" followed by what you want to look up.".to_string(),
-            );
+            return Err("Say \"online search\" followed by what you want to look up.".to_string());
         }
         open_command_mode_web_search(app_handle, query)?;
         let preview = if query.chars().count() > 50 {
@@ -3685,9 +3668,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         log::info!("Stopping dictation...");
         *audio_state = AudioState::Processing;
         is_recording.store(false, Ordering::SeqCst);
-        state
-            .is_sensitive_app_active
-            .store(false, Ordering::SeqCst);
+        state.is_sensitive_app_active.store(false, Ordering::SeqCst);
         emit_overlay_event(
             &state.app_handle,
             OverlayEvent::Processing {

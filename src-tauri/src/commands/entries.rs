@@ -295,14 +295,11 @@ pub fn add_snippet(trigger: String, expansion: String) -> Result<(), String> {
     let conn = db::open_db().map_err(|e| e.to_string())?;
     let existing =
         db::get_entries_by_type(&conn, "snippet", None, 500, 0).map_err(|e| e.to_string())?;
-    for e in existing
-        .iter()
-        .filter(|e| {
-            e.title
-                .as_deref()
-                .is_some_and(|t| t.eq_ignore_ascii_case(trigger.trim()))
-        })
-    {
+    for e in existing.iter().filter(|e| {
+        e.title
+            .as_deref()
+            .is_some_and(|t| t.eq_ignore_ascii_case(trigger.trim()))
+    }) {
         let _ = db::delete_entry(&conn, &e.id);
     }
     let entry = snippet_entry(trigger, expansion);
