@@ -190,8 +190,9 @@ function Show-Help {
     Write-Host ""
     Write-Host "  SIGNING KEYS (for auto-updater)" -ForegroundColor Yellow
     Write-Host "  --------------------------------"
-    Write-Host "    generate-keys     - Generate Tauri signing keys for updates"
-    Write-Host "    show-pubkey       - Display the public key to add to config"
+    Write-Host "    generate-keys            - Generate Tauri signing keys for updates"
+    Write-Host "    show-pubkey              - Show public key + base64 for tauri.conf.json"
+    Write-Host "    verify-updater-signing   - Confirm ~/.tauri/kalam.key.pub matches tauri.conf pubkey"
     Write-Host ""
 }
 
@@ -430,8 +431,9 @@ switch ($Command) {
             Write-Host "    Public:  $keyPath.pub" -ForegroundColor Gray
             Write-Host ""
             Write-Host "  NEXT STEPS:" -ForegroundColor Yellow
-            Write-Host "  1. Run: ./tasks.ps1 show-pubkey" -ForegroundColor White
+            Write-Host "  1. Run: ./tasks.ps1 show-pubkey — copy the BASE64 line into tauri.conf.json → plugins.updater.pubkey" -ForegroundColor White
             Write-Host "  2. Add GitHub Secrets: TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD" -ForegroundColor White
+            Write-Host "  3. Run: ./tasks.ps1 verify-updater-signing before tagging a release" -ForegroundColor White
         } else {
             Write-Host "  ✗ Key generation failed" -ForegroundColor Red
             exit 1
@@ -449,28 +451,77 @@ switch ($Command) {
             exit 1
         }
         
-        $pubkey = Get-Content $keyPath -Raw
-        $pubkey = $pubkey.Trim()
+        # Tauri expects plugins.updater.pubkey = base64(UTF-8 bytes of the full .pub file), not raw multiline text.
+        $pubkeyRaw = Get-Content $keyPath -Raw
+        $pubkeyNormalized = $pubkeyRaw.TrimEnd() + "`n"
+        $pubkeyB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($pubkeyNormalized))
         
         Write-Host ""
-        Write-Host "  Your Public Key" -ForegroundColor Green
-        Write-Host "  ===============" -ForegroundColor Green
+        Write-Host "  Your Public Key (minisign .pub — for reference)" -ForegroundColor Green
+        Write-Host "  ==============================================" -ForegroundColor Green
         Write-Host ""
-        Write-Host "  Copy this key and paste it into:" -ForegroundColor Gray
-        Write-Host "  src-tauri/tauri.conf.json > plugins > updater > pubkey" -ForegroundColor Gray
+        Write-Host "  $pubkeyRaw" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  Paste this SINGLE-LINE base64 into tauri.conf.json → plugins → updater → pubkey:" -ForegroundColor Gray
         Write-Host ""
         Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-        Write-Host "  │ $pubkey" -ForegroundColor White
+        Write-Host "  │ $pubkeyB64" -ForegroundColor White
         Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
         Write-Host ""
         
         try {
-            $pubkey | Set-Clipboard
-            Write-Host "  ✓ Copied to clipboard!" -ForegroundColor Green
+            $pubkeyB64 | Set-Clipboard
+            Write-Host "  ✓ Base64 value copied to clipboard (use this in JSON)." -ForegroundColor Green
         } catch {
             Write-Host "  (Could not copy to clipboard automatically)" -ForegroundColor Gray
         }
         Write-Host ""
+    }
+
+    "verify-updater-signing" {
+        $confPath = Join-Path $RootDir "src-tauri\tauri.conf.json"
+        if (-not (Test-Path $confPath)) {
+            Write-Host ""
+            Write-Host "  ✗ Not found: $confPath" -ForegroundColor Red
+            Write-Host ""
+            exit 1
+        }
+        $conf = Get-Content $confPath -Raw | ConvertFrom-Json
+        $embeddedB64 = $conf.plugins.updater.pubkey
+        if (-not $embeddedB64) {
+            Write-Host ""
+            Write-Host "  ✗ tauri.conf.json missing plugins.updater.pubkey" -ForegroundColor Red
+            Write-Host ""
+            exit 1
+        }
+        $embeddedBytes = [Convert]::FromBase64String($embeddedB64)
+        $embeddedText = [System.Text.Encoding]::UTF8.GetString($embeddedBytes)
+        $embeddedText = (($embeddedText -replace "`r`n", "`n") -replace "`r", "`n").TrimEnd() + "`n"
+
+        $keyPath = "$env:USERPROFILE\.tauri\kalam.key.pub"
+        if (-not (Test-Path $keyPath)) {
+            Write-Host ""
+            Write-Host "  ✗ Local public key not found: $keyPath" -ForegroundColor Red
+            Write-Host "  Run './tasks.ps1 generate-keys' or copy your CI keypair’s .pub here, then re-run." -ForegroundColor Yellow
+            Write-Host ""
+            exit 1
+        }
+        $diskText = Get-Content $keyPath -Raw
+        $diskText = (($diskText -replace "`r`n", "`n") -replace "`r", "`n").TrimEnd() + "`n"
+
+        if ($embeddedText -ceq $diskText) {
+            Write-Host ""
+            Write-Host "  ✓ tauri.conf.json pubkey matches $keyPath" -ForegroundColor Green
+            Write-Host "  Ensure GitHub secret TAURI_SIGNING_PRIVATE_KEY is the private key for this .pub file." -ForegroundColor Gray
+            Write-Host ""
+            exit 0
+        }
+
+        Write-Host ""
+        Write-Host "  ✗ Mismatch: tauri.conf.json plugins.updater.pubkey does not match $keyPath" -ForegroundColor Red
+        Write-Host "  Run './tasks.ps1 show-pubkey' and update tauri.conf.json, or replace the local .pub with the keypair you use in CI." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
     }
 
     # ==========================================================================

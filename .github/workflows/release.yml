@@ -100,8 +100,44 @@ jobs:
     outputs:
       body: ${{ steps.extract.outputs.body }}
 
-  build:
+  # Fail fast if signing secrets are missing; otherwise CI can publish updater assets signed with a
+  # different key than plugins.updater.pubkey in tauri.conf.json → Minisign(UnexpectedKeyId) for users.
+  release-requirements:
     needs: [test, changelog]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require TAURI_SIGNING_PRIVATE_KEY for tagged releases
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -e
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not set (or is empty). Add the minisign private key as a repository secret. It must pair with plugins.updater.pubkey in src-tauri/tauri.conf.json. Without it, updater signatures do not match the app and users see Minisign(UnexpectedKeyId)."
+            exit 1
+          fi
+          echo "TAURI_SIGNING_PRIVATE_KEY is present."
+
+      - name: Log trusted updater key id from tauri.conf (public)
+        run: |
+          set -e
+          python3 << 'PY'
+          import base64, json, pathlib
+          conf = json.loads(pathlib.Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+          b64 = conf["plugins"]["updater"]["pubkey"]
+          decoded = base64.standard_b64decode(b64).decode("utf-8")
+          for line in decoded.splitlines():
+              if "minisign public key:" in line:
+                  print("Trusted updater public key (from tauri.conf.json):", line.strip())
+                  break
+          else:
+              print("Could not parse minisign public key comment from pubkey field")
+          PY
+
+  build:
+    needs: [test, changelog, release-requirements]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write

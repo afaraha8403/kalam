@@ -5,6 +5,9 @@
 ### Fixes
 - Apply rustfmt in `src-tauri` so `cargo fmt --check` passes in the release workflow; fix Clippy (`manual_pattern_char_comparison` in STT vocab split, `needless_return` in Windows permission status) so `cargo clippy -- -D warnings` passes in CI.
 
+### Changes
+- **Updater signing guardrails:** tagged releases fail fast if `TAURI_SIGNING_PRIVATE_KEY` is missing; workflow logs the trusted minisign public key id from `tauri.conf.json`. `./tasks.ps1 verify-updater-signing` checks that `plugins.updater.pubkey` matches `%USERPROFILE%\.tauri\kalam.key.pub`; `./tasks.ps1 show-pubkey` now copies the **base64** string required for the JSON `pubkey` field (avoids `Minisign(UnexpectedKeyId)` when CI secrets and config disagree).
+
 ## [0.1.0-beta.3]
 - **Fix:** **Docs site** mobile nav panel: stronger frosted scrim (**`color-mix`** with theme surfaces), **48px** backdrop blur, **`isolation`**, and noise layer **`z-index: 0`** with links above it so page text no longer reads clearly through the menu.
 
