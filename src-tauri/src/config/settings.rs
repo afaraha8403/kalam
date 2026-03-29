@@ -401,6 +401,14 @@ pub struct FormattingRule {
     pub pattern: String,
     pub replacement: String,
     pub enabled: bool,
+    /// When `false`, `pattern` is matched as literal text (after regex escaping). When the field is
+    /// missing in JSON, defaults to `true` so existing configs keep regex semantics.
+    #[serde(default = "default_formatting_rule_is_regex")]
+    pub is_regex: bool,
+}
+
+fn default_formatting_rule_is_regex() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -38,17 +38,30 @@ pub fn format_text(
     }
 
     for rule in &config.custom_rules {
-        if rule.enabled {
-            if let Ok(regex) = Regex::new(&rule.pattern) {
-                result = regex.replace_all(&result, &rule.replacement).to_string();
-            }
+        if !rule.enabled {
+            continue;
+        }
+        let pattern_body = if rule.is_regex {
+            rule.pattern.clone()
+        } else {
+            regex::escape(&rule.pattern)
+        };
+        if pattern_body.is_empty() {
+            continue;
+        }
+        // Dictionary / replacement rules always match case-insensitively (literal and regex).
+        if let Ok(re) = RegexBuilder::new(&pattern_body)
+            .case_insensitive(true)
+            .build()
+        {
+            result = re.replace_all(&result, &rule.replacement).to_string();
         }
     }
 
     (result.trim().to_string(), actions)
 }
 
-/// Replace snippet triggers (e.g. @@email) with their expansions. Longer triggers are applied
+/// Replace snippet triggers with their expansions. Longer triggers are applied
 /// first to avoid partial matches. Matching is case-insensitive; replaced text uses the expansion as-is.
 fn apply_snippets(text: &str, snippets: &[Snippet]) -> String {
     if snippets.is_empty() {
@@ -188,4 +201,57 @@ fn apply_voice_commands_with_actions(
 
     result = result.split_whitespace().collect::<Vec<_>>().join(" ");
     (result, actions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{FormattingConfig, FormattingRule};
+
+    fn test_config() -> FormattingConfig {
+        let mut c = FormattingConfig::default();
+        c.voice_commands = false;
+        c.filler_word_removal = false;
+        c.auto_punctuation = false;
+        c
+    }
+
+    #[test]
+    fn literal_rule_is_case_insensitive() {
+        let mut config = test_config();
+        config.custom_rules = vec![FormattingRule {
+            pattern: "foo".to_string(),
+            replacement: "bar".to_string(),
+            enabled: true,
+            is_regex: false,
+        }];
+        let (out, _) = format_text("FOO baz", &config, &[], 0, None);
+        assert_eq!(out, "bar baz");
+    }
+
+    #[test]
+    fn literal_rule_escapes_regex_chars() {
+        let mut config = test_config();
+        config.custom_rules = vec![FormattingRule {
+            pattern: "a+b".to_string(),
+            replacement: "ok".to_string(),
+            enabled: true,
+            is_regex: false,
+        }];
+        let (out, _) = format_text("say a+b now", &config, &[], 0, None);
+        assert_eq!(out, "say ok now");
+    }
+
+    #[test]
+    fn regex_rule_is_always_case_insensitive() {
+        let mut config = test_config();
+        config.custom_rules = vec![FormattingRule {
+            pattern: r"\bfoo\b".to_string(),
+            replacement: "bar".to_string(),
+            enabled: true,
+            is_regex: true,
+        }];
+        let (out, _) = format_text("foo FOO", &config, &[], 0, None);
+        assert_eq!(out, "bar bar");
+    }
 }

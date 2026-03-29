@@ -997,6 +997,7 @@ pub fn run() {
             commands::add_dictionary_entry,
             commands::delete_dictionary_entry,
             commands::update_dictionary_entry,
+            commands::validate_replacement_pattern,
             focus_main_window,
             reset_application,
             check_model_requirements,
@@ -3724,7 +3725,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         );
 
         let mut config = state.config.lock().await.get_all();
-        let vocabulary = if let Ok(conn) = crate::db::open_db() {
+        let dict_terms: Vec<String> = if let Ok(conn) = crate::db::open_db() {
             if let Ok(entries) = crate::db::get_entries_by_type(&conn, "snippet", None, 500, 0) {
                 config.snippets = entries
                     .into_iter()
@@ -3735,27 +3736,20 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                     .collect();
             }
             crate::db::get_dictionary_entries(&conn)
-                .ok()
-                .and_then(|entries| {
-                    let s = entries
-                        .iter()
-                        .map(|e| e.term.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    if s.is_empty() {
-                        None
-                    } else if s.len() > 800 {
-                        Some(s.chars().take(800).collect::<String>())
-                    } else {
-                        Some(s)
-                    }
-                })
+                .unwrap_or_else(|_| Vec::new())
+                .into_iter()
+                .map(|e| e.term)
+                .collect()
         } else {
-            None
+            Vec::new()
         };
+        let vocabulary = crate::stt::build_transcription_vocabulary_prompt(
+            &dict_terms,
+            &config.formatting.custom_rules,
+        );
         if let Some(ref v) = vocabulary {
             log::info!(
-                "Dictionary vocabulary loaded for transcription ({} chars, preview: {:?})",
+                "Transcription vocabulary prompt (dict + literal replacement hints, {} chars, preview: {:?})",
                 v.len(),
                 v.chars().take(80).collect::<String>()
             );

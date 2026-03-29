@@ -11,7 +11,6 @@
     AppConfig,
     AudioDevice,
     AudioFilterPreset,
-    DictionaryEntry,
     SensitiveAppPattern,
     ThemePreference,
   } from '../types'
@@ -81,7 +80,6 @@
   const tabs = [
     { id: 'general', label: 'General', icon: 'ph:sliders-horizontal' },
     { id: 'dictation', label: 'Audio & Dictation', icon: 'ph:microphone' },
-    { id: 'dictionary', label: 'Dictionary', icon: 'ph:book-open' },
     { id: 'command', label: 'Command Mode', icon: 'ph:terminal' },
     { id: 'privacy', label: 'Privacy', icon: 'ph:shield' },
     { id: 'advanced', label: 'Advanced', icon: 'ph:wrench' },
@@ -119,7 +117,6 @@
     dictation_audio: false,
     dictation_mode: false,
     dictation_formatting: true,
-    dictionary: false,
     command: false,
     privacy_data: false,
     privacy_notifications: false,
@@ -227,11 +224,6 @@
   let loadingLlmModels = false
   let hasCommandApiKey = false
 
-  let dictionaryEntries: DictionaryEntry[] = []
-  let dictionaryNewTerm = ''
-  let editingDictionaryId: string | null = null
-  let editingDictionaryValue = ''
-  let dictionaryLoading = false
   /** `get_platform`: windows | macos | linux — for hotkey Meta label (Win / Cmd / Super). */
   let appPlatform = ''
 
@@ -1354,63 +1346,6 @@
     }
   }
 
-  async function loadDictionaryEntries() {
-    dictionaryLoading = true
-    try {
-      dictionaryEntries = (await invoke('get_dictionary_entries')) as DictionaryEntry[]
-    } catch (e) {
-      dictionaryEntries = []
-    } finally {
-      dictionaryLoading = false
-    }
-  }
-
-  async function addDictionaryTerm() {
-    const term = dictionaryNewTerm.trim()
-    if (!term) return
-    try {
-      await invoke('add_dictionary_entry', { term })
-      dictionaryNewTerm = ''
-      await loadDictionaryEntries()
-    } catch (e) {
-      console.error('Failed to add dictionary term:', e)
-    }
-  }
-
-  async function deleteDictionaryEntry(id: string) {
-    try {
-      await invoke('delete_dictionary_entry', { id })
-      editingDictionaryId = null
-      await loadDictionaryEntries()
-    } catch (e) {
-      console.error('Failed to delete dictionary entry:', e)
-    }
-  }
-
-  function startEditDictionary(entry: DictionaryEntry) {
-    editingDictionaryId = entry.id
-    editingDictionaryValue = entry.term
-  }
-
-  function cancelEditDictionary() {
-    editingDictionaryId = null
-    editingDictionaryValue = ''
-  }
-
-  async function saveEditDictionary() {
-    if (!editingDictionaryId) return
-    const term = editingDictionaryValue.trim()
-    if (!term) return
-    try {
-      await invoke('update_dictionary_entry', { id: editingDictionaryId, term })
-      editingDictionaryId = null
-      editingDictionaryValue = ''
-      await loadDictionaryEntries()
-    } catch (e) {
-      console.error('Failed to update dictionary entry:', e)
-    }
-  }
-
   $: langProviderKey = config
     ? (
         config.stt_config.mode === 'Local'
@@ -1486,7 +1421,6 @@
               activeTab = tab.id
               if (tab.id !== 'advanced') logExportMessage = null
               if (tab.id === 'advanced') checkLogEmpty()
-              if (tab.id === 'dictionary') loadDictionaryEntries()
               tick().then(updateTabScrollHints)
             }}
           >
@@ -2356,87 +2290,6 @@
           {/if}
         </section>
 
-        </div>
-
-      {:else if activeTab === 'dictionary'}
-        <div class="settings-tab-content">
-          <section class="settings-section" class:collapsed={collapsedSections.dictionary}>
-            <button type="button" class="section-header" on:click={() => toggleSection('dictionary')}>
-              <h3>Custom Vocabulary</h3>
-              <Icon icon={collapsedSections.dictionary ? 'ph:caret-down' : 'ph:caret-up'} />
-            </button>
-            {#if !collapsedSections.dictionary}
-              <div class="section-content">
-                <p class="hint">
-                  These words improve transcription accuracy for names, brands, and specialized terms.
-                </p>
-                <div class="setting-row">
-                  <div class="setting-label full-width">
-                    <span class="setting-name">Add Term</span>
-                    <div class="input-group">
-                      <input
-                        type="text"
-                        bind:value={dictionaryNewTerm}
-                        placeholder="e.g. Kalam, Balacode"
-                        on:keydown={(e) => e.key === 'Enter' && addDictionaryTerm()}
-                      />
-                      <button type="button" class="settings-secondary-btn" disabled={!dictionaryNewTerm.trim() || dictionaryLoading} on:click={addDictionaryTerm}>
-                        Add
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div class="setting-row">
-                  <div class="setting-label full-width">
-                    <span class="setting-name">Current Terms</span>
-                    {#if dictionaryLoading && dictionaryEntries.length === 0}
-                      <p class="hint">Loading…</p>
-                    {:else if dictionaryEntries.length === 0}
-                      <p class="hint">No terms yet. Add words above.</p>
-                    {:else}
-                      <ul class="dictionary-list">
-                        {#each dictionaryEntries as entry (entry.id)}
-                          <li>
-                            {#if editingDictionaryId === entry.id}
-                              <input
-                                type="text"
-                                class="dictionary-edit-input"
-                                bind:value={editingDictionaryValue}
-                                on:keydown={(e) => {
-                                  if (e.key === 'Enter') saveEditDictionary()
-                                  if (e.key === 'Escape') cancelEditDictionary()
-                                }}
-                              />
-                              <div class="dictionary-edit-actions">
-                                <button type="button" class="settings-secondary-btn small" on:click={saveEditDictionary}>Save</button>
-                                <button type="button" class="btn-ghost small" on:click={cancelEditDictionary}>Cancel</button>
-                              </div>
-                            {:else}
-                              <span class="dictionary-term">{entry.term}</span>
-                              <div class="dictionary-row-actions">
-                                <button
-                                  type="button"
-                                  class="btn-icon"
-                                  title="Edit term"
-                                  aria-label="Edit term"
-                                  on:click={() => startEditDictionary(entry)}
-                                >
-                                  <Icon icon="ph:pencil-simple" />
-                                </button>
-                                <button type="button" class="btn-icon remove" title="Remove term" aria-label="Remove term" on:click={() => deleteDictionaryEntry(entry.id)}>
-                                  <Icon icon="ph:trash" />
-                                </button>
-                              </div>
-                            {/if}
-                          </li>
-                        {/each}
-                      </ul>
-                    {/if}
-                  </div>
-                </div>
-              </div>
-            {/if}
-          </section>
         </div>
 
       {:else if activeTab === 'command'}
@@ -4374,61 +4227,6 @@
     margin-top: 16px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-  }
-
-  /* Dictionary styles */
-  .dictionary-list {
-    list-style: none;
-    padding: 0;
-    margin: 12px 0 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .dictionary-list li {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 12px 16px;
-    background: var(--bg);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-  }
-
-  .dictionary-term {
-    font-size: 14px;
-    color: var(--text);
-    flex: 1;
-    min-width: 0;
-    word-break: break-word;
-  }
-
-  .dictionary-edit-input {
-    flex: 1 1 180px;
-    min-width: 0;
-    padding: 8px 10px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
-    background: var(--bg-elevated);
-    color: var(--text);
-    font-size: 14px;
-  }
-
-  .dictionary-row-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-
-  .dictionary-edit-actions {
-    display: flex;
-    width: 100%;
-    justify-content: flex-end;
     gap: 8px;
   }
 

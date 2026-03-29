@@ -16,6 +16,7 @@ impl TrayManager {
         // Create menu items
         let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
         let history_i = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
+        let dictionary_i = MenuItem::with_id(app, "dictionary", "Dictionary", true, None::<&str>)?;
         let snippets_i = MenuItem::with_id(app, "snippets", "Snippets", true, None::<&str>)?;
         let separator = PredefinedMenuItem::separator(app)?;
         let check_updates = MenuItem::with_id(
@@ -32,6 +33,7 @@ impl TrayManager {
             &[
                 &settings_i,
                 &history_i,
+                &dictionary_i,
                 &snippets_i,
                 &separator,
                 &check_updates,
@@ -54,6 +56,11 @@ impl TrayManager {
                 "history" => {
                     if let Err(e) = show_window(app, "history") {
                         log::error!("Failed to show history: {}", e);
+                    }
+                }
+                "dictionary" => {
+                    if let Err(e) = show_window(app, "dictionary") {
+                        log::error!("Failed to show dictionary: {}", e);
                     }
                 }
                 "snippets" => {
@@ -111,7 +118,7 @@ fn show_window(app: &AppHandle, page: &str) -> anyhow::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
         window.show()?;
         window.set_focus()?;
-        // Tell frontend to navigate when opening from tray menu (Settings, History, Snippets)
+        // Tell frontend to navigate when opening from tray menu (Settings, History, Dictionary, Snippets)
         if page != "main" {
             let _ = app.emit("tray-navigate", page);
         }

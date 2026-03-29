@@ -9,7 +9,7 @@
   import Settings from './pages/Settings.svelte'
   import Home from './pages/Home.svelte'
   import Snippets from './pages/Snippets.svelte'
-  import SnippetDetail from './components/views/SnippetDetail.svelte'
+  import Dictionary from './pages/Dictionary.svelte'
   import Onboarding from './pages/Onboarding.svelte'
   import Overlay from './components/Overlay.svelte'
   import History from './components/views/History.svelte'
@@ -233,7 +233,7 @@
         isFirstRun = true
       })
       unlistenTrayNavigate = await listen<string>('tray-navigate', (e) => {
-        if (e.payload && ['settings', 'history', 'snippets'].includes(e.payload)) {
+        if (e.payload && ['settings', 'history', 'dictionary', 'snippets'].includes(e.payload)) {
           navigate(e.payload)
         }
       })
@@ -435,6 +435,10 @@
               <Icon icon={currentPage === 'reminders' ? 'ph:bell-fill' : 'ph:bell'} />
               <span class="nav-text">Reminders</span>
             </button>
+            <button class="nav-link" class:active={currentPage === 'dictionary'} on:click={() => navigate('dictionary')} title="Dictionary">
+              <Icon icon={currentPage === 'dictionary' ? 'ph:book-open-fill' : 'ph:book-open'} />
+              <span class="nav-text">Dictionary</span>
+            </button>
             <button class="nav-link" class:active={currentPage === 'snippets'} on:click={() => navigate('snippets')} title="Snippets">
               <Icon icon={currentPage === 'snippets' ? 'ph:text-aa-fill' : 'ph:text-aa'} />
               <span class="nav-text">Snippets</span>
@@ -484,10 +488,10 @@
             <Home navigate={navigate} darkMode={darkMode} />
           {:else if currentPage === 'settings'}
             <Settings />
+          {:else if currentPage === 'dictionary'}
+            <Dictionary />
           {:else if currentPage === 'snippets'}
-            <Snippets navigate={navigate} />
-          {:else if currentPage === 'snippet-detail'}
-            <SnippetDetail navigate={navigate} />
+            <Snippets />
           {:else if currentPage === 'history'}
             <History navigate={navigate} />
           {:else if currentPage === 'history-detail'}

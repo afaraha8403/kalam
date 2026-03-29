@@ -2,10 +2,19 @@
 
 ## [Unreleased]
 
+### Features
+- **Dictionary** is a main sidebar page (above Snippets) with a **single list**: hint-only rows (transcription vocabulary) and **find → replace** rows; **New item** opens the slide-over panel (empty “Replace with” = vocabulary-only). Tray menu includes Dictionary.
+- **Replacements:** dictionary UI adds **plain-text** find/replace (case-insensitive). Legacy or hand-edited `custom_rules` may still use regex in the formatter.
+- **Cloud STT vocabulary prompt:** enabled **literal** replacement targets (non-empty, ≤80 chars, no newlines) are merged into the Whisper `prompt` with dictionary terms (deduped), so the model is nudged toward the desired wording; replacements still run after transcription as a fallback. Regex rules do not contribute to the prompt.
+
 ### Fixes
+- **Dictionary:** list and empty state use the same horizontal width as the page header (removed inner `max-width` that made the header wider than the list).
+- **Dictionary:** clearing “Replace with” on a replacement row now correctly converts the entry to vocabulary-only (removed faulty `editHasReplacement` gate). Vocabulary → replacement no longer closes the panel before save finishes. Dictionary SQLite errors and duplicate terms (case-insensitive) surface in the UI; legacy **regex** rules are validated on save via `validate_replacement_pattern` (same flags as the formatter). Replacement rows with `enabled: false` show an **Inactive** hint in the list.
 - Apply rustfmt in `src-tauri` so `cargo fmt --check` passes in the release workflow; fix Clippy (`manual_pattern_char_comparison` in STT vocab split, `needless_return` in Windows permission status) so `cargo clippy -- -D warnings` passes in CI.
 
 ### Changes
+- **Dictionary:** **New item** in the header opens the **same side panel** as edit (Snippets-style); inline add form removed.
+- **Snippets:** edit and **New Snippet** use a **right slide-over panel** with backdrop (same pattern as Dictionary) instead of the separate `snippet-detail` full-page route.
 - **Updater signing guardrails:** tagged releases fail fast if `TAURI_SIGNING_PRIVATE_KEY` is missing; workflow logs the trusted minisign public key id from `tauri.conf.json`. `./tasks.ps1 verify-updater-signing` checks that `plugins.updater.pubkey` matches `%USERPROFILE%\.tauri\kalam.key.pub`; `./tasks.ps1 show-pubkey` now copies the **base64** string required for the JSON `pubkey` field (avoids `Minisign(UnexpectedKeyId)` when CI secrets and config disagree).
 
 ## [0.1.0-beta.3]

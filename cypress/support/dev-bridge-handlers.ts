@@ -308,6 +308,8 @@ export function handleDevBridgeInvoke(body: { cmd?: string; args?: Record<string
       return []
     case 'update_dictionary_entry':
       return null
+    case 'validate_replacement_pattern':
+      return null
     case 'focus_main_window':
       return null
     case 'check_api_key':

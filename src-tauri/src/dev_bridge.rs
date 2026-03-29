@@ -320,6 +320,17 @@ async fn dispatch(cmd: &str, args: &serde_json::Value) -> Result<serde_json::Val
             crate::db::update_dictionary_entry(&conn, &id, &term).map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         }
+        "validate_replacement_pattern" => {
+            let pattern = arg_get(args, "pattern")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .ok_or_else(|| "missing pattern".to_string())?;
+            let is_regex = arg_get(args, "isRegex")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            crate::commands::validate_replacement_pattern(pattern, is_regex)?;
+            Ok(serde_json::Value::Null)
+        }
         "focus_main_window" => Ok(serde_json::Value::Null),
         "get_entry" => {
             let id = arg_get(args, "id")

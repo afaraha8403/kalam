@@ -129,6 +129,8 @@ export interface FormattingRule {
   pattern: string
   replacement: string
   enabled: boolean
+  /** false = literal find (escaped); omitted in legacy JSON — backend defaults to true */
+  is_regex?: boolean
 }
 
 export interface PrivacyConfig {

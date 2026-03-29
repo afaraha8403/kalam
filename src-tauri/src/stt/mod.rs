@@ -9,7 +9,9 @@ pub mod sensevoice;
 pub mod sidecars;
 
 use crate::audio::vad::{VADConfig, VADProcessor};
+use crate::config::FormattingRule;
 use crate::stt::provider::STTProvider;
+use std::collections::HashSet;
 use std::fmt;
 
 /// Structured error for transcription failures so callers can decide retry.
@@ -93,6 +95,61 @@ fn split_segments_by_max_duration(
         }
     }
     out
+}
+
+/// Max length for the Whisper `prompt` vocabulary string (matches historical dictionary cap).
+pub const TRANSCRIPTION_VOCAB_PROMPT_MAX: usize = 800;
+
+/// Literal replacement targets longer than this are omitted from the STT prompt.
+const REPLACEMENT_VOCAB_HINT_MAX_LEN: usize = 80;
+
+/// Comma-separated vocabulary for cloud STT `prompt`: **dictionary terms first**, then non-empty
+/// targets from **enabled literal** replacement rules (`is_regex: false`). Dedupes
+/// case-insensitively. Regex rules never contribute (e.g. replacement may be `$1`).
+pub fn build_transcription_vocabulary_prompt(
+    dictionary_terms: &[String],
+    custom_rules: &[FormattingRule],
+) -> Option<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut parts: Vec<String> = Vec::new();
+
+    for term in dictionary_terms {
+        let t = term.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let key = t.to_lowercase();
+        if seen.insert(key) {
+            parts.push(t.to_string());
+        }
+    }
+
+    for rule in custom_rules {
+        if !rule.enabled || rule.is_regex {
+            continue;
+        }
+        let r = rule.replacement.trim();
+        if r.is_empty() || r.len() > REPLACEMENT_VOCAB_HINT_MAX_LEN {
+            continue;
+        }
+        if r.contains('\n') || r.contains('\r') {
+            continue;
+        }
+        let key = r.to_lowercase();
+        if seen.insert(key) {
+            parts.push(r.to_string());
+        }
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut s = parts.join(", ");
+    if s.len() > TRANSCRIPTION_VOCAB_PROMPT_MAX {
+        s = s.chars().take(TRANSCRIPTION_VOCAB_PROMPT_MAX).collect();
+    }
+    Some(s)
 }
 
 /// True if `text` is effectively the vocabulary prompt echoed back (Whisper hallucination on silence).
@@ -424,5 +481,57 @@ mod tests {
         let text = "we are looking to have served the use cases described below";
         let out = sanitize_prompt_leakage(text, Some(vocab));
         assert_eq!(out, text);
+    }
+
+    #[test]
+    fn vocab_prompt_merges_dict_and_literal_replacements() {
+        use crate::config::FormattingRule;
+
+        let dict = vec!["Kalam".to_string()];
+        let rules = vec![FormattingRule {
+            pattern: "column".to_string(),
+            replacement: "Kalam".to_string(),
+            enabled: true,
+            is_regex: false,
+        }];
+        let out = build_transcription_vocabulary_prompt(&dict, &rules).unwrap();
+        assert_eq!(out, "Kalam");
+    }
+
+    #[test]
+    fn vocab_prompt_adds_distinct_replacement_target() {
+        use crate::config::FormattingRule;
+
+        let dict = vec!["foo".to_string()];
+        let rules = vec![FormattingRule {
+            pattern: "bar".to_string(),
+            replacement: "GitHub".to_string(),
+            enabled: true,
+            is_regex: false,
+        }];
+        let out = build_transcription_vocabulary_prompt(&dict, &rules).unwrap();
+        assert_eq!(out, "foo, GitHub");
+    }
+
+    #[test]
+    fn vocab_prompt_skips_regex_rules_and_disabled() {
+        use crate::config::FormattingRule;
+
+        let dict = vec![];
+        let rules = vec![
+            FormattingRule {
+                pattern: r"\d+".to_string(),
+                replacement: "X".to_string(),
+                enabled: true,
+                is_regex: true,
+            },
+            FormattingRule {
+                pattern: "a".to_string(),
+                replacement: "b".to_string(),
+                enabled: false,
+                is_regex: false,
+            },
+        ];
+        assert!(build_transcription_vocabulary_prompt(&dict, &rules).is_none());
     }
 }

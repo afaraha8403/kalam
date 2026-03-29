@@ -460,8 +460,33 @@ pub fn get_dictionary_entries(conn: &Connection) -> anyhow::Result<Vec<Dictionar
         .map_err(|e| e.into())
 }
 
+/// True if another row already has this term (case-insensitive). `exclude_id` skips that row so renames
+/// to the same spelling are allowed.
+pub fn is_dictionary_term_taken(
+    conn: &Connection,
+    term: &str,
+    exclude_id: Option<&str>,
+) -> anyhow::Result<bool> {
+    let taken: bool = match exclude_id {
+        None => conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM dictionary WHERE LOWER(term) = LOWER(?1))",
+            [term],
+            |row| row.get(0),
+        )?,
+        Some(id) => conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM dictionary WHERE LOWER(term) = LOWER(?1) AND id != ?2)",
+            rusqlite::params![term, id],
+            |row| row.get(0),
+        )?,
+    };
+    Ok(taken)
+}
+
 /// Add a dictionary term; returns the new entry id.
 pub fn add_dictionary_entry(conn: &Connection, term: &str) -> anyhow::Result<String> {
+    if is_dictionary_term_taken(conn, term, None)? {
+        anyhow::bail!("That word or phrase is already in your dictionary");
+    }
     let id = uuid::Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().to_rfc3339();
     conn.execute(
@@ -482,6 +507,9 @@ pub fn delete_dictionary_entry(conn: &Connection, id: &str) -> anyhow::Result<()
 
 /// Update an existing dictionary term by id.
 pub fn update_dictionary_entry(conn: &Connection, id: &str, term: &str) -> anyhow::Result<()> {
+    if is_dictionary_term_taken(conn, term, Some(id))? {
+        anyhow::bail!("That word or phrase is already in your dictionary");
+    }
     let n = conn.execute(
         "UPDATE dictionary SET term = ?1 WHERE id = ?2",
         rusqlite::params![term, id],
