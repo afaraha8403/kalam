@@ -199,13 +199,14 @@ fn sanitize_prompt_leakage(text: &str, vocabulary: Option<&str>) -> String {
         }
     }
 
-    // If the text begins with 2+ comma-separated dictionary terms, strip that run.
-    // This is conservative enough to avoid deleting normal prose starts.
+    // Build vocab term set once for both leading and trailing checks.
     let vocab_terms: std::collections::HashSet<String> = vocab
         .split([',', ';', '\n'])
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
+
+    // Strip leading run of 2+ comma-separated dictionary terms.
     if vocab_terms.len() >= 2 && cleaned.contains(',') {
         let parts: Vec<&str> = cleaned.split(',').collect();
         let mut leading_vocab_parts = 0usize;
@@ -230,6 +231,61 @@ fn sanitize_prompt_leakage(text: &str, vocabulary: Option<&str>) -> String {
                     c.is_whitespace() || [',', ';', ':', '-'].contains(&c)
                 })
                 .trim_start()
+                .to_string();
+        }
+    }
+
+    // Strip trailing exact vocabulary suffix (Whisper can append the prompt at the end too).
+    // Also try after stripping trailing sentence punctuation (e.g. "...dfssdfsdf.").
+    {
+        let lower_vocab = vocab.to_lowercase();
+        let trimmed_trailing = cleaned.trim_end_matches(|c: char| c == '.' || c == '!' || c == '?');
+        let candidate = if trimmed_trailing.to_lowercase().ends_with(&lower_vocab) {
+            trimmed_trailing
+        } else if cleaned.to_lowercase().ends_with(&lower_vocab) {
+            cleaned.as_str()
+        } else {
+            ""
+        };
+        if !candidate.is_empty() && candidate.to_lowercase().ends_with(&lower_vocab) {
+            cleaned = candidate
+                .get(..candidate.len() - vocab.len())
+                .unwrap_or("")
+                .trim_end_matches(|c: char| c.is_whitespace() || [',', ';', ':', '-'].contains(&c))
+                .trim_end()
+                .to_string();
+            if cleaned.is_empty() {
+                return cleaned;
+            }
+        }
+    }
+
+    // Strip trailing run of 2+ comma-separated dictionary terms.
+    // Also strips trailing punctuation (e.g. "dfssdfsdf." -> "dfssdfsdf") before matching.
+    if vocab_terms.len() >= 2 && cleaned.contains(',') {
+        let parts: Vec<&str> = cleaned.split(',').collect();
+        let mut trailing_vocab_parts = 0usize;
+        for p in parts.iter().rev() {
+            let token = p.trim().trim_end_matches(|c: char| c.is_ascii_punctuation() && c != '\'').to_lowercase();
+            if token.is_empty() {
+                break;
+            }
+            if vocab_terms.contains(&token) {
+                trailing_vocab_parts += 1;
+            } else {
+                break;
+            }
+        }
+        if trailing_vocab_parts >= 2 {
+            if trailing_vocab_parts >= parts.len() {
+                return String::new();
+            }
+            cleaned = parts[..parts.len() - trailing_vocab_parts]
+                .join(",")
+                .trim_end_matches(|c: char| {
+                    c.is_whitespace() || [',', ';', ':', '-'].contains(&c)
+                })
+                .trim_end()
                 .to_string();
         }
     }
@@ -481,6 +537,46 @@ mod tests {
         let text = "we are looking to have served the use cases described below";
         let out = sanitize_prompt_leakage(text, Some(vocab));
         assert_eq!(out, text);
+    }
+
+    #[test]
+    fn sanitize_prompt_leakage_removes_trailing_vocab_suffix() {
+        let vocab = "Kalam, Balacode, Rolla, Farahat, dfssdfsdf";
+        let text = "so I'm okay to switch the license right now Kalam, Balacode, Rolla, Farahat, dfssdfsdf";
+        let out = sanitize_prompt_leakage(text, Some(vocab));
+        assert_eq!(out, "so I'm okay to switch the license right now");
+    }
+
+    #[test]
+    fn sanitize_prompt_leakage_removes_trailing_comma_separated_terms() {
+        let vocab = "Kalam, Balacode, Rolla, Farahat";
+        let text = "we need to protect our license, Kalam, Balacode, Rolla, Farahat";
+        let out = sanitize_prompt_leakage(text, Some(vocab));
+        assert_eq!(out, "we need to protect our license");
+    }
+
+    #[test]
+    fn sanitize_prompt_leakage_trailing_all_vocab_returns_empty() {
+        let vocab = "Kalam, Balacode, Rolla";
+        let text = "Kalam, Balacode, Rolla";
+        let out = sanitize_prompt_leakage(text, Some(vocab));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn sanitize_prompt_leakage_trailing_vocab_with_period() {
+        let vocab = "Kalam, Balacode, Rolla, Farahat, dfssdfsdf";
+        let text = "we should protect the license Kalam, Balacode, Rolla, Farahat, dfssdfsdf.";
+        let out = sanitize_prompt_leakage(text, Some(vocab));
+        assert_eq!(out, "we should protect the license");
+    }
+
+    #[test]
+    fn sanitize_prompt_leakage_trailing_terms_with_punctuation() {
+        let vocab = "Kalam, Balacode, Rolla";
+        let text = "this is a test, Kalam, Balacode, Rolla.";
+        let out = sanitize_prompt_leakage(text, Some(vocab));
+        assert_eq!(out, "this is a test");
     }
 
     #[test]
