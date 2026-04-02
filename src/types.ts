@@ -18,16 +18,118 @@ export type WaveformStyle =
   | 'NeonPulse'
   | 'Aurora'
 export type OverlayPosition = 'BottomCenter' | 'BottomLeft' | 'BottomRight' | 'TopCenter' | 'TopLeft' | 'TopRight' | 'CenterLeft' | 'CenterRight' | 'Center'
+/** Rust `OverlayEvent::Recording` / `Processing` context fields (`overlay-state` / `overlay-state-broadcast`). */
+export type OverlayContextHintPayload = {
+  context_active?: boolean
+  context_label?: string | null
+  context_sources?: string[]
+}
 export type ExpandDirection = 'Up' | 'Down' | 'Center'
 
-export type CommandModeProvider = 'groq' | 'openrouter' | 'gemini' | 'openai' | 'anthropic'
+/** Phase 6: default active overlay layout when dictation runs. */
+export type OverlayActivePreference = 'Mini' | 'Full'
 
+/** LLM provider ids used across the app (command mode, polish, mode overrides). */
+export type LlmProviderId =
+  | 'groq'
+  | 'openrouter'
+  | 'gemini'
+  | 'openai'
+  | 'anthropic'
+  | 'custom_openai'
+
+/** @deprecated Use LlmProviderId. Kept for backward compat in Settings UI migration. */
+export type CommandModeProvider = LlmProviderId
+
+/** Matches Rust `catalog::Capability` serde (SCREAMING_SNAKE_CASE). */
+export type ProviderCapability = 'STT' | 'LLM'
+
+/** Matches Rust `catalog::AuthStyle` (`rename_all = "SCREAMING_SNAKE_CASE"`). */
+export type CatalogAuthStyle = 'BEARER' | 'X_API_KEY' | 'QUERY_PARAM'
+
+export interface CatalogModel {
+  id: string
+  name: string
+  capability: ProviderCapability
+  speed_rating: number
+  quality_rating: number
+  cost_hint: string
+  is_default: boolean
+  size_mb?: number
+}
+
+export interface CatalogProvider {
+  id: string
+  name: string
+  icon: string
+  capabilities: ProviderCapability[]
+  get_api_key_url: string
+  auth_style: CatalogAuthStyle
+  models: CatalogModel[]
+}
+
+export interface CustomOpenAiEndpoint {
+  base_url: string
+  api_key: string
+  model_id: string
+}
+
+/** Command mode: voice-triggered note/task/reminder creation. Provider/model removed in v6. */
 export interface CommandConfig {
   enabled: boolean
   hotkey: string | null
-  provider: CommandModeProvider | null
-  api_keys: Record<string, string>
-  models: Record<string, string>
+}
+
+/** Per-mode STT/LLM provider + model; `inherit` uses global Settings defaults. */
+export interface ModeModelRef {
+  provider: string
+  model_id: string
+}
+
+export interface ModeContextConfig {
+  enabled: boolean
+  read_app: boolean
+  read_clipboard: boolean
+  read_selection: boolean
+  include_system_info: boolean
+}
+
+export interface AutoActivateRule {
+  app_pattern: string
+  pattern_type: 'ProcessName' | 'WindowTitle' | 'BundleId'
+}
+
+/** Emitted when Phase 7 auto-activation changes the dictation mode (matches Rust `AutoActivateSwitchedPayload`). */
+export interface AutoActivateSwitchedPayload {
+  mode_name: string
+  triggered_by_app: string | null
+  is_restore: boolean
+}
+
+export interface PolishConfig {
+  fix_grammar: boolean
+  remove_filler: boolean
+  fix_punctuation: boolean
+  smart_formatting: boolean
+  self_correction: boolean
+}
+
+export interface DictationMode {
+  id: string
+  name: string
+  icon?: string | null
+  /** CSS color for status bar + overlay (OKLCH, hex, etc.). Omitted/empty = derive from `id`. */
+  accent_color?: string
+  ai_instructions: string
+  voice_model: ModeModelRef
+  language_model: ModeModelRef
+  polish: boolean
+  context: ModeContextConfig
+  auto_activate_rules: AutoActivateRule[]
+  is_builtin: boolean
+  is_deletable: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface AppConfig {
@@ -66,7 +168,17 @@ export interface AppConfig {
   overlay_offset_x?: number
   overlay_offset_y?: number
   overlay_expand_direction?: ExpandDirection
+  overlay_active_preference?: OverlayActivePreference
+  overlay_always_visible?: boolean
   command_config: CommandConfig
+  /** Unified API keys by provider id (Phase 2). */
+  provider_keys?: Record<string, string>
+  /** Global fallback LLM provider id (e.g. "groq"). Used when a mode has no LLM configured. */
+  default_llm_provider?: string | null
+  /** Global fallback LLM model id. Paired with default_llm_provider. */
+  default_llm_model?: string | null
+  /** Custom OpenAI-compatible LLM endpoint when provider is `custom_openai`. */
+  custom_openai_endpoint?: CustomOpenAiEndpoint | null
   /** Update channel: stable or beta (pre-releases). */
   update_channel?: 'stable' | 'beta'
   /** When true, do not auto-switch channel to beta on pre-release app builds. */
@@ -75,6 +187,50 @@ export interface AppConfig {
   sidebar_collapsed?: boolean
   /** Light / Dark always; Auto follows system appearance. */
   theme_preference?: ThemePreference
+  /** Dictation modes (config v2+); always populated after migration. */
+  modes: DictationMode[]
+  active_mode_id: string
+  polish_enabled: boolean
+  polish_config: PolishConfig
+  /** Phase 4 master switch for context gathering. */
+  context_awareness_enabled: boolean
+  mode_cycle_hotkey: string | null
+  /** Hold-to-talk: transform highlighted text via spoken instruction (Phase 5). Unset = disabled. */
+  voice_edit_hotkey: string | null
+  /** Phase 8: community recipe library API base (no trailing slash). */
+  recipe_library_url: string
+  /** Phase 9: Kalam Pro license key for API (validate + multi-PC sync). */
+  license_key?: string | null
+  sync_enabled?: boolean
+  sync_last_at?: string | null
+  sync_device_id?: string | null
+  sync_config_dirty?: boolean
+  sync_settings_rev?: string | null
+  sync_last_merged_settings_at?: string | null
+  sync_last_merged_keys_at?: string | null
+}
+
+/** `get_sync_status` IPC (camelCase). */
+export interface SyncStatusDto {
+  enabled: boolean
+  lastSyncAt: string | null
+  syncing: boolean
+  error: string | null
+  deviceId: string | null
+  hasLicenseKey: boolean
+}
+
+/** Summary row from `fetch_recipe_library` / website GET `/api/recipes`. */
+export interface RecipeLibrarySummary {
+  slug: string
+  name: string
+  description: string
+  category: string
+  icon?: string | null
+  downloads: number
+  author_email?: string | null
+  created_at: string
+  tags?: string[]
 }
 
 export type AudioFilterPreset = 'Off' | 'Light' | 'Moderate' | 'Custom'
@@ -104,6 +260,8 @@ export interface STTConfig {
   api_keys: Record<string, string>
   /** Legacy fallback; migrated into api_keys. */
   api_key?: string | null
+  /** Optional cloud STT model id (Groq/OpenAI); omit for provider default. */
+  cloud_transcription_model?: string | null
   local_model: string | null
   vad_preset: 'Fast' | 'Balanced' | 'Accurate'
   audio_filter: AudioFilterConfig

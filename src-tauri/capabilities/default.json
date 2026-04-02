@@ -10,7 +10,8 @@
       "updater:default",
       "shell:default",
       "opener:default",
-      "autostart:default"
+      "autostart:default",
+      "deep-link:default"
     ]
   }
 ]

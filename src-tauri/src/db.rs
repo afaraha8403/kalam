@@ -220,6 +220,35 @@ fn run_migrations(conn: &Connection) -> anyhow::Result<()> {
         "#,
     )?;
 
+    // Phase 9: dictionary row versioning + soft-delete tombstones for sync
+    let dict_has_updated: i64 = conn.query_row(
+        "SELECT COUNT(1) FROM pragma_table_info('dictionary') WHERE name = 'updated_at'",
+        [],
+        |row| row.get(0),
+    )?;
+    if dict_has_updated == 0 {
+        conn.execute("ALTER TABLE dictionary ADD COLUMN updated_at TEXT", [])?;
+        conn.execute(
+            "ALTER TABLE dictionary ADD COLUMN sync_status TEXT DEFAULT 'pending'",
+            [],
+        )?;
+        conn.execute("ALTER TABLE dictionary ADD COLUMN deleted_at TEXT", [])?;
+        conn.execute(
+            "UPDATE dictionary SET updated_at = created_at, sync_status = 'synced' WHERE updated_at IS NULL",
+            [],
+        )?;
+    }
+
+    // Phase 9: permanent deletes of syncable entries enqueue a server tombstone
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS sync_pending_deletes (
+            id TEXT PRIMARY KEY,
+            updated_at TEXT NOT NULL
+        );
+        "#,
+    )?;
+
     // Daily stats: one row per calendar day (aggregates for streak, words, latency)
     conn.execute_batch(
         r#"
@@ -446,9 +475,11 @@ pub struct DictionaryEntry {
 }
 
 /// Get all dictionary entries ordered by created_at ascending.
+/// Excludes soft-deleted rows (`deleted_at` set) used for sync tombstones until the server acks.
 pub fn get_dictionary_entries(conn: &Connection) -> anyhow::Result<Vec<DictionaryEntry>> {
-    let mut stmt =
-        conn.prepare("SELECT id, term, created_at FROM dictionary ORDER BY created_at ASC")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, term, created_at FROM dictionary WHERE deleted_at IS NULL ORDER BY created_at ASC",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok(DictionaryEntry {
             id: row.get(0)?,
@@ -469,12 +500,12 @@ pub fn is_dictionary_term_taken(
 ) -> anyhow::Result<bool> {
     let taken: bool = match exclude_id {
         None => conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM dictionary WHERE LOWER(term) = LOWER(?1))",
+            "SELECT EXISTS(SELECT 1 FROM dictionary WHERE deleted_at IS NULL AND LOWER(term) = LOWER(?1))",
             [term],
             |row| row.get(0),
         )?,
         Some(id) => conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM dictionary WHERE LOWER(term) = LOWER(?1) AND id != ?2)",
+            "SELECT EXISTS(SELECT 1 FROM dictionary WHERE deleted_at IS NULL AND LOWER(term) = LOWER(?1) AND id != ?2)",
             rusqlite::params![term, id],
             |row| row.get(0),
         )?,
@@ -490,18 +521,22 @@ pub fn add_dictionary_entry(conn: &Connection, term: &str) -> anyhow::Result<Str
     let id = uuid::Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO dictionary (id, term, created_at) VALUES (?1, ?2, ?3)",
+        "INSERT INTO dictionary (id, term, created_at, updated_at, sync_status, deleted_at) VALUES (?1, ?2, ?3, ?3, 'pending', NULL)",
         rusqlite::params![id, term, created_at],
     )?;
     Ok(id)
 }
 
-/// Remove a dictionary entry by id.
+/// Soft-delete a dictionary entry (sync tombstone); row removed from disk after successful sync push.
 pub fn delete_dictionary_entry(conn: &Connection, id: &str) -> anyhow::Result<()> {
-    conn.execute(
-        "DELETE FROM dictionary WHERE id = ?1",
-        rusqlite::params![id],
+    let now = chrono::Utc::now().to_rfc3339();
+    let n = conn.execute(
+        "UPDATE dictionary SET deleted_at = ?1, updated_at = ?1, sync_status = 'pending' WHERE id = ?2 AND deleted_at IS NULL",
+        rusqlite::params![now, id],
     )?;
+    if n == 0 {
+        anyhow::bail!("Dictionary entry not found");
+    }
     Ok(())
 }
 
@@ -510,12 +545,131 @@ pub fn update_dictionary_entry(conn: &Connection, id: &str, term: &str) -> anyho
     if is_dictionary_term_taken(conn, term, Some(id))? {
         anyhow::bail!("That word or phrase is already in your dictionary");
     }
+    let now = chrono::Utc::now().to_rfc3339();
     let n = conn.execute(
-        "UPDATE dictionary SET term = ?1 WHERE id = ?2",
-        rusqlite::params![term, id],
+        "UPDATE dictionary SET term = ?1, updated_at = ?2, sync_status = 'pending' WHERE id = ?3 AND deleted_at IS NULL",
+        rusqlite::params![term, now, id],
     )?;
     if n == 0 {
         anyhow::bail!("Dictionary entry not found");
+    }
+    Ok(())
+}
+
+// --- Phase 9 sync: dictionary + entry helpers ---
+
+#[derive(Debug, Clone)]
+pub struct DictionarySyncRow {
+    pub id: String,
+    pub term: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub deleted_at: Option<String>,
+}
+
+/// Rows that need to be pushed (pending) or are tombstones awaiting ack (`deleted_at` set + pending).
+pub fn list_dictionary_for_sync_push(conn: &Connection) -> anyhow::Result<Vec<DictionarySyncRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, term, created_at, updated_at, deleted_at FROM dictionary WHERE sync_status = 'pending'",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(DictionarySyncRow {
+            id: row.get(0)?,
+            term: row.get(1)?,
+            created_at: row.get(2)?,
+            updated_at: row.get(3)?,
+            deleted_at: row.get(4)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.into())
+}
+
+pub fn mark_dictionary_synced(conn: &Connection, ids: &[String]) -> anyhow::Result<()> {
+    for id in ids {
+        conn.execute(
+            "UPDATE dictionary SET sync_status = 'synced' WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+    }
+    Ok(())
+}
+
+/// After tombstones are pushed, remove dictionary rows that were soft-deleted.
+pub fn purge_dictionary_tombstones(conn: &Connection, ids: &[String]) -> anyhow::Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    for id in ids {
+        conn.execute(
+            "DELETE FROM dictionary WHERE id = ?1 AND deleted_at IS NOT NULL",
+            rusqlite::params![id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Note / task / snippet rows with local edits not yet acknowledged by sync.
+pub fn list_entries_pending_sync(conn: &Connection) -> anyhow::Result<Vec<crate::models::Entry>> {
+    let sql = format!(
+        "{} FROM entries WHERE entry_type IN ('note', 'task', 'snippet') AND sync_status = 'pending' ORDER BY updated_at ASC",
+        SELECT_ENTRY_ROW
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], row_to_entry)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.into())
+}
+
+pub fn mark_entries_synced(conn: &Connection, ids: &[String]) -> anyhow::Result<()> {
+    for id in ids {
+        conn.execute(
+            "UPDATE entries SET sync_status = 'synced' WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Queue a tombstone for permanent deletes of syncable entry types (multi-PC propagation).
+pub fn enqueue_sync_entry_delete(conn: &Connection, id: &str) -> anyhow::Result<()> {
+    let et: Option<String> = match conn.query_row(
+        "SELECT entry_type FROM entries WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    ) {
+        Ok(t) => Some(t),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => return Err(e.into()),
+    };
+    let Some(et) = et else { return Ok(()) };
+    if !matches!(et.as_str(), "note" | "task" | "snippet") {
+        return Ok(());
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT OR REPLACE INTO sync_pending_deletes (id, updated_at) VALUES (?1, ?2)",
+        rusqlite::params![id, now],
+    )?;
+    Ok(())
+}
+
+pub fn list_sync_pending_deletes(conn: &Connection) -> anyhow::Result<Vec<(String, String)>> {
+    let mut stmt =
+        conn.prepare("SELECT id, updated_at FROM sync_pending_deletes ORDER BY updated_at ASC")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.into())
+}
+
+pub fn remove_sync_pending_deletes(conn: &Connection, ids: &[String]) -> anyhow::Result<()> {
+    for id in ids {
+        conn.execute(
+            "DELETE FROM sync_pending_deletes WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
     }
     Ok(())
 }
@@ -1259,11 +1413,7 @@ pub fn empty_trash(conn: &Connection) -> anyhow::Result<i64> {
         .collect::<Result<Vec<_>, _>>()?;
     let count = ids.len() as i64;
     for id in &ids {
-        let _ = conn.execute(
-            "DELETE FROM vec_entries WHERE entry_id = ?1",
-            rusqlite::params![id],
-        );
-        conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])?;
+        delete_entry(conn, id)?;
     }
     Ok(count)
 }
@@ -1276,11 +1426,7 @@ pub fn empty_task_trash(conn: &Connection) -> anyhow::Result<i64> {
         .collect::<Result<Vec<_>, _>>()?;
     let count = ids.len() as i64;
     for id in &ids {
-        let _ = conn.execute(
-            "DELETE FROM vec_entries WHERE entry_id = ?1",
-            rusqlite::params![id],
-        );
-        conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])?;
+        delete_entry(conn, id)?;
     }
     Ok(count)
 }
@@ -1293,7 +1439,12 @@ pub fn get_entry(conn: &Connection, id: &str) -> anyhow::Result<Option<crate::mo
 }
 
 /// Update an existing entry. Returns true if a row was updated.
-pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Result<bool> {
+/// When `bump_workspace_pending` is true, note/task/snippet rows are marked `pending` for multi-PC sync.
+pub fn update_entry_with_sync_flag(
+    conn: &Connection,
+    e: &crate::models::Entry,
+    bump_workspace_pending: bool,
+) -> anyhow::Result<bool> {
     let attachments = serde_json::to_string(&e.attachments).unwrap_or_else(|_| "[]".to_string());
     let tags = serde_json::to_string(&e.tags).unwrap_or_else(|_| "[]".to_string());
     let subtasks = e
@@ -1302,6 +1453,12 @@ pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
         .and_then(|s| serde_json::to_string(s).ok());
     let created_at = e.created_at.to_rfc3339();
     let updated_at = e.updated_at.to_rfc3339();
+    let sync_status =
+        if bump_workspace_pending && matches!(e.entry_type.as_str(), "note" | "task" | "snippet") {
+            "pending".to_string()
+        } else {
+            e.sync_status.clone()
+        };
     let due_date = e.due_date.as_ref().map(|d| d.to_rfc3339());
     let reminder_at = e.reminder_at.as_ref().map(|r| r.to_rfc3339());
     let archived_at = e.archived_at.as_ref().map(|a| a.to_rfc3339());
@@ -1320,7 +1477,7 @@ pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
             e.entry_type,
             created_at,
             updated_at,
-            e.sync_status,
+            sync_status,
             e.title,
             e.content,
             attachments,
@@ -1351,14 +1508,39 @@ pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Resu
     Ok(n > 0)
 }
 
-/// Delete an entry and its embedding.
-pub fn delete_entry(conn: &Connection, id: &str) -> anyhow::Result<bool> {
+/// Update entry from the UI / commands: workspace rows become `pending` for sync.
+pub fn update_entry(conn: &Connection, e: &crate::models::Entry) -> anyhow::Result<bool> {
+    update_entry_with_sync_flag(conn, e, true)
+}
+
+/// Apply a row merged from the server without forcing `pending`.
+pub fn update_entry_from_sync_merge(
+    conn: &Connection,
+    e: &crate::models::Entry,
+) -> anyhow::Result<bool> {
+    update_entry_with_sync_flag(conn, e, false)
+}
+
+/// Delete an entry and its embedding. When `record_tombstone` is true (local user delete), enqueue sync tombstone.
+pub fn delete_entry_with_options(
+    conn: &Connection,
+    id: &str,
+    record_tombstone: bool,
+) -> anyhow::Result<bool> {
+    if record_tombstone {
+        enqueue_sync_entry_delete(conn, id)?;
+    }
     let n = conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])?;
     let _ = conn.execute(
         "DELETE FROM vec_entries WHERE entry_id = ?1",
         rusqlite::params![id],
     );
     Ok(n > 0)
+}
+
+/// Delete an entry and its embedding (local path — may enqueue a multi-PC tombstone).
+pub fn delete_entry(conn: &Connection, id: &str) -> anyhow::Result<bool> {
+    delete_entry_with_options(conn, id, true)
 }
 
 /// Semantic search: return entry IDs ordered by similarity to the query embedding. For now uses stub embeddings.

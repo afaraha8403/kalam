@@ -155,8 +155,8 @@ fn groq_transcribes_fox_fixture_when_api_key_set() {
     }
 
     let audio = load_fixture_audio_16k();
-    let provider =
-        GroqProvider::new(key.trim().to_string(), Duration::from_secs(90)).expect("groq client");
+    let provider = GroqProvider::new(key.trim().to_string(), Duration::from_secs(90), None)
+        .expect("groq client");
     let vad = VADConfig::default();
     let out = transcribe_chunked(
         &provider,
@@ -186,7 +186,7 @@ fn openai_transcribes_fox_fixture_when_api_key_set() {
     }
 
     let audio = load_fixture_audio_16k();
-    let provider = OpenAIProvider::new(key.trim().to_string(), Duration::from_secs(90))
+    let provider = OpenAIProvider::new(key.trim().to_string(), Duration::from_secs(90), None)
         .expect("openai client");
     let vad = VADConfig::default();
     let out = transcribe_chunked(

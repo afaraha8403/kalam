@@ -289,6 +289,22 @@ pub async fn get_history(
     Ok(entries)
 }
 
+/// Sync read for overlay idle state (avoids async/block_on when emitting `Dormant`).
+pub fn peek_last_history_text_preview(max_chars: usize) -> Option<String> {
+    let conn = db::open_db().ok()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT content FROM entries WHERE entry_type = 'history' ORDER BY created_at DESC LIMIT 1",
+        )
+        .ok()?;
+    let text: String = stmt.query_row([], |row| row.get(0)).ok()?;
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    Some(crate::context::truncate_str(t, max_chars))
+}
+
 pub async fn search(query: &str) -> anyhow::Result<Vec<HistoryEntry>> {
     let all = get_history(Some(1000), None).await?;
     let q = query.to_lowercase();

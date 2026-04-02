@@ -1,0 +1,18 @@
+{
+  "kalam_recipe_version": 2,
+  "name": "Email",
+  "icon": "ph:envelope",
+  "accent_color": "oklch(68% 0.1 220)",
+  "ai_instructions": "Format the user's dictation as a professional email body. Add an appropriate greeting and sign-off when suitable. Keep their natural tone; make it clear and professional. Do not add facts they did not say.",
+  "voice_model": { "provider": "inherit", "model_id": "" },
+  "language_model": { "provider": "inherit", "model_id": "" },
+  "polish_recommended": true,
+  "context": {
+    "enabled": true,
+    "read_app": true,
+    "read_clipboard": true,
+    "read_selection": false,
+    "include_system_info": true
+  },
+  "examples": []
+}

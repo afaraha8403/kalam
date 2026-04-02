@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte'
   import { cubicOut } from 'svelte/easing'
-  import { slide } from 'svelte/transition'
+  import { fade, fly, slide } from 'svelte/transition'
   import { invoke, listenSafe } from '$lib/backend'
   import Icon from '@iconify/svelte'
   import { initTelemetry, optOut } from '../lib/telemetry'
@@ -11,7 +11,9 @@
     AppConfig,
     AudioDevice,
     AudioFilterPreset,
+    CatalogProvider,
     SensitiveAppPattern,
+    SyncStatusDto,
     ThemePreference,
   } from '../types'
   import HotkeyCapture from '../components/HotkeyCapture.svelte'
@@ -71,6 +73,76 @@
   let sidecarInstalled = false
   let sidecarAvailable: Record<string, boolean> = {}
 
+  /** Phase 9: multi-PC sync status from Rust (also reflects `config` for last sync time). */
+  let syncUi: SyncStatusDto = {
+    enabled: false,
+    lastSyncAt: null,
+    syncing: false,
+    error: null,
+    deviceId: null,
+    hasLicenseKey: false,
+  }
+  let syncActionError: string | null = null
+
+  async function refreshSyncStatus() {
+    try {
+      syncUi = (await invoke('get_sync_status')) as SyncStatusDto
+    } catch (e) {
+      console.error('get_sync_status failed:', e)
+    }
+  }
+
+  async function toggleSyncEnabled(checked: boolean) {
+    if (!config) return
+    syncActionError = null
+    try {
+      if (checked) {
+        await invoke('enable_sync')
+      } else {
+        await invoke('disable_sync')
+      }
+      config = (await invoke('get_settings')) as AppConfig
+      await refreshSyncStatus()
+    } catch (e) {
+      syncActionError = String(e)
+    }
+  }
+
+  function onSyncToggleChange(e: Event) {
+    const el = e.target as HTMLInputElement
+    void toggleSyncEnabled(el.checked)
+  }
+
+  async function doSyncNow() {
+    syncActionError = null
+    try {
+      await invoke('sync_now')
+      if (config) config = (await invoke('get_settings')) as AppConfig
+      await refreshSyncStatus()
+    } catch (e) {
+      syncActionError = String(e)
+    }
+  }
+
+  async function doResetServerSync() {
+    if (!confirm('Delete all sync data on the server for this license? Notes and settings on this PC stay.')) return
+    syncActionError = null
+    try {
+      await invoke('reset_sync')
+      if (config) config = (await invoke('get_settings')) as AppConfig
+      await refreshSyncStatus()
+    } catch (e) {
+      syncActionError = String(e)
+    }
+  }
+
+  function onLicenseKeyInput(e: Event) {
+    if (!config) return
+    const el = e.target as HTMLInputElement
+    config.license_key = el.value
+    scheduleSave()
+  }
+
   function modelIdToSidecarId(modelId: string): string | null {
     if (modelId === 'sensevoice') return 'sherpa-onnx'
     if (modelId === 'whisper_base') return 'whisper-cpp'
@@ -80,7 +152,7 @@
   const tabs = [
     { id: 'general', label: 'General', icon: 'ph:sliders-horizontal' },
     { id: 'dictation', label: 'Audio & Dictation', icon: 'ph:microphone' },
-    { id: 'command', label: 'Command Mode', icon: 'ph:terminal' },
+    { id: 'connections', label: 'Connections', icon: 'ph:plugs-connected' },
     { id: 'privacy', label: 'Privacy', icon: 'ph:shield' },
     { id: 'advanced', label: 'Advanced', icon: 'ph:wrench' },
     { id: 'about', label: 'About', icon: 'ph:info' },
@@ -113,11 +185,14 @@
   let collapsedSections: Record<string, boolean> = {
     general_hotkeys: false,
     general_startup: true,
+    general_sync: true,
     general_appearance: false,
     dictation_audio: false,
-    dictation_mode: false,
+    dictation_languages: false,
+    ai_stt: false,
+    model_library: false,
+    default_llm: false,
     dictation_formatting: true,
-    command: false,
     privacy_data: false,
     privacy_notifications: false,
     advanced_logs: false,
@@ -219,10 +294,13 @@
     scheduleSave()
   }
 
-  let commandApiKeyInput = ''
-  let llmModels: string[] = []
-  let loadingLlmModels = false
-  let hasCommandApiKey = false
+  /** Curated provider list from Rust (Phase 2). */
+  let modelCatalog: CatalogProvider[] = []
+  let modelCatalogLoaded = false
+  /** Draft API keys per provider id before Save from library cards. */
+  let catalogKeyDraft: Record<string, string> = {}
+  let catalogKeyTestStatus: Record<string, 'idle' | 'testing' | 'ok' | 'err'> = {}
+  let catalogKeyTestError: Record<string, string> = {}
 
   /** `get_platform`: windows | macos | linux — for hotkey Meta label (Win / Cmd / Super). */
   let appPlatform = ''
@@ -289,10 +367,128 @@
     return config?.stt_config?.provider || 'groq'
   }
 
+  function getProviderKey(provider: string): string | null {
+    if (!config) return null
+    const p = provider.trim()
+    const fromUnified = config.provider_keys?.[p]?.trim()
+    if (fromUnified) return fromUnified
+    return config.stt_config?.api_keys?.[p] ?? null
+  }
+
   function getStoredSttApiKey(): string | null {
     if (!config?.stt_config) return null
     const provider = getCurrentSttProvider()
-    return config.stt_config.api_keys?.[provider] ?? config.stt_config.api_key ?? null
+    return getProviderKey(provider) ?? config.stt_config.api_key ?? null
+  }
+
+  async function ensureModelCatalogLoaded() {
+    if (modelCatalogLoaded) return
+    modelCatalogLoaded = true
+    try {
+      modelCatalog = (await invoke('get_model_catalog')) as CatalogProvider[]
+    } catch (e) {
+      console.error('get_model_catalog failed:', e)
+      modelCatalog = []
+    }
+  }
+
+  $: if (activeTab === 'connections') void ensureModelCatalogLoaded()
+
+  function maskProviderKey(k: string): string {
+    const t = k.trim()
+    if (t.length <= 8) return '••••••••'
+    return `${t.slice(0, 4)}…${t.slice(-4)}`
+  }
+
+  /** Read input/textarea value from an event (no TS `as` casts in Svelte templates — svelte-check rejects them). */
+  function eventInputValue(e: Event): string {
+    const t = e.currentTarget
+    return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement ? t.value : ''
+  }
+
+  function onCatalogKeyInput(e: Event, providerId: string) {
+    catalogKeyDraft = { ...catalogKeyDraft, [providerId]: eventInputValue(e) }
+    catalogKeyTestStatus = { ...catalogKeyTestStatus, [providerId]: 'idle' }
+  }
+
+  /** Custom OpenAI-compatible endpoint fields: avoid TS `!` in markup (breaks svelte-check). */
+  function onCustomOpenAiBaseUrlInput(e: Event) {
+    if (!config?.custom_openai_endpoint) return
+    const cur = config.custom_openai_endpoint
+    config.custom_openai_endpoint = { ...cur, base_url: eventInputValue(e) }
+    scheduleSave()
+  }
+
+  function onCustomOpenAiKeyInput(e: Event) {
+    if (!config?.custom_openai_endpoint) return
+    const cur = config.custom_openai_endpoint
+    const v = eventInputValue(e)
+    config.custom_openai_endpoint = { ...cur, api_key: v }
+    scheduleSave()
+  }
+
+  function onCustomOpenAiModelInput(e: Event) {
+    if (!config?.custom_openai_endpoint) return
+    const cur = config.custom_openai_endpoint
+    const v = eventInputValue(e)
+    config.custom_openai_endpoint = { ...cur, model_id: v }
+    scheduleSave()
+  }
+
+  async function testCatalogProviderKey(providerId: string) {
+    const draft = catalogKeyDraft[providerId]?.trim()
+    const stored = getProviderKey(providerId)
+    const apiKey = draft || stored || ''
+    if (!apiKey) return
+    catalogKeyTestStatus = { ...catalogKeyTestStatus, [providerId]: 'testing' }
+    catalogKeyTestError = { ...catalogKeyTestError, [providerId]: '' }
+    try {
+      const ok = (await invoke('test_provider_key', { provider: providerId, apiKey })) as boolean
+      catalogKeyTestStatus = { ...catalogKeyTestStatus, [providerId]: ok ? 'ok' : 'err' }
+      if (!ok) catalogKeyTestError = { ...catalogKeyTestError, [providerId]: 'Validation failed' }
+    } catch (e) {
+      catalogKeyTestStatus = { ...catalogKeyTestStatus, [providerId]: 'err' }
+      catalogKeyTestError = { ...catalogKeyTestError, [providerId]: String(e) }
+    }
+  }
+
+  async function persistCatalogProviderKey(providerId: string) {
+    const raw = catalogKeyDraft[providerId]?.trim() ?? ''
+    if (!raw) return
+    try {
+      const updated = (await invoke('set_provider_key', { provider: providerId, apiKey: raw })) as AppConfig
+      config = updated
+      catalogKeyDraft = { ...catalogKeyDraft, [providerId]: '' }
+      catalogKeyTestStatus = { ...catalogKeyTestStatus, [providerId]: 'idle' }
+      const platform = (await invoke('get_platform')) as string
+      appPlatform = platform
+      sidebarDictationStore.updateFromConfig(updated, platform)
+      hasApiKey = !!getStoredSttApiKey()
+    } catch (e) {
+      console.error('set_provider_key failed:', e)
+      catalogKeyTestError = { ...catalogKeyTestError, [providerId]: String(e) }
+    }
+  }
+
+  async function removeCatalogProviderKey(providerId: string) {
+    try {
+      const updated = (await invoke('remove_provider_key', { provider: providerId })) as AppConfig
+      config = updated
+      catalogKeyDraft = { ...catalogKeyDraft, [providerId]: '' }
+      const platform = (await invoke('get_platform')) as string
+      sidebarDictationStore.updateFromConfig(updated, platform)
+      hasApiKey = !!getStoredSttApiKey()
+    } catch (e) {
+      console.error('remove_provider_key failed:', e)
+    }
+  }
+
+  async function rerunOnboardingWizard() {
+    if (!config) return
+    if (!confirm('Reopen the setup wizard? You can skip or finish anytime.')) return
+    config.onboarding_complete = false
+    await saveSettingsImmediate()
+    window.location.reload()
   }
 
   onMount(async () => {
@@ -354,28 +550,18 @@
         if (config.overlay_offset_x == null) config.overlay_offset_x = 0
         if (config.overlay_offset_y == null) config.overlay_offset_y = 0
         if (!config.overlay_expand_direction) config.overlay_expand_direction = 'Up'
+        if (!config.overlay_active_preference) config.overlay_active_preference = 'Mini'
+        if (config.overlay_always_visible == null) config.overlay_always_visible = false
         if (!config.command_config) {
-          config.command_config = {
-            enabled: false,
-            hotkey: null,
-            provider: null,
-            api_keys: {},
-            models: {}
-          }
+          config.command_config = { enabled: false, hotkey: null }
         }
-        if (config.command_config.provider === undefined) config.command_config.provider = null
         if (config.command_config.hotkey === undefined) config.command_config.hotkey = null
-        if (!config.command_config.api_keys) config.command_config.api_keys = {}
-        if (!config.command_config.models) config.command_config.models = {}
       }
 
-      if (config?.command_config?.provider) {
-        hasCommandApiKey = !!config.command_config.api_keys[config.command_config.provider]
-      } else {
-        hasCommandApiKey = false
-      }
+      if (!config.provider_keys) config.provider_keys = {}
 
       await checkLogEmpty()
+      await refreshSyncStatus()
 
       hasApiKey = !!getStoredSttApiKey()
       apiKeyInput = ''
@@ -415,7 +601,6 @@
     if (typeof document !== 'undefined') {
       document.documentElement.style.overflow = ''
       document.body.style.overflow = ''
-      document.documentElement.classList.remove('sensitive-app-picker-open')
     }
     if (statusPollInterval) clearInterval(statusPollInterval)
     if (unlistenDownloadProgress) unlistenDownloadProgress()
@@ -520,39 +705,21 @@
   }
 
   let sensitiveAppPickerOpen = false
-  let sensitiveAppPickerTab: 'running' | 'installed' | 'browse' = 'running'
-  let runningApps: AppListEntry[] = []
   let installedApps: AppListEntry[] = []
-  /** User must click "Load installed apps" — scan is slow on some systems. */
-  let installedAppsLoaded = false
   let sensitiveAppsLoading = false
   let sensitiveAppsSearch = ''
-  /** Match main shell theme when the picker is portaled to `document.body` (outside `.kalam-sleek`). */
-  let modalPickerDark = false
+  /** Invalidate in-flight scans when the panel closes or a new open starts. */
+  let sensitiveAppsLoadGeneration = 0
 
-  function updateModalTheme() {
-    if (typeof document !== 'undefined') {
-      const htmlTheme = document.documentElement.getAttribute('data-theme')
-      modalPickerDark = htmlTheme === 'dark'
-    }
-  }
-
-  /** Move overlay to `body` so `position: fixed` is viewport-relative (not trapped by `.page.fade-in` transform). */
-  function portalBody(node: HTMLElement) {
-    updateModalTheme()
-    document.body.appendChild(node)
+  /** Portals to `.app-shell` like Dictionary — fixed panel inherits theme vars. */
+  function portalAppShell(node: HTMLElement) {
+    const target = document.querySelector('.app-shell') || document.body
+    target.appendChild(node)
     return {
       destroy() {
         node.remove()
       },
     }
-  }
-
-  $: if (typeof document !== 'undefined') {
-    const lock = sensitiveAppPickerOpen ? 'hidden' : ''
-    document.documentElement.style.overflow = lock
-    document.body.style.overflow = lock
-    document.documentElement.classList.toggle('sensitive-app-picker-open', sensitiveAppPickerOpen)
   }
 
   function ensureSensitivePatternsArray() {
@@ -570,69 +737,37 @@
   }
 
   async function openSensitiveAppPicker() {
+    sensitiveAppsLoadGeneration += 1
     sensitiveAppPickerOpen = true
-    sensitiveAppPickerTab = 'running'
     sensitiveAppsSearch = ''
-    await tick()
-    updateModalTheme()
-    void loadRunningApps()
+    installedApps = []
+    void loadInstalledApps()
   }
 
   function closeSensitiveAppPicker() {
+    sensitiveAppsLoadGeneration += 1
     sensitiveAppPickerOpen = false
-    runningApps = []
     installedApps = []
-    installedAppsLoaded = false
     sensitiveAppsSearch = ''
-  }
-
-  async function loadRunningApps() {
-    sensitiveAppsLoading = true
-    try {
-      runningApps = (await invoke('get_running_apps')) as AppListEntry[]
-    } catch (e) {
-      console.error('Failed to load running apps:', e)
-      runningApps = []
-    } finally {
-      sensitiveAppsLoading = false
-    }
+    sensitiveAppsLoading = false
   }
 
   async function loadInstalledApps() {
+    const gen = sensitiveAppsLoadGeneration
     sensitiveAppsLoading = true
     try {
-      installedApps = (await invoke('get_installed_apps')) as AppListEntry[]
-      installedAppsLoaded = true
+      const list = (await invoke('get_installed_apps')) as AppListEntry[]
+      if (gen !== sensitiveAppsLoadGeneration) return
+      installedApps = list
     } catch (e) {
+      if (gen !== sensitiveAppsLoadGeneration) return
       console.error('Failed to load installed apps:', e)
       installedApps = []
-      installedAppsLoaded = true
     } finally {
-      sensitiveAppsLoading = false
-    }
-  }
-
-  async function pickExecutableFile() {
-    try {
-      const path = (await invoke('pick_executable_file')) as string | null
-      if (path) {
-        const processName = path.split(/[/\\]/).pop()?.toLowerCase() ?? ''
-        if (processName) {
-          addSensitiveAppFromPicker(processName, path)
-        }
+      if (gen === sensitiveAppsLoadGeneration) {
+        sensitiveAppsLoading = false
       }
-    } catch (e) {
-      console.error('Failed to pick executable:', e)
     }
-  }
-
-  function switchSensitivePickerTab(tab: 'running' | 'installed' | 'browse') {
-    sensitiveAppPickerTab = tab
-    sensitiveAppsSearch = ''
-    if (tab === 'running' && runningApps.length === 0) {
-      void loadRunningApps()
-    }
-    // Installed: user triggers load via button (scan can take several seconds).
   }
 
   function escapeRegex(str: string): string {
@@ -731,13 +866,6 @@
     }
     return 'ph:app-window'
   }
-
-  $: filteredRunningApps = sensitiveAppsSearch
-    ? runningApps.filter((a) =>
-        a.display_name.toLowerCase().includes(sensitiveAppsSearch.toLowerCase()) ||
-        a.process_name.toLowerCase().includes(sensitiveAppsSearch.toLowerCase())
-      )
-    : runningApps
 
   $: filteredInstalledApps = sensitiveAppsSearch
     ? installedApps.filter((a) =>
@@ -885,21 +1013,14 @@
     if (!config) return
     saving = true
 
+    if (!config.provider_keys) config.provider_keys = {}
     if (apiKeyInput.trim()) {
-      if (!config.stt_config.api_keys) config.stt_config.api_keys = {}
-      config.stt_config.api_keys[getCurrentSttProvider()] = apiKeyInput.trim()
-    }
-    if (config.command_config && config.command_config.provider && commandApiKeyInput.trim()) {
-      if (!config.command_config.api_keys) config.command_config.api_keys = {}
-      config.command_config.api_keys[config.command_config.provider] = commandApiKeyInput.trim()
+      config.provider_keys[getCurrentSttProvider()] = apiKeyInput.trim()
     }
     if (config.logging) {
       config.logging.max_records = Math.min(20000, Math.max(500, config.logging.max_records || 2000))
     }
     if (config.language_toggle_hotkey === '') config.language_toggle_hotkey = null
-    if (config.command_config) {
-      if ((config.command_config.provider as unknown as string) === '') config.command_config.provider = null
-    }
     if (!Array.isArray(config.languages) || config.languages.length === 0) config.languages = ['en']
     if (!Array.isArray(config.privacy.sensitive_app_patterns)) config.privacy.sensitive_app_patterns = []
 
@@ -916,12 +1037,6 @@
       }
       hasApiKey = !!getStoredSttApiKey()
       apiKeyInput = ''
-      if (config.command_config?.provider) {
-        hasCommandApiKey = !!config.command_config.api_keys?.[config.command_config.provider]
-      } else {
-        hasCommandApiKey = false
-      }
-      commandApiKeyInput = ''
       if (activeTab === 'advanced') {
         await checkLogEmpty()
       }
@@ -1084,8 +1199,9 @@
   function clearApiKey() {
     if (config) {
       const provider = getCurrentSttProvider()
-      if (!config.stt_config.api_keys) config.stt_config.api_keys = {}
-      delete config.stt_config.api_keys[provider]
+      if (!config.provider_keys) config.provider_keys = {}
+      delete config.provider_keys[provider]
+      if (config.stt_config.api_keys) delete config.stt_config.api_keys[provider]
       config.stt_config.api_key = null
       hasApiKey = false
       apiKeyInput = ''
@@ -1156,29 +1272,6 @@
     }
   }
 
-  function setCommandProvider(e: Event) {
-    const v = (e.currentTarget as HTMLSelectElement).value
-    if (config && config.command_config) {
-      config.command_config.provider = v ? (v as import('../types').CommandModeProvider) : null
-
-      const provider = config.command_config.provider
-      if (provider) {
-        commandApiKeyInput = ''
-        hasCommandApiKey = !!config.command_config.api_keys?.[provider]
-      } else {
-        commandApiKeyInput = ''
-        hasCommandApiKey = false
-      }
-
-      commandApiKeyStatus = 'idle'
-      commandApiKeyError = null
-      commandModelStatus = 'idle'
-      commandModelError = null
-      llmModels = []
-      scheduleSave()
-    }
-  }
-
   function setCommandHotkey(hotkey: string) {
     if (config?.command_config) {
       config = {
@@ -1189,161 +1282,13 @@
     }
   }
 
-  let commandApiKeyStatus: 'idle' | 'testing' | 'valid' | 'invalid' = 'idle'
-  let commandApiKeyError: string | null = null
-  let testingModel = false
-  let commandModelStatus: 'idle' | 'testing' | 'valid' | 'invalid' = 'idle'
-  let commandModelError: string | null = null
-
-  let commandModelInputText = ''
-  let commandModelDropdownOpen = false
-  let commandModelTestTimeout: ReturnType<typeof setTimeout> | null = null
-  let comboboxEl: HTMLElement | null = null
-  let dropdownTop = 0
-  let dropdownLeft = 0
-  let dropdownWidth = 0
-
-  function updateDropdownPosition() {
-    if (comboboxEl) {
-      const rect = comboboxEl.getBoundingClientRect()
-      dropdownTop = rect.bottom + 8
-      dropdownLeft = rect.left
-      dropdownWidth = rect.width
+  function setVoiceEditHotkey(hotkey: string) {
+    if (!config) return
+    config = {
+      ...config,
+      voice_edit_hotkey: hotkey === '' ? null : hotkey
     }
-  }
-
-  function openDropdown() {
-    updateDropdownPosition()
-    commandModelDropdownOpen = true
-    window.addEventListener('scroll', updateDropdownPosition, true)
-    window.addEventListener('resize', updateDropdownPosition)
-  }
-
-  function closeDropdown() {
-    setTimeout(() => {
-      commandModelDropdownOpen = false
-      window.removeEventListener('scroll', updateDropdownPosition, true)
-      window.removeEventListener('resize', updateDropdownPosition)
-    }, 150)
-  }
-
-  $: if (config?.command_config?.provider) {
-    const savedModel = config.command_config.models?.[config.command_config.provider] ?? ''
-    if (!commandModelDropdownOpen && commandModelInputText !== savedModel) {
-      commandModelInputText = savedModel
-    }
-  }
-
-  $: if (activeTab === 'command' && config?.command_config?.provider) {
-    const provider = config.command_config.provider;
-    const hasSavedKey = !!config.command_config.api_keys?.[provider];
-    const isTypingNewKey = commandApiKeyInput.trim().length > 0;
-
-    if (hasSavedKey && !isTypingNewKey && commandApiKeyStatus === 'idle' && !loadingLlmModels) {
-      (async () => {
-        await fetchCommandLlmModels();
-        if (config?.command_config) {
-          const savedModel = config.command_config.models?.[provider];
-          if (savedModel && commandModelStatus === 'idle') {
-            await testCommandModel(savedModel);
-          }
-        }
-      })();
-    }
-  }
-
-  let filteredModels: string[] = []
-  $: {
-    const search = commandModelInputText.toLowerCase()
-    filteredModels = llmModels.filter(m => m.toLowerCase().includes(search))
-  }
-
-  function updateCommandModel(v: string) {
-    if (config && config.command_config && config.command_config.provider) {
-      if (!config.command_config.models) config.command_config.models = {}
-      if (v) {
-        config.command_config.models[config.command_config.provider] = v
-      } else {
-        delete config.command_config.models[config.command_config.provider]
-      }
-      scheduleSave()
-
-      if (commandModelTestTimeout) clearTimeout(commandModelTestTimeout)
-      if (v) {
-        commandModelStatus = 'testing'
-        commandModelTestTimeout = setTimeout(() => {
-          testCommandModel(v)
-        }, 800)
-      } else {
-        commandModelStatus = 'idle'
-        commandModelError = null
-      }
-    }
-  }
-
-  function handleModelInput(e: Event) {
-    const v = (e.currentTarget as HTMLInputElement).value
-    commandModelInputText = v
-    if (!commandModelDropdownOpen) openDropdown()
-    updateCommandModel(v)
-  }
-
-  function selectModelFromDropdown(m: string) {
-    commandModelInputText = m
-    commandModelDropdownOpen = false
-    updateCommandModel(m)
-  }
-
-  function clearCommandApiKey() {
-    if (config && config.command_config && config.command_config.provider) {
-      delete config.command_config.api_keys[config.command_config.provider]
-      hasCommandApiKey = false
-      commandApiKeyInput = ''
-      commandApiKeyStatus = 'idle'
-      commandApiKeyError = null
-      llmModels = []
-      scheduleSave()
-    }
-  }
-
-  async function fetchCommandLlmModels() {
-    if (!config?.command_config) return
-    const provider = config.command_config.provider ?? 'groq'
-    const apiKey = (commandApiKeyInput.trim() || config.command_config.api_keys?.[provider]) ?? ''
-    if (!apiKey) return
-    loadingLlmModels = true
-    commandApiKeyStatus = 'testing'
-    commandApiKeyError = null
-    try {
-      llmModels = await invoke('fetch_llm_models', { provider, apiKey }) as string[]
-      commandApiKeyStatus = 'valid'
-    } catch (e) {
-      llmModels = []
-      commandApiKeyStatus = 'invalid'
-      commandApiKeyError = String(e)
-    } finally {
-      loadingLlmModels = false
-    }
-  }
-
-  async function testCommandModel(model: string) {
-    if (!config?.command_config) return
-    const provider = config.command_config.provider ?? 'groq'
-    const apiKey = (commandApiKeyInput.trim() || config.command_config.api_keys?.[provider]) ?? ''
-    if (!apiKey || !model) return
-
-    testingModel = true
-    commandModelStatus = 'testing'
-    commandModelError = null
-    try {
-      await invoke('test_llm_model', { provider, apiKey, model })
-      commandModelStatus = 'valid'
-    } catch (e) {
-      commandModelStatus = 'invalid'
-      commandModelError = String(e)
-    } finally {
-      testingModel = false
-    }
+    scheduleSave()
   }
 
   $: langProviderKey = config
@@ -1481,6 +1426,17 @@
                     <HotkeyCapture value={config.command_config?.hotkey ?? ''} platform={appPlatform} onChange={setCommandHotkey} />
                   </div>
                 </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Voice editing</span>
+                    <span class="setting-desc"
+                      >Hold to record an instruction for highlighted text; uses your active mode’s LLM (Windows only)</span
+                    >
+                  </div>
+                  <div class="setting-control">
+                    <HotkeyCapture value={config.voice_edit_hotkey ?? ''} platform={appPlatform} onChange={setVoiceEditHotkey} />
+                  </div>
+                </div>
               </div>
             {/if}
           </section>
@@ -1539,6 +1495,89 @@
                         on:click={() => setRecordingMode('Both')}
                       >Both</button>
                     </div>
+                  </div>
+                </div>
+              </div>
+            {/if}
+          </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.general_sync}>
+            <button type="button" class="section-header" on:click={() => toggleSection('general_sync')}>
+              <h3>Multi-PC sync (Pro)</h3>
+              <Icon icon={collapsedSections.general_sync ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.general_sync}
+              <div class="section-content">
+                <p class="setting-desc" style="margin-bottom: 12px;">
+                  Sync notes, tasks, snippets, dictionary, dictation modes, and settings across computers. Requires an
+                  <strong>active Pro or trial</strong> license. Uses the same API host as the recipe library (<code
+                    >{config?.recipe_library_url ?? '—'}</code
+                  >). Dictation history stays on each device.
+                </p>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Pro license key</span>
+                    <span class="setting-desc">Used for Bearer authentication (validate + sync)</span>
+                  </div>
+                  <div class="setting-control" style="min-width: 220px;">
+                    <input
+                      type="text"
+                      class="form-input"
+                      placeholder="KALAM-XXXX-…"
+                      value={config?.license_key ?? ''}
+                      disabled={!config}
+                      on:input={onLicenseKeyInput}
+                    />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Enable sync</span>
+                    <span class="setting-desc">Pull and push in the background when online</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input
+                        type="checkbox"
+                        checked={!!config?.sync_enabled}
+                        disabled={!config || syncUi.syncing}
+                        on:change={onSyncToggleChange}
+                      />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Last synced</span>
+                    <span class="setting-desc">{syncUi.syncing ? 'Syncing…' : syncUi.lastSyncAt ?? config?.sync_last_at ?? '—'}</span>
+                  </div>
+                  <div class="setting-control" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button type="button" class="settings-secondary-btn" disabled={syncUi.syncing} on:click={doSyncNow}
+                      >Sync now</button
+                    >
+                  </div>
+                </div>
+                {#if syncUi.deviceId}
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span class="setting-name">Device ID</span>
+                      <span class="setting-desc mono">{syncUi.deviceId}</span>
+                    </div>
+                  </div>
+                {/if}
+                {#if syncUi.error || syncActionError}
+                  <p class="hint" style="color: var(--danger, #c62828);">{syncUi.error ?? syncActionError}</p>
+                {/if}
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Reset server sync data</span>
+                    <span class="setting-desc">Clears the cloud copy for this license; local data unchanged</span>
+                  </div>
+                  <div class="setting-control">
+                    <button type="button" class="settings-secondary-btn danger" on:click={doResetServerSync}
+                      >Reset sync</button
+                    >
                   </div>
                 </div>
               </div>
@@ -1648,6 +1687,46 @@
                       <input type="number" bind:value={config.overlay_offset_y} step="10" on:input={scheduleSave} />
                       <span class="unit">px</span>
                     </div>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Active overlay style</span>
+                    <span class="setting-desc">Compact pill or full panel when dictation is active</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="segmented-control">
+                      <button
+                        type="button"
+                        class:active={config.overlay_active_preference === 'Mini'}
+                        on:click={() => {
+                          if (!config) return
+                          config.overlay_active_preference = 'Mini'
+                          scheduleSave()
+                        }}>Mini</button
+                      >
+                      <button
+                        type="button"
+                        class:active={config.overlay_active_preference === 'Full'}
+                        on:click={() => {
+                          if (!config) return
+                          config.overlay_active_preference = 'Full'
+                          scheduleSave()
+                        }}>Full</button
+                      >
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Always show overlay</span>
+                    <span class="setting-desc">Keep the idle overlay pill fully opaque instead of faded</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.overlay_always_visible} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -1979,13 +2058,130 @@
             {/if}
           </section>
 
-          <section class="settings-section" class:collapsed={collapsedSections.dictation_mode}>
-            <button type="button" class="section-header" on:click={() => toggleSection('dictation_mode')}>
-              <h3>Speech-to-Text Mode</h3>
-              <Icon icon={collapsedSections.dictation_mode ? 'ph:caret-down' : 'ph:caret-up'} />
+          <section class="settings-section" class:collapsed={collapsedSections.dictation_languages}>
+            <button type="button" class="section-header" on:click={() => toggleSection('dictation_languages')}>
+              <h3>Recognition languages</h3>
+              <Icon icon={collapsedSections.dictation_languages ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
-            {#if !collapsedSections.dictation_mode}
+            {#if !collapsedSections.dictation_languages}
               <div class="section-content">
+                <p class="hint">Default STT path and API keys are under <strong>AI providers</strong>.</p>
+            <div class="setting-row language-row">
+              <div class="setting-label full-width">
+                <span class="setting-name">Recognition Languages</span>
+                <span class="setting-desc">First language is the default. Support depends on provider.</span>
+
+                <div class="selected-languages">
+                  {#each (config.languages ?? ['en']) as code, i}
+                    {@const supported = isLanguageSupportedByProvider(code, langProviderKey)}
+                    <div class="lang-row" class:unsupported={!supported}>
+                      <span class="lang-badge">
+                        {#if i === 0}<span class="default-tag">Default</span>{/if}
+                        {languageLabel(code)}
+                        {#if !supported}
+                          <span class="unsupported-icon" title="Not supported">⚠</span>
+                        {/if}
+                      </span>
+                      <div class="lang-actions">
+                        {#if i > 0}
+                          <button type="button" class="btn-icon" title="Move up" on:click={() => moveLanguageUp(i)}><Icon icon="ph:arrow-up" /></button>
+                        {/if}
+                        {#if i < (config.languages?.length ?? 1) - 1}
+                          <button type="button" class="btn-icon" title="Move down" on:click={() => moveLanguageDown(i)}><Icon icon="ph:arrow-down" /></button>
+                        {/if}
+                        <button type="button" class="btn-icon remove" title="Remove" on:click={() => removeLanguage(i)}><Icon icon="ph:x" /></button>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+                <div class="add-language">
+                  <select class="form-select" bind:value={addLanguageCode} on:change={addSelectedLanguage}>
+                    <option value="">Add a language…</option>
+                    {#each LANGUAGE_OPTIONS as opt}
+                      <option value={opt.code} disabled={(config?.languages ?? []).includes(opt.code)}>{opt.label}</option>
+                    {/each}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+            {/if}
+        </section>
+
+        <section class="settings-section" class:collapsed={collapsedSections.dictation_formatting}>
+          <button type="button" class="section-header" on:click={() => toggleSection('dictation_formatting')}>
+            <h3>Formatting &amp; Output</h3>
+            <Icon icon={collapsedSections.dictation_formatting ? 'ph:caret-down' : 'ph:caret-up'} />
+          </button>
+          {#if !collapsedSections.dictation_formatting}
+          <div class="section-content">
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Auto-punctuation</span>
+                <span class="setting-desc">Automatically insert commas and periods</span>
+              </div>
+              <div class="setting-control">
+                <label class="toggle-switch">
+                  <input type="checkbox" bind:checked={config.formatting.auto_punctuation} on:change={scheduleSave} />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Voice Commands</span>
+                <span class="setting-desc">Say "new line", "delete", etc. to control text</span>
+              </div>
+              <div class="setting-control">
+                <label class="toggle-switch">
+                  <input type="checkbox" bind:checked={config.formatting.voice_commands} on:change={scheduleSave} />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">Filler Word Removal</span>
+                <span class="setting-desc">Remove "um", "uh", "like", etc.</span>
+              </div>
+              <div class="setting-control">
+                <label class="toggle-switch">
+                  <input type="checkbox" bind:checked={config.formatting.filler_word_removal} on:change={scheduleSave} />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="setting-name">How text is typed</span>
+                <span class="setting-desc">Paste from clipboard or simulate keystrokes</span>
+              </div>
+              <div class="setting-control">
+                <select class="form-select" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
+                  <option value="Auto">Automatic</option>
+                  <option value="Keystrokes">Simulate Keystrokes</option>
+                  <option value="Clipboard">Use Clipboard</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          {/if}
+        </section>
+
+        </div>
+
+      {:else if activeTab === 'connections'}
+        <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.ai_stt}>
+            <button type="button" class="section-header" on:click={() => toggleSection('ai_stt')}>
+              <h3>Speech-to-text</h3>
+              <Icon icon={collapsedSections.ai_stt ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.ai_stt}
+              <div class="section-content">
+                <p class="hint">
+                  Global default used when a mode’s voice is set to <strong>Inherit</strong>. Per-mode overrides live on the <strong>Dictation</strong> page.
+                </p>
                 <div
                   class="stt-mode-cards stt-mode-row"
                   role="radiogroup"
@@ -2035,42 +2231,9 @@
                       </div>
                     </div>
 
-                    <div class="setting-row">
-                      <div class="setting-label">
-                        <span class="setting-name">API key</span>
-                        {#if apiKeyValid !== null}
-                          <span class="validation-badge" class:valid={apiKeyValid}>
-                            {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
-                          </span>
-                        {:else if hasApiKey && !apiKeyInput}
-                          <span class="badge configured">✓ Configured</span>
-                        {:else if !hasApiKey}
-                          <span class="badge muted">Not set</span>
-                        {/if}
-                      </div>
-                      <div class="setting-control full-width">
-                        <div class="api-key-row">
-                          <input
-                            type="password"
-                            class="api-key-input"
-                            bind:value={apiKeyInput}
-                            on:input={scheduleSave}
-                            placeholder={hasApiKey ? 'Enter new key to change' : 'Enter API key...'}
-                            aria-label={hasApiKey ? 'Replace API key' : 'API key'}
-                          />
-                          <button type="button" class="settings-secondary-btn" on:click={checkApiKey}>Validate</button>
-                          {#if hasApiKey && !apiKeyInput}
-                            <button type="button" class="settings-secondary-btn danger" on:click={clearApiKey}>Clear</button>
-                          {/if}
-                        </div>
-                      </div>
-                    </div>
-                    <p class="api-key-hint">
-                      {#if config.stt_config.provider === 'openai'}
-                        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">Get your API key from OpenAI →</a>
-                      {:else}
-                        <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">Get your API key from Groq →</a>
-                      {/if}
+                    <p class="hint stt-cloud-key-hint">
+                      Add your <strong>{config.stt_config.provider === 'openai' ? 'OpenAI' : 'Groq'}</strong> key in the
+                      <strong>Provider library</strong> below. One key works for both cloud transcription (when this provider is selected) and LLM features when you use the same provider as your default LLM.
                     </p>
                   </div>
                 {/if}
@@ -2187,127 +2350,184 @@
               </div>
               </div>
             {/if}
+              </div>
+            {/if}
+          </section>
 
-            <div class="setting-row language-row">
-              <div class="setting-label full-width">
-                <span class="setting-name">Recognition Languages</span>
-                <span class="setting-desc">First language is the default. Support depends on provider.</span>
-
-                <div class="selected-languages">
-                  {#each (config.languages ?? ['en']) as code, i}
-                    {@const supported = isLanguageSupportedByProvider(code, langProviderKey)}
-                    <div class="lang-row" class:unsupported={!supported}>
-                      <span class="lang-badge">
-                        {#if i === 0}<span class="default-tag">Default</span>{/if}
-                        {languageLabel(code)}
-                        {#if !supported}
-                          <span class="unsupported-icon" title="Not supported">⚠</span>
-                        {/if}
-                      </span>
-                      <div class="lang-actions">
-                        {#if i > 0}
-                          <button type="button" class="btn-icon" title="Move up" on:click={() => moveLanguageUp(i)}><Icon icon="ph:arrow-up" /></button>
-                        {/if}
-                        {#if i < (config.languages?.length ?? 1) - 1}
-                          <button type="button" class="btn-icon" title="Move down" on:click={() => moveLanguageDown(i)}><Icon icon="ph:arrow-down" /></button>
-                        {/if}
-                        <button type="button" class="btn-icon remove" title="Remove" on:click={() => removeLanguage(i)}><Icon icon="ph:x" /></button>
+          <section class="settings-section" class:collapsed={collapsedSections.model_library}>
+            <button type="button" class="section-header" on:click={() => toggleSection('model_library')}>
+              <h3>Provider library</h3>
+              <Icon icon={collapsedSections.model_library ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.model_library}
+              <div class="section-content">
+                <p class="hint">
+                  Curated providers: paste an API key once per provider. Groq and OpenAI keys apply to <strong>both</strong> voice and LLM when you choose that provider for each.
+                </p>
+                <div class="provider-library-grid">
+                  {#each modelCatalog.filter((p) => p.id !== 'local') as prov}
+                    {@const connected = !!(config.provider_keys?.[prov.id]?.trim())}
+                    {@const draft = catalogKeyDraft[prov.id] ?? ''}
+                    <div class="provider-library-card">
+                      <div class="provider-library-card-head">
+                        <Icon icon={prov.icon} class="provider-library-icon" />
+                        <div>
+                          <strong>{prov.name}</strong>
+                          <div class="provider-cap-badges">
+                            {#each prov.capabilities as cap}
+                              <span class="cap-badge">{cap}</span>
+                            {/each}
+                          </div>
+                        </div>
+                        <span class="badge" class:configured={connected} class:muted={!connected}>
+                          {connected ? 'Connected' : 'Not connected'}
+                        </span>
                       </div>
+                      {#if prov.models?.length}
+                        <p class="provider-models-hint">
+                          {#each prov.models as m}
+                            <span class="model-pill" class:default={m.is_default}>{m.name}</span>
+                          {/each}
+                        </p>
+                      {/if}
+                      {#if connected && !draft}
+                        <p class="hint key-masked">Key: <code>{maskProviderKey(config.provider_keys?.[prov.id] ?? '')}</code></p>
+                      {/if}
+                      <div class="api-key-row">
+                        <input
+                          type="password"
+                          class="api-key-input"
+                          placeholder={connected ? 'New key to replace…' : 'Paste API key…'}
+                          value={draft}
+                          on:input={(e) => onCatalogKeyInput(e, prov.id)}
+                          aria-label={`API key for ${prov.name}`}
+                        />
+                        <button
+                          type="button"
+                          class="settings-secondary-btn"
+                          disabled={!draft.trim() && !connected}
+                          on:click={() => testCatalogProviderKey(prov.id)}
+                        >
+                          {catalogKeyTestStatus[prov.id] === 'testing' ? '…' : 'Test'}
+                        </button>
+                        <button
+                          type="button"
+                          class="settings-secondary-btn"
+                          disabled={!draft.trim()}
+                          on:click={() => persistCatalogProviderKey(prov.id)}
+                        >
+                          Save key
+                        </button>
+                        {#if connected}
+                          <button type="button" class="settings-secondary-btn danger" on:click={() => removeCatalogProviderKey(prov.id)}>Remove</button>
+                        {/if}
+                      </div>
+                      {#if catalogKeyTestStatus[prov.id] === 'ok'}
+                        <p class="hint success">Key looks valid.</p>
+                      {:else if catalogKeyTestStatus[prov.id] === 'err'}
+                        <p class="hint error">{catalogKeyTestError[prov.id] ?? 'Check failed'}</p>
+                      {/if}
+                      {#if prov.get_api_key_url}
+                        <p class="api-key-hint">
+                          <a href={prov.get_api_key_url} target="_blank" rel="noopener noreferrer">Get API key ↗</a>
+                        </p>
+                      {/if}
                     </div>
                   {/each}
                 </div>
-                <div class="add-language">
-                  <select class="form-select" bind:value={addLanguageCode} on:change={addSelectedLanguage}>
-                    <option value="">Add a language…</option>
-                    {#each LANGUAGE_OPTIONS as opt}
-                      <option value={opt.code} disabled={(config?.languages ?? []).includes(opt.code)}>{opt.label}</option>
-                    {/each}
-                  </select>
+                <div class="setting-row" style="margin-top: 1rem;">
+                  <button type="button" class="settings-secondary-btn" on:click={rerunOnboardingWizard}>Re-run setup wizard</button>
                 </div>
               </div>
-            </div>
-          </div>
             {/if}
-        </section>
+          </section>
 
-        <section class="settings-section" class:collapsed={collapsedSections.dictation_formatting}>
-          <button type="button" class="section-header" on:click={() => toggleSection('dictation_formatting')}>
-            <h3>Formatting &amp; Output</h3>
-            <Icon icon={collapsedSections.dictation_formatting ? 'ph:caret-down' : 'ph:caret-up'} />
-          </button>
-          {#if !collapsedSections.dictation_formatting}
-          <div class="section-content">
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Auto-punctuation</span>
-                <span class="setting-desc">Automatically insert commas and periods</span>
-              </div>
-              <div class="setting-control">
-                <label class="toggle-switch">
-                  <input type="checkbox" bind:checked={config.formatting.auto_punctuation} on:change={scheduleSave} />
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Voice Commands</span>
-                <span class="setting-desc">Say "new line", "delete", etc. to control text</span>
-              </div>
-              <div class="setting-control">
-                <label class="toggle-switch">
-                  <input type="checkbox" bind:checked={config.formatting.voice_commands} on:change={scheduleSave} />
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Filler Word Removal</span>
-                <span class="setting-desc">Remove "um", "uh", "like", etc.</span>
-              </div>
-              <div class="setting-control">
-                <label class="toggle-switch">
-                  <input type="checkbox" bind:checked={config.formatting.filler_word_removal} on:change={scheduleSave} />
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">How text is typed</span>
-                <span class="setting-desc">Paste from clipboard or simulate keystrokes</span>
-              </div>
-              <div class="setting-control">
-                <select class="form-select" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
-                  <option value="Auto">Automatic</option>
-                  <option value="Keystrokes">Simulate Keystrokes</option>
-                  <option value="Clipboard">Use Clipboard</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          {/if}
-        </section>
-
-        </div>
-
-      {:else if activeTab === 'command'}
-        <div class="settings-tab-content">
-          <section class="settings-section" class:collapsed={collapsedSections.command}>
-            <button type="button" class="section-header" on:click={() => toggleSection('command')}>
-              <h3>Command Mode</h3>
-              <Icon icon={collapsedSections.command ? 'ph:caret-down' : 'ph:caret-up'} />
+          <section class="settings-section" class:collapsed={collapsedSections.default_llm}>
+            <button type="button" class="section-header" on:click={() => toggleSection('default_llm')}>
+              <h3>Default language model</h3>
+              <Icon icon={collapsedSections.default_llm ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
-            {#if !collapsedSections.command}
+            {#if !collapsedSections.default_llm}
               <div class="section-content">
                 <p class="hint">
-                  Use the command hotkey (General → Dictation Hotkeys) to create notes, tasks, or reminders by voice. Say <strong>online search</strong> and your query to open the default browser with a web search.
+                  Fallback LLM for command mode and dictation modes that don't specify their own. Per-mode overrides on the <strong>Dictation</strong> page take priority.
                 </p>
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Enable Command Mode</span>
-                    <span class="setting-desc">When off, the command hotkey does nothing</span>
+                    <span class="setting-name">Provider</span>
+                    <span class="setting-desc">Used for commands, polish, and AI formatting</span>
+                  </div>
+                  <div class="setting-control">
+                    <select
+                      class="form-select"
+                      value={config.default_llm_provider ?? ''}
+                      on:change={(e) => {
+                        const v = e.currentTarget.value
+                        config.default_llm_provider = v || null
+                        if (v === 'custom_openai' && !config.custom_openai_endpoint) {
+                          config.custom_openai_endpoint = { base_url: '', api_key: '', model_id: '' }
+                        }
+                        scheduleSave()
+                      }}
+                    >
+                      <option value="">None (basic parsing for commands)</option>
+                      {#each modelCatalog.filter(p => p.id !== 'local' && p.capabilities.includes('LLM')) as prov}
+                        <option value={prov.id}>{prov.name}{config.provider_keys?.[prov.id]?.trim() ? '' : ' — add key'}</option>
+                      {/each}
+                      <option value="custom_openai">Custom (OpenAI-compatible URL)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {#if config.default_llm_provider === 'custom_openai' && config.custom_openai_endpoint}
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span class="setting-name">Base URL</span>
+                      <span class="setting-desc">OpenAI-compatible root, e.g. https://api.example.com/v1</span>
+                    </div>
+                    <div class="setting-control full-width">
+                      <input type="url" class="form-select" value={config.custom_openai_endpoint.base_url} on:input={onCustomOpenAiBaseUrlInput} />
+                    </div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><span class="setting-name">API key</span></div>
+                    <div class="setting-control full-width">
+                      <input type="password" value={config.custom_openai_endpoint.api_key} on:input={onCustomOpenAiKeyInput} placeholder="API key for this endpoint" />
+                    </div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><span class="setting-name">Model id</span></div>
+                    <div class="setting-control full-width">
+                      <input type="text" class="form-select" value={config.custom_openai_endpoint.model_id} on:input={onCustomOpenAiModelInput} placeholder="e.g. gpt-4o-mini" />
+                    </div>
+                  </div>
+                {:else if config.default_llm_provider}
+                  {@const llmProv = modelCatalog.find(p => p.id === config.default_llm_provider)}
+                  {@const defaultModel = llmProv?.models?.find(m => m.capability === 'LLM' && m.is_default)}
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span class="setting-name">Model</span>
+                      <span class="setting-desc">{defaultModel ? `Default: ${defaultModel.name}` : 'Enter a model id'}</span>
+                    </div>
+                    <div class="setting-control full-width">
+                      <input
+                        type="text"
+                        class="form-select"
+                        value={config.default_llm_model ?? ''}
+                        placeholder={defaultModel?.id ?? 'Model id'}
+                        on:input={(e) => {
+                          config.default_llm_model = e.currentTarget.value || null
+                          scheduleSave()
+                        }}
+                      />
+                    </div>
+                  </div>
+                {/if}
+
+                <div class="setting-row" style="margin-top: 0.75rem;">
+                  <div class="setting-label">
+                    <span class="setting-name">Command mode</span>
+                    <span class="setting-desc">Voice-triggered notes, tasks, reminders from any dictation mode</span>
                   </div>
                   <div class="setting-control">
                     <label class="toggle-switch">
@@ -2316,113 +2536,6 @@
                     </label>
                   </div>
                 </div>
-
-                {#if config.command_config.enabled}
-              <div class="setting-row">
-                <div class="setting-label">
-                  <span class="setting-name">LLM Provider</span>
-                  <span class="setting-desc">Optional: enables natural language understanding</span>
-                </div>
-                <div class="setting-control">
-                  <select class="form-select" value={config.command_config.provider ?? ''} on:change={setCommandProvider}>
-                    <option value="">None (basic parsing)</option>
-                    <option value="groq">Groq</option>
-                    <option value="openrouter">OpenRouter</option>
-                    <option value="gemini">Gemini</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="anthropic">Anthropic</option>
-                  </select>
-                </div>
-              </div>
-
-              {#if config.command_config.provider}
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">API Key</span>
-                    {#if commandApiKeyStatus === 'valid'}
-                      <span class="badge success">✓ Valid</span>
-                    {:else if commandApiKeyStatus === 'invalid'}
-                      <span class="badge error">✗ Invalid</span>
-                    {:else if hasCommandApiKey && !commandApiKeyInput}
-                      <span class="badge configured">✓ Configured</span>
-                    {/if}
-                  </div>
-                  <div class="setting-control full-width">
-                    <div class="input-group">
-                      <input
-                        type="password"
-                        bind:value={commandApiKeyInput}
-                        on:input={() => { commandApiKeyStatus = 'idle'; commandApiKeyError = null; scheduleSave(); }}
-                        placeholder={hasCommandApiKey ? "Enter new key to change" : "Enter API key"}
-                      />
-                      <button type="button" class="settings-secondary-btn" disabled={loadingLlmModels || (!commandApiKeyInput.trim() && !config.command_config.api_keys?.[config.command_config.provider])} on:click={fetchCommandLlmModels}>
-                        {loadingLlmModels ? 'Testing…' : 'Test & Load'}
-                      </button>
-                      {#if hasCommandApiKey && !commandApiKeyInput}
-                        <button type="button" class="settings-secondary-btn danger" on:click={clearCommandApiKey}>Clear</button>
-                      {/if}
-                    </div>
-                    {#if commandApiKeyError}
-                      <p class="hint error">{commandApiKeyError}</p>
-                    {/if}
-                  </div>
-                </div>
-
-                {#if commandApiKeyStatus === 'valid' || llmModels.length > 0 || config.command_config.models?.[config.command_config.provider]}
-                  <div class="setting-row">
-                    <div class="setting-label">
-                      <span class="setting-name">Model</span>
-                      {#if commandModelStatus === 'valid'}
-                        <span class="badge success">✓ Valid</span>
-                      {:else if commandModelStatus === 'invalid'}
-                        <span class="badge error">✗ Invalid</span>
-                      {:else if commandModelStatus === 'testing'}
-                        <span class="badge">Testing…</span>
-                      {/if}
-                    </div>
-                    <div class="setting-control full-width">
-                      <div class="custom-combobox" class:open={commandModelDropdownOpen} bind:this={comboboxEl}>
-                        <div class="input-wrapper">
-                          <input
-                            type="text"
-                            bind:value={commandModelInputText}
-                            on:focus={openDropdown}
-                            on:blur={closeDropdown}
-                            on:input={handleModelInput}
-                            placeholder="Type or select a model..."
-                            autocomplete="off"
-                          />
-                          <Icon icon="ph:caret-down" class="dropdown-icon" />
-                        </div>
-                        {#if commandModelDropdownOpen}
-                          <div class="combobox-dropdown-container" style="position: fixed; top: {dropdownTop}px; left: {dropdownLeft}px; width: {dropdownWidth}px;">
-                            {#if filteredModels.length > 0}
-                              <ul class="combobox-dropdown">
-                                {#each filteredModels as m}
-                                  <li class:selected={config.command_config.models?.[config.command_config.provider] === m} on:click={() => selectModelFromDropdown(m)}>
-                                    <span>{m}</span>
-                                    {#if config.command_config.models?.[config.command_config.provider] === m}
-                                      <Icon icon="ph:check" />
-                                    {/if}
-                                  </li>
-                                {/each}
-                              </ul>
-                            {:else}
-                              <div class="combobox-empty">
-                                <span>Use custom: {commandModelInputText || '...'}</span>
-                              </div>
-                            {/if}
-                          </div>
-                        {/if}
-                      </div>
-                      {#if commandModelError}
-                        <p class="hint error">{commandModelError}</p>
-                      {/if}
-                    </div>
-                  </div>
-                {/if}
-              {/if}
-                {/if}
               </div>
             {/if}
           </section>
@@ -2515,189 +2628,87 @@
                   <!-- svelte-ignore a11y-click-events-have-key-events -->
                   <!-- svelte-ignore a11y-no-static-element-interactions -->
                   <div
-                    class="modal-backdrop sensitive-picker-backdrop"
-                    use:portalBody
+                    class="sensitive-apps-picker-overlay"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Close panel"
                     on:click={closeSensitiveAppPicker}
-                    role="presentation"
+                    on:keydown={(e) => e.key === 'Enter' && closeSensitiveAppPicker()}
+                    transition:fade
+                    use:portalAppShell
+                  ></div>
+                  <aside
+                    class="sensitive-apps-picker-panel kalam-sleek"
+                    transition:fly={{ x: 420, duration: 250, opacity: 1 }}
+                    use:portalAppShell
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="sensitive-apps-picker-title"
                   >
-                    <div
-                      class="modal sensitive-app-modal kalam-sleek"
-                      class:dark={modalPickerDark}
-                      class:light={!modalPickerDark}
-                      on:click|stopPropagation
-                      role="dialog"
-                      aria-modal="true"
-                      aria-labelledby="sensitive-app-modal-title"
-                    >
-                      <div class="modal-header">
-                        <h3 id="sensitive-app-modal-title">Add sensitive app</h3>
-                        <button type="button" class="btn-icon" on:click={closeSensitiveAppPicker}>
-                          <Icon icon="ph:x" />
-                        </button>
-                      </div>
-
-                      <div class="modal-tabs" role="tablist">
-                        <button
-                          type="button"
-                          class="modal-tab"
-                          class:active={sensitiveAppPickerTab === 'running'}
-                          on:click={() => switchSensitivePickerTab('running')}
-                          role="tab"
-                          aria-selected={sensitiveAppPickerTab === 'running'}
-                        >
-                          <Icon icon="ph:activity" />
-                          <span class="modal-tab-label">Running now</span>
-                        </button>
-                        <button
-                          type="button"
-                          class="modal-tab"
-                          class:active={sensitiveAppPickerTab === 'installed'}
-                          on:click={() => switchSensitivePickerTab('installed')}
-                          role="tab"
-                          aria-selected={sensitiveAppPickerTab === 'installed'}
-                        >
+                    <div class="sensitive-apps-picker-header">
+                      <h3 id="sensitive-apps-picker-title">Add sensitive app</h3>
+                      <button type="button" class="btn-icon" on:click={closeSensitiveAppPicker} aria-label="Close">
+                        <Icon icon="ph:x" />
+                      </button>
+                    </div>
+                    <p class="sensitive-apps-picker-intro">
+                      Choose from applications installed on this device. Matching uses process names.
+                    </p>
+                    <div class="sensitive-apps-picker-search">
+                      <Icon icon="ph:magnifying-glass" />
+                      <input
+                        type="text"
+                        placeholder="Search installed apps…"
+                        bind:value={sensitiveAppsSearch}
+                        disabled={sensitiveAppsLoading}
+                      />
+                    </div>
+                    <div class="sensitive-apps-picker-scroll">
+                      {#if sensitiveAppsLoading}
+                        <div class="sensitive-apps-loading">
+                          <Icon icon="ph:spinner" class="spin" />
+                          <span>Scanning installed apps…</span>
+                        </div>
+                      {:else if filteredInstalledApps.length > 0}
+                        <ul class="sensitive-apps-list-select">
+                          {#each filteredInstalledApps as app}
+                            <li>
+                              <button
+                                type="button"
+                                class="sensitive-app-select-row"
+                                class:already-added={isAppAlreadyAdded(app.process_name)}
+                                on:click={() => addSensitiveAppFromPicker(app.process_name, app.exe_path)}
+                                disabled={isAppAlreadyAdded(app.process_name)}
+                              >
+                                {#if app.icon_base64}
+                                  <img
+                                    src="data:image/png;base64,{app.icon_base64}"
+                                    alt=""
+                                    class="sensitive-app-select-icon"
+                                  />
+                                {:else}
+                                  <div class="sensitive-app-select-icon-placeholder">
+                                    <Icon icon="ph:app-window" />
+                                  </div>
+                                {/if}
+                                <span class="sensitive-app-select-name">{app.display_name}</span>
+                                {#if isAppAlreadyAdded(app.process_name)}
+                                  <span class="sensitive-app-select-badge">Added</span>
+                                {:else}
+                                  <Icon icon="ph:caret-right" class="sensitive-app-select-chevron" />
+                                {/if}
+                              </button>
+                            </li>
+                          {/each}
+                        </ul>
+                      {:else}
+                        <div class="sensitive-apps-empty-state">
                           <Icon icon="ph:package" />
-                          <span class="modal-tab-label">Installed apps</span>
-                        </button>
-                        <button
-                          type="button"
-                          class="modal-tab"
-                          class:active={sensitiveAppPickerTab === 'browse'}
-                          on:click={() => switchSensitivePickerTab('browse')}
-                          role="tab"
-                          aria-selected={sensitiveAppPickerTab === 'browse'}
-                        >
-                          <Icon icon="ph:folder-open" />
-                          <span class="modal-tab-label">Browse file</span>
-                        </button>
-                      </div>
-
-                      {#if sensitiveAppPickerTab === 'running' || (sensitiveAppPickerTab === 'installed' && installedAppsLoaded)}
-                        <div class="modal-search">
-                          <Icon icon="ph:magnifying-glass" />
-                          <input
-                            type="text"
-                            placeholder={sensitiveAppPickerTab === 'running'
-                              ? 'Search running apps...'
-                              : 'Search installed apps...'}
-                            bind:value={sensitiveAppsSearch}
-                          />
+                          <p>{sensitiveAppsSearch ? 'No installed apps match your search.' : 'No installed apps found.'}</p>
                         </div>
                       {/if}
-
-                      <div class="modal-content-scroll">
-                        {#if sensitiveAppPickerTab === 'running'}
-                          {#if sensitiveAppsLoading}
-                            <div class="sensitive-apps-loading">
-                              <Icon icon="ph:spinner" class="spin" />
-                              <span>Loading running apps…</span>
-                            </div>
-                          {:else if filteredRunningApps.length > 0}
-                            <ul class="sensitive-apps-list-select">
-                              {#each filteredRunningApps as app}
-                                <li>
-                                  <button
-                                    type="button"
-                                    class="sensitive-app-select-row"
-                                    class:already-added={isAppAlreadyAdded(app.process_name)}
-                                    on:click={() => addSensitiveAppFromPicker(app.process_name, app.exe_path)}
-                                    disabled={isAppAlreadyAdded(app.process_name)}
-                                  >
-                                    {#if app.icon_base64}
-                                      <img
-                                        src="data:image/png;base64,{app.icon_base64}"
-                                        alt=""
-                                        class="sensitive-app-select-icon"
-                                      />
-                                    {:else}
-                                      <div class="sensitive-app-select-icon-placeholder">
-                                        <Icon icon="ph:app-window" />
-                                      </div>
-                                    {/if}
-                                    <span class="sensitive-app-select-name">{app.display_name}</span>
-                                    {#if isAppAlreadyAdded(app.process_name)}
-                                      <span class="sensitive-app-select-badge">Added</span>
-                                    {:else}
-                                      <Icon icon="ph:caret-right" class="sensitive-app-select-chevron" />
-                                    {/if}
-                                  </button>
-                                </li>
-                              {/each}
-                            </ul>
-                          {:else}
-                            <div class="sensitive-apps-empty-state">
-                              <Icon icon="ph:app-window" />
-                              <p>{sensitiveAppsSearch ? 'No running apps match your search.' : 'No running apps found.'}</p>
-                            </div>
-                          {/if}
-                        {:else if sensitiveAppPickerTab === 'installed'}
-                          {#if !installedAppsLoaded && !sensitiveAppsLoading}
-                            <div class="sensitive-apps-load-prompt">
-                              <Icon icon="ph:package" />
-                              <p>
-                                Scanning installed applications can take a few seconds on some systems. Load the list when
-                                you are ready.
-                              </p>
-                              <button type="button" class="settings-primary-btn compact" on:click={() => void loadInstalledApps()}>
-                                <Icon icon="ph:arrows-clockwise" />
-                                Load installed apps
-                              </button>
-                            </div>
-                          {:else if sensitiveAppsLoading}
-                            <div class="sensitive-apps-loading">
-                              <Icon icon="ph:spinner" class="spin" />
-                              <span>Scanning installed apps…</span>
-                            </div>
-                          {:else if filteredInstalledApps.length > 0}
-                            <ul class="sensitive-apps-list-select">
-                              {#each filteredInstalledApps as app}
-                                <li>
-                                  <button
-                                    type="button"
-                                    class="sensitive-app-select-row"
-                                    class:already-added={isAppAlreadyAdded(app.process_name)}
-                                    on:click={() => addSensitiveAppFromPicker(app.process_name, app.exe_path)}
-                                    disabled={isAppAlreadyAdded(app.process_name)}
-                                  >
-                                    {#if app.icon_base64}
-                                      <img
-                                        src="data:image/png;base64,{app.icon_base64}"
-                                        alt=""
-                                        class="sensitive-app-select-icon"
-                                      />
-                                    {:else}
-                                      <div class="sensitive-app-select-icon-placeholder">
-                                        <Icon icon="ph:app-window" />
-                                      </div>
-                                    {/if}
-                                    <span class="sensitive-app-select-name">{app.display_name}</span>
-                                    {#if isAppAlreadyAdded(app.process_name)}
-                                      <span class="sensitive-app-select-badge">Added</span>
-                                    {:else}
-                                      <Icon icon="ph:caret-right" class="sensitive-app-select-chevron" />
-                                    {/if}
-                                  </button>
-                                </li>
-                              {/each}
-                            </ul>
-                          {:else}
-                            <div class="sensitive-apps-empty-state">
-                              <Icon icon="ph:package" />
-                              <p>{sensitiveAppsSearch ? 'No installed apps match your search.' : 'No installed apps found.'}</p>
-                            </div>
-                          {/if}
-                        {:else if sensitiveAppPickerTab === 'browse'}
-                          <div class="sensitive-apps-browse">
-                            <p>Select an executable file (.exe, .app, .AppImage) to add to sensitive apps.</p>
-                            <button type="button" class="settings-primary-btn" on:click={pickExecutableFile}>
-                              <Icon icon="ph:folder-open" />
-                              Choose file…
-                            </button>
-                          </div>
-                        {/if}
-                      </div>
                     </div>
-                  </div>
+                  </aside>
                 {/if}
                 <div class="setting-row">
                   <div class="setting-label">
@@ -3238,200 +3249,128 @@
     margin: 0;
   }
 
-  /* While the picker is open, the real scroll container is `.page-content` — lock it (html class set in script). */
-  :global(html.sensitive-app-picker-open .kalam-sleek .page-content) {
-    overflow: hidden !important;
-    overscroll-behavior: none;
-    touch-action: none;
-  }
-
-  /*
-   * Portaled to document.body: fixed = viewport, matches app-shell height.
-   * Inset padding uses --space-lg to match settings section spacing.
-   * Using :global() so these styles apply to the portaled modal (outside component scope).
-   */
-  :global(.modal-backdrop.sensitive-picker-backdrop) {
+  /* Right-side picker — same interaction model as Dictionary (portaled to .app-shell). */
+  :global(.sensitive-apps-picker-overlay) {
     position: fixed;
     inset: 0;
-    z-index: 10050;
-    box-sizing: border-box;
-    width: 100vw;
-    max-width: 100vw;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(2px);
+    z-index: 9998;
+    cursor: pointer;
+  }
+
+  :global(aside.sensitive-apps-picker-panel) {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 100%;
+    max-width: 420px;
     height: 100vh;
     height: 100dvh;
     max-height: 100vh;
     max-height: 100dvh;
-    margin: 0;
-    padding: var(--space-lg);
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    overscroll-behavior: none;
-  }
-
-  /* Modal inherits CSS vars from .kalam-sleek class on the element */
-  :global(.modal.sensitive-app-modal) {
     background: var(--bg-elevated);
-    width: 100%;
-    max-width: 720px;
-    flex: 0 1 auto;
-    min-height: 0;
-    height: auto;
-    max-height: calc(100vh - var(--space-lg) * 2);
-    max-height: calc(100dvh - var(--space-lg) * 2);
+    border-left: 1px solid var(--border);
+    color: var(--text);
+    z-index: 9999;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
-    border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
-    border: 1px solid var(--border);
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
     font-family: var(--font-sleek, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif);
   }
 
-  /* Modal header matches settings section header padding */
-  :global(.sensitive-app-modal .modal-header) {
+  :global(.sensitive-apps-picker-header) {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: var(--space-lg);
+    justify-content: space-between;
+    padding: 16px 20px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
-  :global(.sensitive-app-modal .modal-header h3) {
+  :global(.sensitive-apps-picker-header h3) {
     margin: 0;
     font-size: 16px;
     font-weight: 600;
     color: var(--text);
-    font-family: inherit;
   }
 
-  /* Fixed-height tab bar: three equal segments, no inner scroll. */
-  :global(.sensitive-app-modal .modal-tabs) {
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    height: 52px;
-    min-height: 52px;
-    max-height: 52px;
-    flex-shrink: 0;
-    padding: 0 var(--space-sm);
-    gap: 0;
-    border-bottom: 1px solid var(--border);
-    overflow: hidden;
-  }
-
-  :global(.sensitive-app-modal .modal-tab) {
-    flex: 1 1 0;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    padding: 6px 4px;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    border-bottom: 3px solid transparent;
+  :global(.sensitive-apps-picker-intro) {
+    margin: 0;
+    padding: 12px 20px 0;
+    font-size: 13px;
+    line-height: 1.45;
     color: var(--text-secondary);
-    font-size: 11px;
-    line-height: 1.2;
-    cursor: pointer;
-    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-    font-family: inherit;
-  }
-
-  :global(.sensitive-app-modal .modal-tab svg) {
-    font-size: 18px;
     flex-shrink: 0;
   }
 
-  :global(.sensitive-app-modal .modal-tab-label) {
-    display: block;
-    text-align: center;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    padding: 0 2px;
-  }
-
-  :global(.sensitive-app-modal .modal-tab:hover) {
-    background: var(--bg-hover);
-    color: var(--text);
-  }
-
-  :global(.sensitive-app-modal .modal-tab.active) {
-    background: transparent;
-    color: var(--accent);
-    border-bottom-color: var(--accent);
-  }
-
-  /* Modal search uses consistent spacing */
-  :global(.sensitive-app-modal .modal-search) {
+  :global(.sensitive-apps-picker-search) {
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-    padding: var(--space-md) var(--space-lg);
+    padding: 14px 20px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
-  :global(.sensitive-app-modal .modal-search svg) {
+  :global(.sensitive-apps-picker-search svg) {
     color: var(--text-muted);
     font-size: 18px;
     flex-shrink: 0;
   }
 
-  :global(.sensitive-app-modal .modal-search input) {
+  :global(.sensitive-apps-picker-search input) {
     flex: 1;
     min-width: 0;
-    background: transparent;
-    border: none;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg);
     color: var(--text);
     font-size: 14px;
     outline: none;
     font-family: inherit;
   }
 
-  :global(.sensitive-app-modal .modal-search input:disabled) {
+  :global(.sensitive-apps-picker-search input:focus) {
+    border-color: var(--border-subtle);
+    box-shadow: 0 0 0 3px var(--primary-alpha-subtle, rgba(0, 122, 255, 0.15));
+  }
+
+  :global(.sensitive-apps-picker-search input:disabled) {
     opacity: 0.45;
     cursor: not-allowed;
   }
 
-  :global(.sensitive-app-modal .modal-search input::placeholder) {
+  :global(.sensitive-apps-picker-search input::placeholder) {
     color: var(--text-muted);
   }
 
-  /* Modal content matches settings section-content padding: 0 var(--space-lg) var(--space-lg) */
-  :global(.sensitive-app-modal .modal-content-scroll) {
-    flex: 1 1 auto;
+  :global(.sensitive-apps-picker-scroll) {
+    flex: 1;
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 0 var(--space-lg) var(--space-lg);
+    padding: 0 20px 20px;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
   }
 
-  :global(.sensitive-app-modal .sensitive-apps-list-select) {
+  :global(.sensitive-apps-picker-panel .sensitive-apps-list-select) {
     list-style: none;
     margin: 0;
-    padding: var(--space-sm) 0 0 0;
+    padding: 12px 0 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
   }
 
-  :global(.sensitive-app-modal .sensitive-apps-list-select li) {
+  :global(.sensitive-apps-picker-panel .sensitive-apps-list-select li) {
     margin: 0;
     padding: 0;
   }
 
-  :global(.sensitive-app-modal .sensitive-app-select-row) {
+  :global(.sensitive-apps-picker-panel .sensitive-app-select-row) {
     display: flex;
     flex-direction: row;
     align-items: center;
@@ -3447,22 +3386,22 @@
     font-family: inherit;
   }
 
-  :global(.sensitive-app-modal .sensitive-app-select-row:hover:not(:disabled)) {
+  :global(.sensitive-apps-picker-panel .sensitive-app-select-row:hover:not(:disabled)) {
     border-color: var(--accent);
     background: rgba(0, 122, 255, 0.04);
   }
 
-  :global(.sensitive-app-modal .sensitive-app-select-row:disabled) {
+  :global(.sensitive-apps-picker-panel .sensitive-app-select-row:disabled) {
     opacity: 0.55;
     cursor: not-allowed;
   }
 
-  :global(.sensitive-app-modal .sensitive-app-select-row.already-added) {
+  :global(.sensitive-apps-picker-panel .sensitive-app-select-row.already-added) {
     border-color: var(--border-light);
     background: var(--bg-hover);
   }
 
-  :global(.sensitive-app-modal .sensitive-app-select-icon) {
+  :global(.sensitive-apps-picker-panel .sensitive-app-select-icon) {
     width: 36px;
     height: 36px;
     border-radius: var(--radius-sm);
@@ -3470,7 +3409,7 @@
     flex-shrink: 0;
   }
 
-  :global(.sensitive-app-modal .sensitive-app-select-icon-placeholder) {
+  :global(.sensitive-apps-picker-panel .sensitive-app-select-icon-placeholder) {
     width: 36px;
     height: 36px;
     border-radius: var(--radius-sm);
@@ -3483,7 +3422,7 @@
     flex-shrink: 0;
   }
 
-  :global(.sensitive-app-modal .sensitive-app-select-row .sensitive-app-select-name) {
+  :global(.sensitive-apps-picker-panel .sensitive-app-select-row .sensitive-app-select-name) {
     flex: 1 1 auto;
     min-width: 0;
     font-size: 14px;
@@ -3494,7 +3433,7 @@
     font-family: inherit;
   }
 
-  :global(.sensitive-app-modal .sensitive-app-select-badge) {
+  :global(.sensitive-apps-picker-panel .sensitive-app-select-badge) {
     font-size: 11px;
     padding: 3px 8px;
     background: var(--accent);
@@ -3504,71 +3443,13 @@
     flex-shrink: 0;
   }
 
-  :global(.sensitive-app-modal .sensitive-app-select-chevron) {
+  :global(.sensitive-apps-picker-panel .sensitive-app-select-chevron) {
     flex-shrink: 0;
     color: var(--text-muted);
     font-size: 18px;
   }
 
-  /* Load prompt centered with consistent spacing */
-  :global(.sensitive-app-modal .sensitive-apps-load-prompt) {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-md);
-    padding: var(--space-lg) 0;
-    text-align: center;
-    max-width: 360px;
-    margin: 0 auto;
-  }
-
-  :global(.sensitive-app-modal .sensitive-apps-load-prompt svg:first-child) {
-    font-size: 40px;
-    color: var(--text-secondary);
-    opacity: 0.6;
-  }
-
-  :global(.sensitive-app-modal .sensitive-apps-load-prompt p) {
-    margin: 0;
-    font-size: 14px;
-    line-height: 1.5;
-    color: var(--text-secondary);
-    font-family: inherit;
-  }
-
-  :global(.sensitive-app-modal .settings-primary-btn) {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 10px 18px;
-    border: none;
-    border-radius: var(--radius-md);
-    background: var(--accent);
-    color: var(--accent-fg);
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.15s ease, transform 0.1s ease;
-    font-family: inherit;
-  }
-
-  :global(.sensitive-app-modal .settings-primary-btn:hover) {
-    opacity: 0.92;
-  }
-
-  :global(.sensitive-app-modal .settings-primary-btn:active) {
-    transform: scale(0.98);
-  }
-
-  /* Compact variant for load prompt */
-  :global(.sensitive-app-modal .settings-primary-btn.compact) {
-    padding: 8px 14px;
-    font-size: 13px;
-    font-weight: 500;
-  }
-
-  :global(.sensitive-app-modal .sensitive-apps-loading) {
+  :global(.sensitive-apps-picker-panel .sensitive-apps-loading) {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -3577,7 +3458,7 @@
     color: var(--text-secondary);
   }
 
-  :global(.sensitive-app-modal .sensitive-apps-loading svg.spin) {
+  :global(.sensitive-apps-picker-panel .sensitive-apps-loading svg.spin) {
     animation: spin 1s linear infinite;
   }
 
@@ -3586,7 +3467,7 @@
     to { transform: rotate(360deg); }
   }
 
-  :global(.sensitive-app-modal .sensitive-apps-empty-state) {
+  :global(.sensitive-apps-picker-panel .sensitive-apps-empty-state) {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -3596,24 +3477,15 @@
     text-align: center;
   }
 
-  :global(.sensitive-app-modal .sensitive-apps-empty-state svg) {
+  :global(.sensitive-apps-picker-panel .sensitive-apps-empty-state svg) {
     font-size: 48px;
     opacity: 0.3;
   }
 
-  :global(.sensitive-app-modal .sensitive-apps-browse) {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-lg);
-    padding: var(--space-lg) 0;
-    text-align: center;
-  }
-
-  :global(.sensitive-app-modal .sensitive-apps-browse p) {
-    color: var(--text-secondary);
-    margin: 0;
-    font-family: inherit;
+  @media (max-width: 480px) {
+    :global(aside.sensitive-apps-picker-panel) {
+      max-width: 100%;
+    }
   }
 
   .setting-row {
@@ -4389,5 +4261,78 @@
     .settings-tab span {
       display: none;
     }
+  }
+
+  .provider-library-grid {
+    display: grid;
+    gap: var(--space-md);
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+
+  .provider-library-card {
+    padding: var(--space-md);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg);
+  }
+
+  .provider-library-card-head {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+  }
+
+  .provider-library-card-head :global(.provider-library-icon) {
+    font-size: 1.5rem;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .provider-cap-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+  }
+
+  .cap-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--text-secondary);
+  }
+
+  .provider-models-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .model-pill {
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+  }
+
+  .model-pill.default {
+    border-color: var(--accent);
+  }
+
+  .key-masked code {
+    font-size: 12px;
+  }
+
+  .hint.success {
+    color: var(--accent, #0d9488);
+  }
+
+  .stt-cloud-key-hint {
+    margin-top: var(--space-sm);
   }
 </style>

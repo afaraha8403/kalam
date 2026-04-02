@@ -13,7 +13,11 @@ pub struct OpenAIProvider {
 
 impl OpenAIProvider {
     /// `http_timeout` should match configured transcription ceiling (see `create_provider_sync`).
-    pub fn new(api_key: String, http_timeout: std::time::Duration) -> anyhow::Result<Self> {
+    pub fn new(
+        api_key: String,
+        http_timeout: std::time::Duration,
+        model_override: Option<String>,
+    ) -> anyhow::Result<Self> {
         log::debug!("OpenAI blocking HTTP client timeout: {:?}", http_timeout);
         let client = reqwest::blocking::Client::builder()
             .timeout(http_timeout)
@@ -22,7 +26,9 @@ impl OpenAIProvider {
         Ok(Self {
             api_key,
             client,
-            model: "whisper-1".to_string(),
+            model: model_override
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "whisper-1".to_string()),
         })
     }
 }

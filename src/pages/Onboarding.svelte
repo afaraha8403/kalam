@@ -6,12 +6,24 @@
   import Icon from '@iconify/svelte'
   import { formatHotkeyForDisplay, superKeyLabel } from '../lib/platformHotkey'
   import { LANGUAGE_OPTIONS, languageLabel } from '../lib/languages'
-  import type { AppConfig, AudioDevice } from '../types'
+  import type { AppConfig, AudioDevice, CatalogProvider, DictationMode } from '../types'
 
   const dispatch = createEventDispatcher<{ complete: void }>()
 
   let step = 1
-  const totalSteps = 6
+  const totalSteps = 7
+
+  /** Wizard-only: chosen after Access; drives defaults on the Engine step and command LLM keys. */
+  type SetupPath = 'offline' | 'one_key' | 'best_quality' | 'manual'
+  let setupPath: SetupPath | null = null
+  /** When `best_quality` + Anthropic, second key for LLM (STT stays OpenAI). */
+  let llmApiKey = ''
+  /** For best-quality path: reuse OpenAI key for LLM vs separate Anthropic key. */
+  let qualityLlmChoice: 'openai' | 'anthropic' = 'openai'
+  /** Shown on Try-it step; persisted with the rest of onboarding. */
+  let polishDemoEnabled = false
+  /** Display name for active dictation mode (config snapshot). */
+  let activeModeDisplayName = 'Default'
   let termsAgreed = false
   let userEmail = ''
   let notificationsOptIn = true
@@ -25,9 +37,18 @@
   let isPlaying = false
   let audioCtx: AudioContext | null = null
   let apiKey = ''
+  /** OpenAI API key for command/dictation LLM on the “best quality” path (STT stays Groq). */
+  let openaiLlmKey = ''
   let selectedProvider: 'groq' | 'openai' = 'groq'
   let apiKeyValid: boolean | null = null
   let validating = false
+  /** Curated provider list for Engine-step cards (matches Settings provider library). */
+  let modelCatalog: CatalogProvider[] = []
+  let onboardingCatalogLoading = false
+  /** Manual path: draft keys per catalog provider id (saved into `provider_keys` on continue/finish). */
+  let onboardingManualKeys: Record<string, string> = {}
+  let onboardingKeyValid: Record<string, boolean | null> = {}
+  let onboardingKeyValidating: Record<string, boolean> = {}
   let selectedMode: 'Cloud' | 'Hybrid' | 'Local' = 'Hybrid'
   let hotkey = ''
   let toggleHotkey = ''
@@ -108,6 +129,7 @@
     'Welcome',
     'Email',
     'Access',
+    'Setup',
     'Engine',
     'Shortcuts',
     'Try it',
@@ -130,16 +152,120 @@
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((email || '').trim())
   }
 
+  /** Apply preset when user picks a setup path (Engine step reflects these choices). */
+  function selectSetupPath(path: SetupPath) {
+    setupPath = path
+    apiKeyValid = null
+    // AI-capable paths default polish on; offline has no LLM so polish stays off.
+    polishDemoEnabled = path !== 'offline'
+    if (path === 'offline') {
+      selectedMode = 'Local'
+      apiKey = ''
+    } else if (path === 'one_key') {
+      selectedMode = 'Hybrid'
+      selectedProvider = 'groq'
+    } else if (path === 'best_quality') {
+      selectedMode = 'Cloud'
+      // Phase 2: curated “quality” stack uses Groq STT + separate OpenAI or Anthropic LLM key.
+      selectedProvider = 'groq'
+      qualityLlmChoice = 'openai'
+    } else {
+      // manual — sensible defaults without hiding options on the next step
+      selectedMode = 'Hybrid'
+      if (apiKey.trim() && (selectedProvider === 'groq' || selectedProvider === 'openai')) {
+        onboardingManualKeys = { ...onboardingManualKeys, [selectedProvider]: apiKey.trim() }
+      }
+    }
+  }
+
+  /**
+   * Single merge point for onboarding fields into `config` before save.
+   * Keeps command_mode keys aligned with the chosen setup path (Groq one-key, quality STT+LLM).
+   */
+  function mergeOnboardingWizardIntoConfig(config: AppConfig) {
+    if (!config.provider_keys) config.provider_keys = {}
+
+    if (setupPath === 'best_quality') {
+      config.stt_config.provider = 'groq'
+      if (apiKey.trim()) config.provider_keys.groq = apiKey.trim()
+    } else if (setupPath === 'manual') {
+      config.stt_config.provider = selectedProvider
+      for (const [pid, k] of Object.entries(onboardingManualKeys)) {
+        const t = (k ?? '').trim()
+        if (t) config.provider_keys[pid] = t
+      }
+    } else {
+      config.stt_config.provider = selectedProvider
+      if (apiKey.trim()) {
+        config.provider_keys[selectedProvider] = apiKey.trim()
+      }
+    }
+
+    config.stt_config.mode = selectedMode
+    config.hotkey = hotkey
+    config.toggle_dictation_hotkey = toggleHotkey || null
+    config.languages = languages.length ? [...languages] : ['en']
+    config.user_email = userEmail.trim() || null
+    config.marketing_opt_in = false
+    config.notifications_opt_in = notificationsOptIn
+    const mic = audioDeviceSelection.trim()
+    config.audio_device = mic === '' ? null : mic
+    config.polish_enabled = polishDemoEnabled
+
+    if (setupPath === 'one_key') {
+      config.command_config.enabled = true
+      config.default_llm_provider = 'groq'
+      if (apiKey.trim()) config.provider_keys.groq = apiKey.trim()
+    } else if (setupPath === 'best_quality') {
+      config.command_config.enabled = true
+      if (qualityLlmChoice === 'anthropic') {
+        config.default_llm_provider = 'anthropic'
+        if (llmApiKey.trim()) config.provider_keys.anthropic = llmApiKey.trim()
+      } else {
+        config.default_llm_provider = 'openai'
+        if (openaiLlmKey.trim()) config.provider_keys.openai = openaiLlmKey.trim()
+      }
+    } else if (setupPath === 'offline') {
+      config.command_config.enabled = false
+      config.default_llm_provider = null
+    }
+  }
+
+  async function refreshActiveModeDisplay() {
+    try {
+      const cfg = (await invoke('get_settings')) as AppConfig
+      const modes = cfg.modes as DictationMode[]
+      const aid = cfg.active_mode_id ?? 'default'
+      activeModeDisplayName = modes.find((m) => m.id === aid)?.name ?? aid
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   async function loadConfig() {
     try {
       const config = (await invoke('get_settings')) as AppConfig
       if (config.stt_config?.provider) selectedProvider = config.stt_config.provider as 'groq' | 'openai'
       if (config.stt_config?.mode) selectedMode = config.stt_config.mode as 'Cloud' | 'Hybrid' | 'Local'
       if (!config.stt_config?.api_keys) config.stt_config.api_keys = {}
+      if (!config.provider_keys) config.provider_keys = {}
       if (config.stt_config?.api_key && !config.stt_config.api_keys[selectedProvider]) {
         config.stt_config.api_keys[selectedProvider] = config.stt_config.api_key
       }
-      if (config.stt_config?.api_keys?.[selectedProvider]) apiKey = config.stt_config.api_keys[selectedProvider]
+      const pk = config.provider_keys[selectedProvider]
+      if (pk) apiKey = pk
+      else if (config.stt_config?.api_keys?.[selectedProvider]) apiKey = config.stt_config.api_keys[selectedProvider]
+      llmApiKey = config.provider_keys.anthropic?.trim() ?? ''
+      openaiLlmKey = config.provider_keys.openai?.trim() ?? ''
+      {
+        const cloudIds = ['groq', 'openai', 'anthropic', 'gemini', 'openrouter'] as const
+        const next: Record<string, string> = {}
+        for (const id of cloudIds) {
+          const v = config.provider_keys[id]?.trim()
+          if (v) next[id] = v
+        }
+        onboardingManualKeys = next
+      }
       if (config.hotkey) {
         hotkey = formatHotkeyForDisplay(config.hotkey, platform)
       } else {
@@ -151,6 +277,10 @@
       if (config.languages?.length) languages = [...config.languages]
       if (config.user_email) userEmail = config.user_email
       if (config.notifications_opt_in != null) notificationsOptIn = config.notifications_opt_in
+      if (config.polish_enabled != null) polishDemoEnabled = config.polish_enabled
+      const modes = config.modes as DictationMode[]
+      const aid = config.active_mode_id ?? 'default'
+      activeModeDisplayName = modes.find((m) => m.id === aid)?.name ?? aid
       const ad = config.audio_device
       // '' = explicit “System default” row; 'default' / 'device_N' = real ids from list_devices (never duplicate option values).
       if (ad == null || ad === '') {
@@ -217,18 +347,7 @@
   async function saveOnboardingState(opts?: SaveOnboardingOpts) {
     try {
       const config = (await invoke('get_settings')) as AppConfig
-      config.stt_config.provider = selectedProvider
-      if (!config.stt_config.api_keys) config.stt_config.api_keys = {}
-      if (apiKey) config.stt_config.api_keys[selectedProvider] = apiKey
-      config.stt_config.mode = selectedMode
-      config.hotkey = hotkey
-      config.toggle_dictation_hotkey = toggleHotkey || null
-      config.languages = languages.length ? [...languages] : ['en']
-      config.user_email = userEmail.trim() || null
-      config.marketing_opt_in = false
-      config.notifications_opt_in = notificationsOptIn
-      const mic = audioDeviceSelection.trim()
-      config.audio_device = mic === '' ? null : mic
+      mergeOnboardingWizardIntoConfig(config)
       // Snapshot OS when leaving the email step (Continue)—for support / diagnostics alongside `user_email`.
       if (opts?.captureOsForEmailStep) {
         try {
@@ -255,10 +374,13 @@
       if (!termsAgreed || !isEmailValid(userEmail)) return
       await saveOnboardingState({ captureOsForEmailStep: true })
     }
-    // Save when leaving step 4 (Engine/API key step) so the key is persisted even if user doesn't finish
-    if (step === 4) await saveOnboardingState()
+    // Save when leaving Engine (step 5) and Shortcuts (step 6) so keys persist if the user bails early
     if (step === 5) await saveOnboardingState()
-    if (step < totalSteps) step++
+    if (step === 6) await saveOnboardingState()
+    if (step < totalSteps) {
+      step++
+      if (step === 7) await refreshActiveModeDisplay()
+    }
   }
 
   function prevStep() {
@@ -399,15 +521,54 @@
     if (!keyToCheck) return
     validating = true
     try {
-      apiKeyValid = await invoke('check_api_key', {
+      apiKeyValid = (await invoke('test_provider_key', {
         provider: selectedProvider,
         apiKey: keyToCheck,
-      })
+      })) as boolean
     } catch (e) {
       console.error('API key validation failed:', e)
       apiKeyValid = false
     } finally {
       validating = false
+    }
+  }
+
+  function eventInputValue(e: Event): string {
+    const t = e.currentTarget
+    return t instanceof HTMLInputElement ? t.value : ''
+  }
+
+  function catalogProviderById(id: string): CatalogProvider | undefined {
+    return modelCatalog.find((p) => p.id === id)
+  }
+
+  async function loadOnboardingCatalog() {
+    if (onboardingCatalogLoading || modelCatalog.length > 0) return
+    onboardingCatalogLoading = true
+    try {
+      modelCatalog = (await invoke('get_model_catalog')) as CatalogProvider[]
+    } catch (e) {
+      console.error('[Onboarding] get_model_catalog failed:', e)
+      modelCatalog = []
+    } finally {
+      onboardingCatalogLoading = false
+    }
+  }
+
+  $: if (step === 5) void loadOnboardingCatalog()
+
+  async function validateOnboardingCatalogKey(providerId: string, key: string) {
+    const k = key.trim()
+    if (!k) return
+    onboardingKeyValidating = { ...onboardingKeyValidating, [providerId]: true }
+    try {
+      const ok = (await invoke('test_provider_key', { provider: providerId, apiKey: k })) as boolean
+      onboardingKeyValid = { ...onboardingKeyValid, [providerId]: ok }
+    } catch (e) {
+      console.error('[Onboarding] test_provider_key failed:', e)
+      onboardingKeyValid = { ...onboardingKeyValid, [providerId]: false }
+    } finally {
+      onboardingKeyValidating = { ...onboardingKeyValidating, [providerId]: false }
     }
   }
 
@@ -438,18 +599,7 @@
     try {
       const config = (await invoke('get_settings')) as AppConfig
       config.onboarding_complete = true
-      config.stt_config.provider = selectedProvider
-      if (!config.stt_config.api_keys) config.stt_config.api_keys = {}
-      if (apiKey) config.stt_config.api_keys[selectedProvider] = apiKey
-      config.stt_config.mode = selectedMode
-      config.hotkey = hotkey
-      config.toggle_dictation_hotkey = toggleHotkey || null
-      config.languages = languages.length ? [...languages] : ['en']
-      config.user_email = userEmail.trim() || null
-      config.marketing_opt_in = false
-      config.notifications_opt_in = notificationsOptIn
-      const mic = audioDeviceSelection.trim()
-      config.audio_device = mic === '' ? null : mic
+      mergeOnboardingWizardIntoConfig(config)
       await invoke('save_settings', { newConfig: config })
       dispatch('complete')
     } catch (e) {
@@ -457,7 +607,7 @@
     }
   }
 
-  $: if (step === 6 && demoTextarea) {
+  $: if (step === 7 && demoTextarea) {
     setTimeout(() => demoTextarea?.focus(), 100)
   }
 
@@ -880,10 +1030,102 @@
         </div>
 
       {:else if step === 4}
+        <div class="step step-setup-path">
+          <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
+          <h1>How do you want to set up?</h1>
+          <p class="subtitle">Pick a path—we’ll tune the next step. You can change everything later in Settings and the Dictation page.</p>
+
+          <div class="setup-path-grid" role="radiogroup" aria-label="Setup path">
+            <button
+              type="button"
+              class="setup-path-card"
+              class:active={setupPath === 'offline'}
+              aria-checked={setupPath === 'offline'}
+              role="radio"
+              on:click={() => selectSetupPath('offline')}
+            >
+              <span class="setup-path-icon" aria-hidden="true"><Icon icon="ph:wifi-slash" /></span>
+              <span class="setup-path-title">Fully offline</span>
+              <span class="setup-path-desc">Local speech-to-text only. Download a model after setup—no API keys.</span>
+            </button>
+            <button
+              type="button"
+              class="setup-path-card"
+              class:active={setupPath === 'one_key'}
+              aria-checked={setupPath === 'one_key'}
+              role="radio"
+              on:click={() => selectSetupPath('one_key')}
+            >
+              <span class="setup-path-icon" aria-hidden="true"><Icon icon="ph:key" /></span>
+              <span class="setup-path-title">One key (Groq)</span>
+              <span class="setup-path-desc">Single free-tier key for cloud STT and command/AI features when you’re online.</span>
+            </button>
+            <button
+              type="button"
+              class="setup-path-card"
+              class:active={setupPath === 'best_quality'}
+              aria-checked={setupPath === 'best_quality'}
+              role="radio"
+              on:click={() => selectSetupPath('best_quality')}
+            >
+              <span class="setup-path-icon" aria-hidden="true"><Icon icon="ph:sparkle" /></span>
+              <span class="setup-path-title">Best quality</span>
+              <span class="setup-path-desc">Groq for transcription; add OpenAI or Anthropic for AI / command modes.</span>
+            </button>
+            <button
+              type="button"
+              class="setup-path-card"
+              class:active={setupPath === 'manual'}
+              aria-checked={setupPath === 'manual'}
+              role="radio"
+              on:click={() => selectSetupPath('manual')}
+            >
+              <span class="setup-path-icon" aria-hidden="true"><Icon icon="ph:sliders-horizontal" /></span>
+              <span class="setup-path-title">I already have keys</span>
+              <span class="setup-path-desc">Configure cloud/local mix and providers yourself on the next screen.</span>
+            </button>
+          </div>
+        </div>
+
+      {:else if step === 5}
         <div class="step step-mode">
           <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
           <h1>Speech engine</h1>
-          <p class="subtitle">Choose how your voice becomes text. Change anytime in Settings.</p>
+          <p class="subtitle">Choose how your voice becomes text. Change anytime in Settings → AI providers.</p>
+
+          {#if setupPath === 'offline'}
+            <p class="setup-path-banner">
+              <Icon icon="ph:info" />
+              <span><strong>Offline path:</strong> you’ll use a local model. After onboarding, open <strong>Settings → AI providers</strong> to download and start an engine.</span>
+            </p>
+          {:else if setupPath === 'one_key'}
+            <p class="setup-path-banner">
+              <Icon icon="ph:info" />
+              <span><strong>Groq path:</strong> Hybrid mode is selected so you can fall back when offline once a local model is set up. Paste your Groq key below for cloud STT and AI.</span>
+            </p>
+          {:else if setupPath === 'best_quality'}
+            <p class="setup-path-banner">
+              <Icon icon="ph:info" />
+              <span><strong>Quality path:</strong> Groq for cloud transcription plus a separate key for OpenAI or Anthropic to power command mode and recipes.</span>
+            </p>
+            <div class="quality-llm-row">
+              <span class="quality-llm-label">AI / command LLM</span>
+              <div class="quality-llm-pills">
+                <button
+                  type="button"
+                  class="prov-pill"
+                  class:active={qualityLlmChoice === 'openai'}
+                  on:click={() => (qualityLlmChoice = 'openai')}
+                >OpenAI</button>
+                <button
+                  type="button"
+                  class="prov-pill"
+                  class:active={qualityLlmChoice === 'anthropic'}
+                  on:click={() => (qualityLlmChoice = 'anthropic')}
+                >Anthropic</button>
+              </div>
+            </div>
+          {/if}
 
           <div class="stt-tabs" role="tablist" aria-label="Speech processing mode">
             <button
@@ -892,6 +1134,7 @@
               class="stt-tab"
               class:active={selectedMode === 'Cloud'}
               aria-selected={selectedMode === 'Cloud'}
+              disabled={setupPath != null && setupPath !== 'manual'}
               on:click={() => (selectedMode = 'Cloud')}
             >
               <span class="stt-tab-icon" aria-hidden="true"><Icon icon="ph:cloud" /></span>
@@ -903,6 +1146,7 @@
               class="stt-tab recommended"
               class:active={selectedMode === 'Hybrid'}
               aria-selected={selectedMode === 'Hybrid'}
+              disabled={setupPath != null && setupPath !== 'manual'}
               on:click={() => (selectedMode = 'Hybrid')}
             >
               <span class="stt-tab-icon" aria-hidden="true"><Icon icon="ph:arrows-clockwise" /></span>
@@ -915,6 +1159,7 @@
               class="stt-tab"
               class:active={selectedMode === 'Local'}
               aria-selected={selectedMode === 'Local'}
+              disabled={setupPath != null && setupPath !== 'manual'}
               on:click={() => (selectedMode = 'Local')}
             >
               <span class="stt-tab-icon" aria-hidden="true"><Icon icon="ph:laptop" /></span>
@@ -939,7 +1184,7 @@
               <p class="mode-blurb">Fast when you are connected, keeps working when you are not.</p>
               <div class="mode-info-box">
                 <span class="mode-info-icon" aria-hidden="true"><Icon icon="ph:info" /></span>
-                <span class="mode-info-text">You can set up your local model from <strong>Settings → Audio &amp; Dictation</strong> after you finish onboarding.</span>
+                <span class="mode-info-text">You can set up your local model from <strong>Settings → AI providers</strong> after you finish onboarding.</span>
               </div>
             {:else}
               <div class="mode-chips">
@@ -947,66 +1192,329 @@
                 <span class="mode-chip privacy">No cloud upload</span>
                 <span class="mode-chip disk">Uses disk and CPU</span>
               </div>
-              <p class="mode-blurb">Download a model from Settings after onboarding. Dictation will be limited until you do.</p>
+              <p class="mode-blurb">Download a model from Settings → AI providers after onboarding. Dictation will be limited until you do.</p>
             {/if}
 
             {#if selectedMode === 'Cloud' || selectedMode === 'Hybrid'}
-              <div class="provider-section">
-                <div class="provider-toggle">
-                  <span class="provider-label">Cloud provider</span>
-                  <div class="provider-pills">
+              {#if setupPath === 'one_key'}
+                {#if onboardingCatalogLoading && modelCatalog.length === 0}
+                  <p class="hint">Loading providers…</p>
+                {:else}
+                  {@const groq = catalogProviderById('groq')}
+                  {#if groq}
+                    <div class="onboarding-catalog-grid onboarding-catalog-grid--single">
+                      <div class="onboarding-provider-card">
+                        <div class="onboarding-provider-card-head">
+                          <Icon icon={groq.icon} class="onboarding-provider-icon" />
+                          <div>
+                            <strong>{groq.name}</strong>
+                            <div class="provider-cap-badges">
+                              {#each groq.capabilities as cap}
+                                <span class="cap-badge">{cap}</span>
+                              {/each}
+                            </div>
+                          </div>
+                        </div>
+                        <p class="provider-explainer">One Groq key covers cloud STT and Groq LLM when you select Groq in Settings.</p>
+                        <div class="api-key-row">
+                          <input
+                            type="password"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder="Groq API key"
+                            bind:value={apiKey}
+                            on:paste={onApiKeyPaste}
+                            on:input={() => (apiKeyValid = null)}
+                            aria-label="Groq API key"
+                          />
+                          <button
+                            type="button"
+                            class="btn-validate"
+                            disabled={!apiKey.trim() || validating}
+                            on:click={() => {
+                              selectedProvider = 'groq'
+                              void checkApiKey()
+                            }}
+                          >
+                            {validating ? 'Checking...' : 'Validate'}
+                          </button>
+                        </div>
+                        <div class="api-key-meta">
+                          {#if apiKeyValid !== null}
+                            <span class="validation-badge" class:valid={apiKeyValid}>
+                              {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
+                            </span>
+                          {/if}
+                          {#if groq.get_api_key_url}
+                            <p class="api-key-hint">
+                              <a href={groq.get_api_key_url} target="_blank" rel="noopener noreferrer">Get API key ↗</a>
+                            </p>
+                          {/if}
+                        </div>
+                      </div>
+                    </div>
+                  {/if}
+                {/if}
+              {:else if setupPath === 'best_quality'}
+                {#if onboardingCatalogLoading && modelCatalog.length === 0}
+                  <p class="hint">Loading providers…</p>
+                {:else}
+                  {@const groq = catalogProviderById('groq')}
+                  {@const llmP = qualityLlmChoice === 'anthropic' ? catalogProviderById('anthropic') : catalogProviderById('openai')}
+                  <div class="onboarding-catalog-grid">
+                    {#if groq}
+                      <div class="onboarding-provider-card">
+                        <div class="onboarding-provider-card-head">
+                          <Icon icon={groq.icon} class="onboarding-provider-icon" />
+                          <div>
+                            <strong>{groq.name}</strong>
+                            <span class="onboarding-card-sub">Transcription</span>
+                            <div class="provider-cap-badges">
+                              {#each groq.capabilities as cap}
+                                <span class="cap-badge">{cap}</span>
+                              {/each}
+                            </div>
+                          </div>
+                        </div>
+                        <div class="api-key-row">
+                          <input
+                            type="password"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder="Groq API key"
+                            bind:value={apiKey}
+                            on:paste={onApiKeyPaste}
+                            on:input={() => (apiKeyValid = null)}
+                            aria-label="Groq API key for transcription"
+                          />
+                          <button
+                            type="button"
+                            class="btn-validate"
+                            disabled={!apiKey.trim() || validating}
+                            on:click={() => {
+                              selectedProvider = 'groq'
+                              void checkApiKey()
+                            }}
+                          >
+                            {validating ? 'Checking...' : 'Validate'}
+                          </button>
+                        </div>
+                        <div class="api-key-meta">
+                          {#if apiKeyValid !== null}
+                            <span class="validation-badge" class:valid={apiKeyValid}>
+                              {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
+                            </span>
+                          {/if}
+                          {#if groq.get_api_key_url}
+                            <p class="api-key-hint">
+                              <a href={groq.get_api_key_url} target="_blank" rel="noopener noreferrer">Get API key ↗</a>
+                            </p>
+                          {/if}
+                        </div>
+                      </div>
+                    {/if}
+                    {#if llmP}
+                      <div class="onboarding-provider-card">
+                        <div class="onboarding-provider-card-head">
+                          <Icon icon={llmP.icon} class="onboarding-provider-icon" />
+                          <div>
+                            <strong>{llmP.name}</strong>
+                            <span class="onboarding-card-sub">Command &amp; AI</span>
+                            <div class="provider-cap-badges">
+                              {#each llmP.capabilities as cap}
+                                <span class="cap-badge">{cap}</span>
+                              {/each}
+                            </div>
+                          </div>
+                        </div>
+                        <div class="api-key-row">
+                          {#if qualityLlmChoice === 'anthropic'}
+                            <input
+                              type="password"
+                              autocomplete="off"
+                              spellcheck="false"
+                              placeholder="Anthropic API key"
+                              bind:value={llmApiKey}
+                              on:input={() => (onboardingKeyValid = { ...onboardingKeyValid, anthropic: null })}
+                              aria-label="Anthropic API key"
+                            />
+                            <button
+                              type="button"
+                              class="btn-validate"
+                              disabled={!llmApiKey.trim() || onboardingKeyValidating['anthropic']}
+                              on:click={() => validateOnboardingCatalogKey('anthropic', llmApiKey)}
+                            >
+                              {onboardingKeyValidating['anthropic'] ? 'Checking...' : 'Validate'}
+                            </button>
+                          {:else}
+                            <input
+                              type="password"
+                              autocomplete="off"
+                              spellcheck="false"
+                              placeholder="OpenAI API key"
+                              bind:value={openaiLlmKey}
+                              on:input={() => (onboardingKeyValid = { ...onboardingKeyValid, openai: null })}
+                              aria-label="OpenAI API key for LLM"
+                            />
+                            <button
+                              type="button"
+                              class="btn-validate"
+                              disabled={!openaiLlmKey.trim() || onboardingKeyValidating['openai']}
+                              on:click={() => validateOnboardingCatalogKey('openai', openaiLlmKey)}
+                            >
+                              {onboardingKeyValidating['openai'] ? 'Checking...' : 'Validate'}
+                            </button>
+                          {/if}
+                        </div>
+                        <div class="api-key-meta">
+                          {#if qualityLlmChoice === 'anthropic'}
+                            {#if onboardingKeyValid['anthropic'] != null}
+                              <span class="validation-badge" class:valid={!!onboardingKeyValid['anthropic']}>
+                                {onboardingKeyValid['anthropic'] ? '✓ Valid' : '✗ Invalid'}
+                              </span>
+                            {/if}
+                          {:else if onboardingKeyValid['openai'] != null}
+                            <span class="validation-badge" class:valid={!!onboardingKeyValid['openai']}>
+                              {onboardingKeyValid['openai'] ? '✓ Valid' : '✗ Invalid'}
+                            </span>
+                          {/if}
+                          {#if llmP.get_api_key_url}
+                            <p class="api-key-hint">
+                              <a href={llmP.get_api_key_url} target="_blank" rel="noopener noreferrer">Get API key ↗</a>
+                            </p>
+                          {/if}
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              {:else if setupPath === 'manual'}
+                <p class="provider-explainer">
+                  Choose your default cloud STT engine, then paste keys for any providers you use (same curated list as Settings).
+                </p>
+                <div class="onboarding-stt-default-row">
+                  <label class="onboarding-stt-label" for="onb-stt-default">Default cloud transcription</label>
+                  <select id="onb-stt-default" class="onboarding-stt-select" bind:value={selectedProvider}>
+                    <option value="groq">Groq</option>
+                    <option value="openai">OpenAI</option>
+                  </select>
+                </div>
+                {#if onboardingCatalogLoading && modelCatalog.length === 0}
+                  <p class="hint">Loading providers…</p>
+                {:else}
+                  <div class="onboarding-catalog-grid">
+                    {#each modelCatalog.filter((p) => p.id !== 'local') as prov (prov.id)}
+                      <div class="onboarding-provider-card">
+                        <div class="onboarding-provider-card-head">
+                          <Icon icon={prov.icon} class="onboarding-provider-icon" />
+                          <div>
+                            <strong>{prov.name}</strong>
+                            <div class="provider-cap-badges">
+                              {#each prov.capabilities as cap}
+                                <span class="cap-badge">{cap}</span>
+                              {/each}
+                            </div>
+                          </div>
+                        </div>
+                        <div class="api-key-row">
+                          <input
+                            type="password"
+                            autocomplete="off"
+                            spellcheck="false"
+                            placeholder={`${prov.name} API key`}
+                            value={onboardingManualKeys[prov.id] ?? ''}
+                            on:input={(e) => {
+                              const v = eventInputValue(e)
+                              onboardingManualKeys = { ...onboardingManualKeys, [prov.id]: v }
+                              onboardingKeyValid = { ...onboardingKeyValid, [prov.id]: null }
+                            }}
+                            aria-label={`API key for ${prov.name}`}
+                          />
+                          <button
+                            type="button"
+                            class="btn-validate"
+                            disabled={!(onboardingManualKeys[prov.id] ?? '').trim() || onboardingKeyValidating[prov.id]}
+                            on:click={() => validateOnboardingCatalogKey(prov.id, onboardingManualKeys[prov.id] ?? '')}
+                          >
+                            {onboardingKeyValidating[prov.id] ? 'Checking...' : 'Validate'}
+                          </button>
+                        </div>
+                        <div class="api-key-meta">
+                          {#if onboardingKeyValid[prov.id] != null}
+                            <span class="validation-badge" class:valid={!!onboardingKeyValid[prov.id]}>
+                              {onboardingKeyValid[prov.id] ? '✓ Valid' : '✗ Invalid'}
+                            </span>
+                          {/if}
+                          {#if prov.get_api_key_url}
+                            <p class="api-key-hint">
+                              <a href={prov.get_api_key_url} target="_blank" rel="noopener noreferrer">Get API key ↗</a>
+                            </p>
+                          {/if}
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              {:else}
+                <div class="provider-section">
+                  <div class="provider-toggle">
+                    <span class="provider-label">Cloud provider</span>
+                    <div class="provider-pills">
+                      <button
+                        type="button"
+                        class="prov-pill"
+                        class:active={selectedProvider === 'groq'}
+                        on:click={() => (selectedProvider = 'groq')}
+                      >Groq</button>
+                      <button
+                        type="button"
+                        class="prov-pill"
+                        class:active={selectedProvider === 'openai'}
+                        on:click={() => (selectedProvider = 'openai')}
+                      >OpenAI</button>
+                    </div>
+                  </div>
+                  <p class="provider-explainer">Paste your key now or add it later in Settings.</p>
+                  <div class="api-key-row">
+                    <input
+                      type="password"
+                      autocomplete="off"
+                      spellcheck="false"
+                      placeholder={selectedProvider === 'openai' ? 'OpenAI API key' : 'Groq API key'}
+                      bind:value={apiKey}
+                      on:paste={onApiKeyPaste}
+                      on:input={() => (apiKeyValid = null)}
+                    />
                     <button
                       type="button"
-                      class="prov-pill" class:active={selectedProvider === 'groq'}
-                      on:click={() => (selectedProvider = 'groq')}
-                    >Groq</button>
-                    <button
-                      type="button"
-                      class="prov-pill" class:active={selectedProvider === 'openai'}
-                      on:click={() => (selectedProvider = 'openai')}
-                    >OpenAI</button>
+                      class="btn-validate"
+                      disabled={!apiKey.trim() || validating}
+                      on:click={checkApiKey}
+                    >
+                      {validating ? 'Checking...' : 'Validate'}
+                    </button>
+                  </div>
+                  <div class="api-key-meta">
+                    {#if apiKeyValid !== null}
+                      <span class="validation-badge" class:valid={apiKeyValid}>
+                        {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
+                      </span>
+                    {/if}
+                    <p class="api-key-hint">
+                      {#if selectedProvider === 'openai'}
+                        <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">Get your API key from OpenAI →</a>
+                      {:else}
+                        <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">Get your API key from Groq →</a>
+                      {/if}
+                    </p>
                   </div>
                 </div>
-                <p class="provider-explainer">Paste your key now or add it later in Settings.</p>
-                <div class="api-key-row">
-                  <input
-                    type="password"
-                    autocomplete="off"
-                    spellcheck="false"
-                    placeholder={selectedProvider === 'openai' ? 'OpenAI API key' : 'Groq API key'}
-                    bind:value={apiKey}
-                    on:paste={onApiKeyPaste}
-                    on:input={() => (apiKeyValid = null)}
-                  />
-                  <button
-                    type="button"
-                    class="btn-validate"
-                    disabled={!apiKey.trim() || validating}
-                    on:click={checkApiKey}
-                  >
-                    {validating ? 'Checking...' : 'Validate'}
-                  </button>
-                </div>
-                <div class="api-key-meta">
-                  {#if apiKeyValid !== null}
-                    <span class="validation-badge" class:valid={apiKeyValid}>
-                      {apiKeyValid ? '✓ Valid' : '✗ Invalid'}
-                    </span>
-                  {/if}
-                  <p class="api-key-hint">
-                    {#if selectedProvider === 'openai'}
-                      <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">Get your API key from OpenAI →</a>
-                    {:else}
-                      <a href="https://console.groq.com" target="_blank" rel="noopener noreferrer">Get your API key from Groq →</a>
-                    {/if}
-                  </p>
-                </div>
-              </div>
+              {/if}
             {/if}
           </div>
         </div>
 
-      {:else if step === 5}
+      {:else if step === 6}
         <div class="step step-controls">
           <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
           <h1>Shortcuts &amp; languages</h1>
@@ -1077,7 +1585,7 @@
           </div>
         </div>
 
-      {:else if step === 6}
+      {:else if step === 7}
         <div class="step step-ready">
           <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
           <div class="ready-visual">
@@ -1087,7 +1595,14 @@
             <div class="ready-check" aria-hidden="true"><Icon icon="ph:check-bold" /></div>
           </div>
           <h1>Try dictation once</h1>
-          <p class="subtitle">Sanity-check your shortcut and engine: focus the box, dictate a short phrase, and confirm text appears. You can refine models and keys later in Settings.</p>
+          <p class="subtitle">
+            Active mode: <strong>{activeModeDisplayName}</strong>. Sanity-check your shortcut and engine: focus the box, dictate a short phrase, and confirm text appears. Refine modes on the <strong>Dictation</strong> page.
+          </p>
+
+          <label class="polish-demo-toggle">
+            <input type="checkbox" bind:checked={polishDemoEnabled} />
+            <span><strong>Polish</strong> — use AI to clean up grammar and formatting after STT (uses your LLM when the active mode needs it).</span>
+          </label>
 
           <ol class="ready-steps">
             <li>Click inside the text area (or use the focus button under it).</li>
@@ -1139,7 +1654,9 @@
         {#if step < totalSteps}
           <button
             class="btn-next"
-            disabled={(step === 2 && (!termsAgreed || !isEmailValid(userEmail))) || (step === 3 && !step3ContinueEnabled)}
+            disabled={(step === 2 && (!termsAgreed || !isEmailValid(userEmail))) ||
+              (step === 3 && !step3ContinueEnabled) ||
+              (step === 4 && setupPath == null)}
             on:click={nextStep}
           >Continue</button>
         {:else}
@@ -1161,7 +1678,7 @@
             <p class="skip-error" role="alert">{skipError}</p>
           {/if}
           <p class="skip-consequence">
-            Skipping applies defaults and may leave permissions unset—you can fix microphone and accessibility in Settings → Audio &amp; Dictation.
+            Skipping applies defaults and may leave permissions unset—you can fix microphone and accessibility in Settings → Audio and AI providers.
           </p>
         </div>
       {/if}
@@ -1672,6 +2189,84 @@
     margin: 0 0 12px;
   }
 
+  /* Curated provider cards on the Engine step (mirrors Settings provider library styling). */
+  .provider-cap-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+  }
+
+  .cap-badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-input);
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+  }
+
+  .onboarding-catalog-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+  }
+
+  .onboarding-catalog-grid--single {
+    max-width: 440px;
+  }
+
+  .onboarding-provider-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 16px;
+  }
+
+  .onboarding-provider-card-head {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 12px;
+  }
+
+  .onboarding-provider-icon :global(svg) {
+    width: 28px;
+    height: 28px;
+  }
+
+  .onboarding-card-sub {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .onboarding-stt-default-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .onboarding-stt-label {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .onboarding-stt-select {
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text);
+    font-family: inherit;
+  }
+
   .ctrl-section-lead {
     font-size: 13px;
     color: var(--text-secondary);
@@ -2062,7 +2657,125 @@
     color: var(--error) !important;
   }
 
-  /* ── Step 4: Mode ── */
+  /* ── Setup path (step 4) ── */
+  .setup-path-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+  }
+
+  @media (max-width: 640px) {
+    .setup-path-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .setup-path-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 16px;
+    text-align: left;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    color: var(--text);
+    font-family: var(--font-sleek, inherit);
+    cursor: pointer;
+    transition: var(--transition-sleek, 200ms ease);
+  }
+
+  .setup-path-card:hover {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+  }
+
+  .setup-path-card.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  .setup-path-icon :global(svg) {
+    width: 22px;
+    height: 22px;
+    color: var(--accent);
+  }
+
+  .setup-path-title {
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .setup-path-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+  }
+
+  .setup-path-banner {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+    border-radius: var(--radius-md);
+    background: var(--primary-alpha);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .setup-path-banner :global(svg) {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    color: var(--accent);
+  }
+
+  .quality-llm-row {
+    margin-bottom: 12px;
+  }
+
+  .quality-llm-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .quality-llm-pills {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .polish-demo-toggle {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin: 16px 0 20px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-elevated);
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .polish-demo-toggle input {
+    margin-top: 3px;
+    flex-shrink: 0;
+  }
+
+  /* ── Engine step (step 5): Mode ── */
   .stt-tabs {
     display: flex;
     min-height: 48px;
@@ -2103,6 +2816,12 @@
     background: var(--bg-hover);
     color: var(--text);
     font-weight: 600;
+  }
+
+  .stt-tab:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
   }
 
   .stt-tab-icon {
@@ -2395,6 +3114,11 @@
     box-shadow: var(--shadow);
   }
 
+  .prov-pill:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
   .local-hint {
     font-size: 14px;
     color: var(--text-secondary);
@@ -2406,7 +3130,7 @@
     font-weight: 600;
   }
 
-  /* ── Step 5: Controls ── */
+  /* ── Step 6: Controls ── */
   .controls-grid {
     display: flex;
     flex-direction: column;

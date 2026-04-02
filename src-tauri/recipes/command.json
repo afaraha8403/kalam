@@ -1,0 +1,18 @@
+{
+  "kalam_recipe_version": 2,
+  "name": "Command",
+  "icon": "ph:terminal",
+  "accent_color": "oklch(68% 0.13 15)",
+  "ai_instructions": "",
+  "voice_model": { "provider": "inherit", "model_id": "" },
+  "language_model": { "provider": "inherit", "model_id": "" },
+  "polish_recommended": false,
+  "context": {
+    "enabled": false,
+    "read_app": false,
+    "read_clipboard": false,
+    "read_selection": false,
+    "include_system_info": false
+  },
+  "examples": []
+}

@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default permissions for Kalam","local":true,"windows":["main","overlay"],"permissions":["core:default","core:event:default","notification:default","updater:default","shell:default","opener:default","autostart:default"]}}
+{"default":{"identifier":"default","description":"Default permissions for Kalam","local":true,"windows":["main","overlay"],"permissions":["core:default","core:event:default","notification:default","updater:default","shell:default","opener:default","autostart:default","deep-link:default"]}}

@@ -1,0 +1,18 @@
+{
+  "kalam_recipe_version": 2,
+  "name": "Message",
+  "icon": "ph:chat-circle-text",
+  "accent_color": "oklch(70% 0.1 160)",
+  "ai_instructions": "Rewrite the user's dictation as a short, casual message suitable for chat or SMS. Be concise and friendly.",
+  "voice_model": { "provider": "inherit", "model_id": "" },
+  "language_model": { "provider": "inherit", "model_id": "" },
+  "polish_recommended": true,
+  "context": {
+    "enabled": false,
+    "read_app": false,
+    "read_clipboard": false,
+    "read_selection": false,
+    "include_system_info": false
+  },
+  "examples": []
+}

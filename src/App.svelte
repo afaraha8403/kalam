@@ -7,6 +7,7 @@
   import { sidebarDictationStore } from './lib/sidebarDictation'
   import { applyOverlayBroadcast } from './lib/dictationState'
   import Settings from './pages/Settings.svelte'
+  import Dictation from './pages/Dictation.svelte'
   import Home from './pages/Home.svelte'
   import Snippets from './pages/Snippets.svelte'
   import Dictionary from './pages/Dictionary.svelte'
@@ -97,11 +98,47 @@
       command_config: {
         enabled: false,
         hotkey: null,
-        provider: null,
-        api_keys: {},
-        models: {}
       },
-      theme_preference: 'Auto'
+      provider_keys: {},
+      default_llm_provider: null,
+      default_llm_model: null,
+      custom_openai_endpoint: null,
+      theme_preference: 'Auto',
+      modes: [
+        {
+          id: 'default',
+          name: 'Default',
+          icon: 'ph:microphone',
+          accent_color: 'oklch(68% 0.1 240)',
+          ai_instructions: '',
+          voice_model: { provider: 'groq', model_id: '' },
+          language_model: { provider: '', model_id: '' },
+          polish: false,
+          context: {
+            enabled: false,
+            read_app: false,
+            read_clipboard: false,
+            read_selection: false,
+            include_system_info: false
+          },
+          auto_activate_rules: [],
+          is_builtin: true,
+          is_deletable: false,
+          created_at: '',
+          updated_at: ''
+        }
+      ],
+      active_mode_id: 'default',
+      polish_enabled: false,
+      polish_config: {
+        fix_grammar: true,
+        remove_filler: true,
+        fix_punctuation: true,
+        smart_formatting: true,
+        self_correction: true
+      },
+      context_awareness_enabled: false,
+      mode_cycle_hotkey: 'Ctrl+Shift+M'
     }
   }
 
@@ -233,7 +270,10 @@
         isFirstRun = true
       })
       unlistenTrayNavigate = await listen<string>('tray-navigate', (e) => {
-        if (e.payload && ['settings', 'history', 'dictionary', 'snippets'].includes(e.payload)) {
+        if (
+          e.payload &&
+          ['settings', 'history', 'dictionary', 'snippets', 'dictation'].includes(e.payload)
+        ) {
           navigate(e.payload)
         }
       })
@@ -419,6 +459,10 @@
               <Icon icon={currentPage === 'home' ? 'ph:squares-four-fill' : 'ph:squares-four'} />
               <span class="nav-text">Overview</span>
             </button>
+            <button class="nav-link" class:active={currentPage === 'dictation'} on:click={() => navigate('dictation')} title="Dictation modes">
+              <Icon icon={currentPage === 'dictation' ? 'ph:microphone-stage-fill' : 'ph:microphone-stage'} />
+              <span class="nav-text">Dictation</span>
+            </button>
             <button class="nav-link" class:active={currentPage === 'history'} on:click={() => navigate('history')} title="History">
               <Icon icon={currentPage === 'history' ? 'ph:clock-fill' : 'ph:clock'} />
               <span class="nav-text">History</span>
@@ -488,6 +532,8 @@
             <Home navigate={navigate} darkMode={darkMode} />
           {:else if currentPage === 'settings'}
             <Settings />
+          {:else if currentPage === 'dictation'}
+            <Dictation />
           {:else if currentPage === 'dictionary'}
             <Dictionary />
           {:else if currentPage === 'snippets'}

@@ -1,8 +1,10 @@
 mod app_info;
 pub mod app_log;
 pub mod audio;
+mod catalog;
 mod commands;
 mod config;
+mod context;
 mod db;
 #[cfg(feature = "dev-bridge")]
 mod dev_bridge;
@@ -16,13 +18,16 @@ mod models;
 mod notifications;
 #[cfg(windows)]
 mod overlay_message_log_win;
+mod recipe_library;
 pub mod stt;
+mod sync;
 mod system_reqs;
 mod tray;
 
 use chrono::TimeZone;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -36,7 +41,10 @@ use crate::audio::vad::VADConfig;
 use crate::audio::{play_sound, AudioState};
 use crate::config::STTConfig;
 use crate::config::STTMode;
-use crate::config::{AppConfig, ConfigManager, UpdateChannel};
+use crate::config::{
+    merge_stt_config_for_voice, AppConfig, ConfigManager, DictationMode, OverlayActivePreference,
+    PatternType, UpdateChannel,
+};
 use crate::hotkey::{parse_rdev_hotkey, start_listener, HotkeyRegistration};
 use crate::notifications::NotificationManager;
 use crate::tray::TrayManager;
@@ -57,6 +65,308 @@ fn parse_iso_datetime(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         return Some(chrono::Utc.from_utc_datetime(&naive));
     }
     None
+}
+
+/// Active dictation mode, falling back to "default" mode. Empty `modes` should not happen after migration.
+fn find_active_mode(config: &AppConfig) -> DictationMode {
+    config
+        .modes
+        .iter()
+        .find(|m| m.id == config.active_mode_id)
+        .cloned()
+        .or_else(|| config.modes.iter().find(|m| m.id == "default").cloned())
+        .unwrap_or_else(|| {
+            let ts = chrono::Utc::now().to_rfc3339();
+            crate::config::build_default_modes(&ts)
+                .into_iter()
+                .next()
+                .expect("build_default_modes always includes 'default'")
+        })
+}
+
+/// True when any dictation mode defines at least one auto-activation rule (Phase 7).
+fn config_has_auto_activate_rules(cfg: &AppConfig) -> bool {
+    cfg.modes.iter().any(|m| !m.auto_activate_rules.is_empty())
+}
+
+/// First mode id whose auto-activate rules match the foreground app (modes list order wins).
+fn match_auto_activate_rules(
+    cfg: &AppConfig,
+    process_name: &str,
+    window_title: &str,
+) -> Option<String> {
+    for mode in &cfg.modes {
+        for rule in &mode.auto_activate_rules {
+            let pat = rule.app_pattern.trim();
+            if pat.is_empty() {
+                continue;
+            }
+            let re = match regex::Regex::new(pat) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("Auto-activate invalid regex {:?}: {}", rule.app_pattern, e);
+                    continue;
+                }
+            };
+            let matches = match rule.pattern_type {
+                PatternType::ProcessName | PatternType::BundleId => re.is_match(process_name),
+                PatternType::WindowTitle => re.is_match(window_title),
+            };
+            if matches {
+                return Some(mode.id.clone());
+            }
+        }
+    }
+    None
+}
+
+/// Clear runtime auto-activation bookkeeping when the user changes mode manually.
+fn clear_auto_activate_tracking(state: &AppState) {
+    state.auto_activate_active.store(false, Ordering::SeqCst);
+    if let Ok(mut g) = state.auto_activate_previous_mode_id.lock() {
+        *g = None;
+    }
+}
+
+#[derive(serde::Serialize, Clone)]
+struct AutoActivateSwitchedPayload {
+    mode_name: String,
+    triggered_by_app: Option<String>,
+    is_restore: bool,
+}
+
+/// Resolved LLM target: built-in provider id or custom OpenAI-compatible base URL.
+#[derive(Clone)]
+enum ResolvedLlm {
+    Builtin {
+        provider: String,
+        api_key: String,
+        model: String,
+    },
+    CustomOpenAi {
+        base_url: String,
+        api_key: String,
+        model: String,
+    },
+}
+
+/// Unified key lookup: `provider_keys` is the single source of truth (legacy maps merged on load).
+fn provider_api_key(config: &AppConfig, provider: &str) -> Option<String> {
+    let p = provider.trim();
+    if p.is_empty() {
+        return None;
+    }
+    config
+        .provider_keys
+        .get(p)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            // Legacy fallback for pre-v6 in-memory configs that haven't been persisted yet.
+            config
+                .command_config
+                .api_keys
+                .get(p)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .or_else(|| {
+            config
+                .stt_config
+                .api_keys
+                .get(p)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+}
+
+fn resolved_custom_openai_from_endpoint(
+    config: &AppConfig,
+    mode_model_id: &str,
+) -> Option<ResolvedLlm> {
+    let c = config.custom_openai_endpoint.as_ref()?;
+    let api_key = c.api_key.trim();
+    let base_url = c.base_url.trim();
+    let model = if mode_model_id.trim().is_empty() {
+        c.model_id.trim()
+    } else {
+        mode_model_id.trim()
+    };
+    if api_key.is_empty() || base_url.is_empty() || model.is_empty() {
+        return None;
+    }
+    Some(ResolvedLlm::CustomOpenAi {
+        base_url: base_url.to_string(),
+        api_key: api_key.to_string(),
+        model: model.to_string(),
+    })
+}
+
+/// Resolve LLM for command pipeline: try the active mode's LLM first, then global default.
+fn resolve_command_llm(config: &AppConfig) -> Option<ResolvedLlm> {
+    let active = find_active_mode(config);
+    if let Some(r) = resolve_llm_for_mode(config, &active) {
+        return Some(r);
+    }
+    resolve_default_llm(config)
+}
+
+/// Resolve LLM from a mode's explicit `language_model` ref (ignores global default).
+fn resolve_llm_for_mode(config: &AppConfig, mode: &DictationMode) -> Option<ResolvedLlm> {
+    if mode.language_model.is_default() {
+        return None;
+    }
+    let provider = mode.language_model.provider.trim().to_string();
+    if provider.eq_ignore_ascii_case("custom_openai") {
+        return resolved_custom_openai_from_endpoint(config, mode.language_model.model_id.trim());
+    }
+    let api_key = provider_api_key(config, &provider)?;
+    let model = if mode.language_model.model_id.trim().is_empty() {
+        // Mode specifies provider but not model — try catalog default.
+        crate::catalog::default_llm_model_for_provider_test(&provider)
+            .map(|s| s.to_string())?
+    } else {
+        mode.language_model.model_id.clone()
+    };
+    if model.trim().is_empty() {
+        return None;
+    }
+    Some(ResolvedLlm::Builtin {
+        provider,
+        api_key,
+        model,
+    })
+}
+
+/// Resolve global fallback LLM from `default_llm_provider` + `default_llm_model`.
+fn resolve_default_llm(config: &AppConfig) -> Option<ResolvedLlm> {
+    let provider = config.default_llm_provider.as_deref()?.trim();
+    if provider.is_empty() {
+        return None;
+    }
+    if provider.eq_ignore_ascii_case("custom_openai") {
+        return resolved_custom_openai_from_endpoint(config, "");
+    }
+    let api_key = provider_api_key(config, provider)?;
+    let model = config
+        .default_llm_model
+        .as_deref()
+        .filter(|m| !m.trim().is_empty())
+        .or_else(|| crate::catalog::default_llm_model_for_provider_test(provider))
+        .map(|s| s.to_string())?;
+    Some(ResolvedLlm::Builtin {
+        provider: provider.to_string(),
+        api_key,
+        model,
+    })
+}
+
+/// LLM for polish / mode instructions on dictation path: try mode-specific, then global default.
+fn resolve_llm_for_dictation_mode(config: &AppConfig, mode: &DictationMode) -> Option<ResolvedLlm> {
+    resolve_llm_for_mode(config, mode).or_else(|| resolve_default_llm(config))
+}
+
+fn build_dictation_system_prompt(
+    config: &AppConfig,
+    mode: &DictationMode,
+    context_section: Option<&str>,
+) -> String {
+    let mut sections: Vec<String> = vec![];
+    if config.polish_enabled && mode.polish {
+        let pc = &config.polish_config;
+        let mut p = String::from("Polish the transcript for written readability. ");
+        if pc.fix_grammar {
+            p.push_str("Fix grammar and spelling. ");
+        }
+        if pc.remove_filler {
+            p.push_str("Remove filler words (um, uh, like) and false starts; keep the speaker's intended meaning. ");
+        }
+        if pc.fix_punctuation {
+            p.push_str("Add proper punctuation and capitalization. ");
+        }
+        if pc.smart_formatting {
+            p.push_str("Expand spoken URLs and emails to normal form when obvious. Improve paragraph or list structure when helpful. ");
+        }
+        if pc.self_correction {
+            p.push_str("If the speaker corrects themselves mid-sentence, keep only the final intended wording. ");
+        }
+        p.push_str("Do not invent facts.");
+        sections.push(p);
+    }
+    let instr = mode.ai_instructions.trim();
+    if !instr.is_empty() {
+        sections.push(instr.to_string());
+    }
+    if let Some(ctx) = context_section {
+        let t = ctx.trim();
+        if !t.is_empty() {
+            sections.push(t.to_string());
+        }
+    }
+    sections.push(
+        "Return only the final text to insert, with no surrounding quotes or explanation."
+            .to_string(),
+    );
+    sections.join("\n\n")
+}
+
+/// System prompt for voice-activated editing: spoken instruction transforms highlighted text only.
+fn build_voice_edit_system_prompt() -> String {
+    "You are a text editor. The user has selected text in their document and spoken \
+     an editing instruction. Apply the instruction to the selected text exactly as \
+     described. Return ONLY the transformed text — no explanations, no surrounding \
+     quotes, no markdown formatting unless the instruction asks for it. Preserve the \
+     original formatting style (e.g. if the text uses bullet points, keep bullet points \
+     unless told otherwise)."
+        .to_string()
+}
+
+/// Overlay hint: which context sources are enabled for the active mode (no UIA on the hot path).
+fn compute_overlay_context_hint(
+    config: &AppConfig,
+    process_name: Option<String>,
+) -> (bool, Option<String>, Vec<String>) {
+    if !config.context_awareness_enabled {
+        return (false, None, vec![]);
+    }
+    let mode = find_active_mode(config);
+    if !mode.context.enabled {
+        return (false, None, vec![]);
+    }
+    let mut sources: Vec<String> = vec![];
+    if mode.context.read_app {
+        sources.push("app".to_string());
+    }
+    if mode.context.read_clipboard {
+        sources.push("clipboard".to_string());
+    }
+    if mode.context.read_selection {
+        sources.push("selection".to_string());
+    }
+    if mode.context.include_system_info {
+        sources.push("system".to_string());
+    }
+    if sources.is_empty() {
+        return (false, None, vec![]);
+    }
+    let label = if mode.context.read_app {
+        process_name
+            .as_ref()
+            .map(|n| {
+                let base = n
+                    .trim_end_matches(".exe")
+                    .trim_end_matches(".EXE")
+                    .to_string();
+                format!("Reading {}", base)
+            })
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| Some("Reading active app".to_string()))
+    } else if mode.context.read_clipboard && !mode.context.read_selection {
+        Some("Clipboard context".to_string())
+    } else {
+        Some("Context active".to_string())
+    };
+    (true, label, sources)
 }
 
 fn language_display_name(code: &str) -> String {
@@ -199,6 +509,8 @@ async fn start_overlay_message_log_for_seconds(
 pub enum RecordingType {
     Dictation,
     Command,
+    /// Hold-to-talk: transform highlighted text using spoken instruction + LLM (Phase 5).
+    VoiceEdit,
 }
 
 pub struct AppState {
@@ -220,12 +532,18 @@ pub struct AppState {
     pub local_model_manager: Arc<crate::stt::lifecycle::LocalModelManager>,
     /// Set when starting recording: Dictation (main hotkey) or Command (command hotkey). Read in stop_dictation to decide inject vs command pipeline.
     pub recording_type: Arc<Mutex<RecordingType>>,
-    /// Whether the overlay OS window is expanded (300x120) or collapsed (80x80). Used by update_overlay_position.
-    pub overlay_expanded: Arc<AtomicBool>,
+    /// Phase 6: 0 = dormant, 1 = mini, 2 = full. Drives `resize_overlay` / `update_overlay_position`.
+    pub overlay_size_tier: Arc<AtomicU8>,
     /// Cancellation token for the current transcription run. Replaced at start of each run; cancel_transcription cancels it.
     pub transcription_cancel: Arc<RwLock<CancellationToken>>,
     /// Hybrid/Auto forced Local due to sensitive app patterns; drives overlay amber UI for this dictation session.
     pub is_sensitive_app_active: Arc<AtomicBool>,
+    /// Highlighted text captured at hotkey (Ctrl+C shim) when per-mode `read_selection` is on.
+    pub pending_selected_text: Arc<Mutex<Option<String>>>,
+    /// Phase 7: `active_mode_id` before auto-activation switched the mode; used to switch back.
+    pub auto_activate_previous_mode_id: Arc<StdMutex<Option<String>>>,
+    /// Phase 7: true when the current mode was selected by auto-activation (not manual).
+    pub auto_activate_active: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -282,9 +600,12 @@ impl AppState {
             press_start_time: Arc::new(Mutex::new(None)),
             local_model_manager,
             recording_type: Arc::new(Mutex::new(RecordingType::Dictation)),
-            overlay_expanded: Arc::new(AtomicBool::new(false)),
+            overlay_size_tier: Arc::new(AtomicU8::new(0)),
             transcription_cancel: Arc::new(RwLock::new(CancellationToken::new())),
             is_sensitive_app_active: Arc::new(AtomicBool::new(false)),
+            pending_selected_text: Arc::new(Mutex::new(None)),
+            auto_activate_previous_mode_id: Arc::new(StdMutex::new(None)),
+            auto_activate_active: Arc::new(AtomicBool::new(false)),
         })
     }
 }
@@ -305,6 +626,7 @@ async fn cancel_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<A
 
     is_recording.store(false, Ordering::SeqCst);
     state.is_sensitive_app_active.store(false, Ordering::SeqCst);
+    *state.pending_selected_text.lock().await = None;
     let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Idle);
     // Stop active stream only when recording was fully started. During Starting, start_dictation
     // performs cleanup if cancellation happened after stream startup but before final transition.
@@ -319,6 +641,7 @@ async fn cancel_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<A
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_registrations(
     app_handle: &tauri::AppHandle,
     is_recording_flag: Arc<AtomicBool>,
@@ -326,6 +649,8 @@ fn create_registrations(
     toggle_hotkey_str: Option<String>,
     language_toggle_hotkey: Option<String>,
     command_hotkey_str: Option<String>,
+    voice_edit_hotkey_str: Option<String>,
+    mode_cycle_hotkey: Option<String>,
     recording_mode: Option<crate::config::RecordingMode>,
 ) -> Vec<HotkeyRegistration> {
     let mut registrations: Vec<HotkeyRegistration> = Vec::new();
@@ -636,6 +961,175 @@ fn create_registrations(
         }
     }
 
+    if let Some(ref ve_hotkey_str) = voice_edit_hotkey_str {
+        if let Ok(ve_target) = parse_rdev_hotkey(ve_hotkey_str) {
+            let app_handle_press = app_handle.clone();
+            let is_recording_press = is_recording_flag.clone();
+            let app_handle_release = app_handle.clone();
+            let is_recording_release = is_recording_flag.clone();
+            let ve_press_instant: Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+                Arc::new(std::sync::Mutex::new(None));
+
+            registrations.push(HotkeyRegistration {
+                target: ve_target,
+                active: Arc::new(AtomicBool::new(false)),
+                pending_activation: Arc::new(AtomicBool::new(false)),
+                is_dictation: false,
+                on_press: Arc::new({
+                    let ve_press_instant_press = ve_press_instant.clone();
+                    move || {
+                        let _ = ve_press_instant_press
+                            .lock()
+                            .map(|mut g| *g = Some(std::time::Instant::now()));
+                        latency_trace_write("T0");
+                        latency_trace_write("voice_edit_callback_invoked");
+                        log::info!("Voice-edit hotkey pressed");
+                        let app_handle = app_handle_press.clone();
+                        let is_recording = is_recording_press.clone();
+                        let ve_press_instant_async = ve_press_instant_press.clone();
+                        tauri::async_runtime::spawn(async move {
+                            latency_trace_write("T1");
+                            latency_trace_write("voice_edit_spawn_started");
+                            let state = app_handle.state::<AppState>();
+                            let press_instant = ve_press_instant_async
+                                .lock()
+                                .ok()
+                                .and_then(|mut g| g.take());
+                            if let Some(instant) = press_instant {
+                                *state.press_start_time.lock().await = Some(instant);
+                            }
+                            let dictation_enabled = {
+                                let config = state.config.lock().await;
+                                let out = config.get_all().dictation_enabled;
+                                latency_trace_write("voice_edit_config_acquired");
+                                out
+                            };
+                            if !dictation_enabled {
+                                return;
+                            }
+                            *state.recording_type.lock().await = RecordingType::VoiceEdit;
+                            start_dictation(state, is_recording).await;
+                        });
+                    }
+                }),
+                on_release: Arc::new(move || {
+                    let app_handle = app_handle_release.clone();
+                    let is_recording = is_recording_release.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = app_handle.state::<AppState>();
+                        let (dictation_enabled, min_hold_ms) = {
+                            let config = state.config.lock().await;
+                            let cfg = config.get_all();
+                            (cfg.dictation_enabled, cfg.min_hold_ms)
+                        };
+                        if !dictation_enabled {
+                            return;
+                        }
+                        let mut is_short_press = false;
+                        if let Some(start_time) = state.press_start_time.lock().await.take() {
+                            let elapsed_ms = start_time.elapsed().as_millis();
+                            if elapsed_ms < min_hold_ms as u128 {
+                                is_short_press = true;
+                                log::info!(
+                                    "Voice-edit release: elapsed {} ms < min_hold_ms {} → short press (cancel)",
+                                    elapsed_ms,
+                                    min_hold_ms
+                                );
+                                latency_trace_write(&format!(
+                                    "voice_edit_release_short_elapsed_{}_min_{}",
+                                    elapsed_ms, min_hold_ms
+                                ));
+                            } else {
+                                latency_trace_write(&format!(
+                                    "voice_edit_release_long_elapsed_{}_min_{}",
+                                    elapsed_ms, min_hold_ms
+                                ));
+                            }
+                        } else {
+                            log::warn!("Voice-edit release: no press_start_time → treating as long press");
+                            latency_trace_write("voice_edit_release_no_start_time");
+                        }
+                        if is_short_press {
+                            cancel_dictation(state, is_recording).await;
+                        } else {
+                            stop_dictation(state, is_recording).await;
+                        }
+                    });
+                }),
+                on_cancel: Some(Arc::new({
+                    let app_handle_cancel = app_handle.clone();
+                    let is_recording_cancel = is_recording_flag.clone();
+                    move || {
+                        let app_handle = app_handle_cancel.clone();
+                        let is_recording = is_recording_cancel.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let state = app_handle.state::<AppState>();
+                            cancel_dictation(state, is_recording).await;
+                        });
+                    }
+                })),
+            });
+            log::info!("Voice-edit hotkey registered: {}", ve_hotkey_str);
+        } else {
+            log::warn!("Failed to parse voice-edit hotkey: {}", ve_hotkey_str);
+        }
+    }
+
+    if let Some(ref cycle_str) = mode_cycle_hotkey {
+        if !cycle_str.trim().is_empty() {
+            if let Ok(target) = parse_rdev_hotkey(cycle_str) {
+                let app_handle_cycle = app_handle.clone();
+                registrations.push(HotkeyRegistration {
+                    target,
+                    active: Arc::new(AtomicBool::new(false)),
+                    pending_activation: Arc::new(AtomicBool::new(false)),
+                    is_dictation: false,
+                    on_press: Arc::new(move || {
+                        let app_handle = app_handle_cycle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let state = app_handle.state::<AppState>();
+                            let mut mgr = state.config.lock().await;
+                            let mut cfg = mgr.get_all();
+                            if !cfg.dictation_enabled || cfg.modes.len() < 2 {
+                                return;
+                            }
+                            let current = cfg.active_mode_id.clone();
+                            let idx = cfg.modes.iter().position(|m| m.id == current).unwrap_or(0);
+                            let next = (idx + 1) % cfg.modes.len();
+                            cfg.active_mode_id = cfg.modes[next].id.clone();
+                            let updated = cfg.clone();
+                            if mgr.save(cfg).is_ok() {
+                                drop(mgr);
+                                let state = app_handle.state::<AppState>();
+                                clear_auto_activate_tracking(&state);
+                                let _ = app_handle.emit("settings_updated", &updated);
+                                let _ = app_handle.emit("mode-changed", &updated.active_mode_id);
+                                let label = updated
+                                    .modes
+                                    .iter()
+                                    .find(|m| m.id == updated.active_mode_id)
+                                    .map(|m| m.name.as_str())
+                                    .unwrap_or("Mode");
+                                emit_overlay_event(
+                                    &app_handle,
+                                    OverlayEvent::Status {
+                                        message: "Mode: ".to_string(),
+                                        highlight: Some(label.to_string()),
+                                    },
+                                );
+                            }
+                        });
+                    }),
+                    on_release: Arc::new(|| {}),
+                    on_cancel: None,
+                });
+                log::info!("Mode cycle hotkey registered: {}", cycle_str);
+            } else {
+                log::warn!("Failed to parse mode cycle hotkey: {}", cycle_str);
+            }
+        }
+    }
+
     registrations
 }
 
@@ -678,7 +1172,13 @@ pub fn run() {
 
     let builder = {
         let b = tauri::Builder::default()
-            .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+                // Second-instance argv may carry `kalam://import-recipe?...` (OS-dependent).
+                for arg in argv.iter() {
+                    if arg.contains("kalam://") {
+                        spawn_recipe_import_from_deep_link(app.clone(), arg.clone());
+                    }
+                }
                 if let Some(window) = app.get_webview_window("main") {
                     if let Err(e) = window.show() {
                         log::warn!("Single-instance: failed to show main window: {}", e);
@@ -688,6 +1188,7 @@ pub fn run() {
                     }
                 }
             }))
+            .plugin(tauri_plugin_deep_link::init())
             .plugin(tauri_plugin_notification::init())
             .plugin(tauri_plugin_updater::Builder::new().build())
             .plugin(tauri_plugin_shell::init())
@@ -810,6 +1311,24 @@ pub fn run() {
                 }
             });
 
+            // Phase 9: Pro multi-PC sync — delayed first run + 5-minute interval (no-op when sync disabled).
+            let sync_startup = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_secs(25)).await;
+                if let Err(e) = crate::sync::run_sync_cycle(&sync_startup).await {
+                    log::debug!("Startup sync: {}", e);
+                }
+            });
+            let sync_interval = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
+                    if let Err(e) = crate::sync::run_sync_cycle(&sync_interval).await {
+                        log::debug!("Periodic sync: {}", e);
+                    }
+                }
+            });
+
             // When focus enters a sensitive app (Hybrid/Auto + patterns), expand the pill briefly with a lock hint.
             let sensitive_peek_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -834,6 +1353,122 @@ pub fn run() {
                         emit_overlay_event(&sensitive_peek_handle, OverlayEvent::SensitiveAppPeek);
                     }
                     last_idle_sensitive = Some(now);
+                }
+            });
+
+            // Phase 7: switch dictation mode when foreground app matches per-mode rules; switch back on leave.
+            let auto_activate_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(450)).await;
+                    let state = auto_activate_handle.state::<AppState>();
+                    let audio = *state.audio_state.lock().await;
+                    if !matches!(audio, crate::audio::AudioState::Idle) {
+                        continue;
+                    }
+                    let mut mgr = match state.config.try_lock() {
+                        Ok(g) => g,
+                        Err(_) => continue,
+                    };
+                    let cfg = mgr.get_all();
+                    if !cfg.dictation_enabled || !config_has_auto_activate_rules(&cfg) {
+                        drop(mgr);
+                        continue;
+                    }
+                    let (process_name, window_title) =
+                        match crate::config::privacy::get_foreground_app() {
+                            Some(x) => x,
+                            None => {
+                                drop(mgr);
+                                continue;
+                            }
+                        };
+                    let matched = match_auto_activate_rules(&cfg, &process_name, &window_title);
+                    let current_id = cfg.active_mode_id.clone();
+                    let auto_on = state.auto_activate_active.load(Ordering::SeqCst);
+
+                    if let Some(matched_id) = matched {
+                        if matched_id != current_id {
+                            if !auto_on {
+                                if let Ok(mut g) = state.auto_activate_previous_mode_id.lock() {
+                                    *g = Some(current_id.clone());
+                                }
+                            }
+                            let mode_name = cfg
+                                .modes
+                                .iter()
+                                .find(|m| m.id == matched_id)
+                                .map(|m| m.name.clone())
+                                .unwrap_or_else(|| "Mode".to_string());
+                            let mut cfg_mut = cfg.clone();
+                            cfg_mut.active_mode_id = matched_id.clone();
+                            let updated = cfg_mut.clone();
+                            if mgr.save(cfg_mut).is_ok() {
+                                state.auto_activate_active.store(true, Ordering::SeqCst);
+                                drop(mgr);
+                                let _ = auto_activate_handle.emit("settings_updated", &updated);
+                                let _ = auto_activate_handle
+                                    .emit("mode-changed", &updated.active_mode_id);
+                                let payload = AutoActivateSwitchedPayload {
+                                    mode_name,
+                                    triggered_by_app: Some(process_name),
+                                    is_restore: false,
+                                };
+                                let _ =
+                                    auto_activate_handle.emit("auto-activate-switched", &payload);
+                            } else {
+                                drop(mgr);
+                            }
+                        } else {
+                            drop(mgr);
+                        }
+                    } else if auto_on {
+                        let prev_id = state
+                            .auto_activate_previous_mode_id
+                            .lock()
+                            .ok()
+                            .and_then(|mut g| g.take());
+                        if let Some(prev_id) = prev_id {
+                            let mut cfg_mut = cfg.clone();
+                            let resolved = if cfg_mut.modes.iter().any(|m| m.id == prev_id) {
+                                prev_id.clone()
+                            } else {
+                                "default".to_string()
+                            };
+                            let mode_name = cfg_mut
+                                .modes
+                                .iter()
+                                .find(|m| m.id == resolved)
+                                .map(|m| m.name.clone())
+                                .unwrap_or_else(|| "Default".to_string());
+                            cfg_mut.active_mode_id = resolved;
+                            let updated = cfg_mut.clone();
+                            if mgr.save(cfg_mut).is_ok() {
+                                state.auto_activate_active.store(false, Ordering::SeqCst);
+                                drop(mgr);
+                                let _ = auto_activate_handle.emit("settings_updated", &updated);
+                                let _ = auto_activate_handle
+                                    .emit("mode-changed", &updated.active_mode_id);
+                                let payload = AutoActivateSwitchedPayload {
+                                    mode_name,
+                                    triggered_by_app: None,
+                                    is_restore: true,
+                                };
+                                let _ =
+                                    auto_activate_handle.emit("auto-activate-switched", &payload);
+                            } else {
+                                if let Ok(mut g) = state.auto_activate_previous_mode_id.lock() {
+                                    *g = Some(prev_id);
+                                }
+                                drop(mgr);
+                            }
+                        } else {
+                            state.auto_activate_active.store(false, Ordering::SeqCst);
+                            drop(mgr);
+                        }
+                    } else {
+                        drop(mgr);
+                    }
                 }
             });
 
@@ -881,6 +1516,8 @@ pub fn run() {
                 toggle_dictation_hotkey,
                 language_toggle_hotkey,
                 command_hotkey_str,
+                voice_edit_hotkey_str,
+                mode_cycle_hotkey,
                 recording_mode,
             ) = {
                 let state = app.state::<AppState>();
@@ -892,11 +1529,17 @@ pub fn run() {
                     .then(|| cfg.command_config.hotkey.clone())
                     .flatten()
                     .filter(|s| !s.trim().is_empty());
+                let ve_hk = cfg
+                    .voice_edit_hotkey
+                    .clone()
+                    .filter(|s| !s.trim().is_empty());
                 (
                     cfg.hotkey.clone(),
                     cfg.toggle_dictation_hotkey.clone(),
                     cfg.language_toggle_hotkey.clone(),
                     cmd_hk,
+                    ve_hk,
+                    cfg.mode_cycle_hotkey.clone(),
                     cfg.recording_mode,
                 )
             };
@@ -908,6 +1551,8 @@ pub fn run() {
                 toggle_dictation_hotkey,
                 language_toggle_hotkey,
                 command_hotkey_str,
+                voice_edit_hotkey_str,
+                mode_cycle_hotkey,
                 recording_mode,
             );
 
@@ -917,8 +1562,19 @@ pub fn run() {
 
             log::info!("Kalam initialized successfully");
 
+            // Phase 8: `kalam://import-recipe?slug=...` opens the app and imports from the library API.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle_for_urls = app.handle().clone();
+                let _ = app.deep_link().on_open_url(move |event| {
+                    for u in event.urls() {
+                        spawn_recipe_import_from_deep_link(handle_for_urls.clone(), u.to_string());
+                    }
+                });
+            }
+
             // Resize overlay to collapsed (80x80) so it does not block clicks, then show it
-            if let Err(e) = resize_overlay(app.handle().clone(), false) {
+            if let Err(e) = resize_overlay(app.handle().clone(), 0) {
                 log::warn!("Failed to resize overlay on startup: {}", e);
             }
             if let Err(e) = show_overlay(app.handle()) {
@@ -942,7 +1598,26 @@ pub fn run() {
             get_permission_status,
             get_runtime_capabilities,
             get_settings,
+            catalog::get_model_catalog,
+            set_provider_key,
+            remove_provider_key,
+            test_provider_key,
+            get_active_mode,
+            set_active_mode,
+            create_mode,
+            update_mode,
+            delete_mode,
+            export_recipe,
+            import_recipe,
+            fetch_recipe_library,
+            install_recipe_from_library,
+            cycle_mode,
             save_settings,
+            sync_now,
+            get_sync_status,
+            enable_sync,
+            disable_sync,
+            reset_sync,
             skip_onboarding_with_defaults,
             get_audio_devices,
             test_microphone_start,
@@ -965,8 +1640,11 @@ pub fn run() {
             save_logs_csv_to_file,
             get_app_data_path,
             open_app_data_folder,
-            resize_overlay,
+            resize_overlay_to,
             get_overlay_initial_state,
+            copy_last_transcription,
+            toggle_polish_from_overlay,
+            get_context_previews,
             cancel_transcription,
             ui_toggle_dictation,
             trace_latency,
@@ -1011,6 +1689,7 @@ pub fn run() {
             is_sidecar_available_for_model,
             commands::fetch_llm_models,
             commands::generate_structured_data,
+            commands::complete_plain_text_command,
             commands::test_llm_model,
             get_running_apps,
             pick_executable_file,
@@ -1319,12 +1998,61 @@ async fn pick_executable_file() -> Result<Option<String>, String> {
     Ok(picked.map(|f| f.path().to_string_lossy().to_string()))
 }
 
-/// List installed applications (platform-specific).
-/// Windows: common installation directories
-/// macOS: /Applications folder
-/// Linux: .desktop entries
-#[tauri::command]
-fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
+/// Stable key for merging picker rows that share the same product name (e.g. many `firefox*.exe`).
+fn installed_app_display_key(display_name: &str) -> String {
+    display_name
+        .trim()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Prefer a "main" executable when several share one display name (icon, name match, shorter process).
+fn installed_app_picker_priority(e: &AppListEntry) -> i32 {
+    let mut s: i32 = 0;
+    if e.icon_base64.is_some() {
+        s += 1000;
+    }
+    let disp = e.display_name.to_lowercase();
+    let proc_norm = crate::app_info::normalize_process_name(&e.process_name);
+    let stem = proc_norm.strip_suffix(".exe").unwrap_or(proc_norm.as_str());
+    if stem.len() >= 2 && disp.contains(stem) {
+        s += 200;
+    }
+    // Shorter process name tends to be the primary binary vs helpers.
+    s -= e.process_name.len() as i32;
+    s
+}
+
+fn dedupe_installed_apps_by_display_name(results: Vec<AppListEntry>) -> Vec<AppListEntry> {
+    use std::collections::hash_map::Entry;
+    use std::collections::HashMap;
+
+    let mut best: HashMap<String, AppListEntry> = HashMap::new();
+    for e in results {
+        let k = installed_app_display_key(&e.display_name);
+        match best.entry(k) {
+            Entry::Vacant(v) => {
+                v.insert(e);
+            }
+            Entry::Occupied(mut o) => {
+                if installed_app_picker_priority(&e) > installed_app_picker_priority(o.get()) {
+                    o.insert(e);
+                }
+            }
+        }
+    }
+    let mut out: Vec<AppListEntry> = best.into_values().collect();
+    out.sort_by(|a, b| {
+        a.display_name
+            .to_lowercase()
+            .cmp(&b.display_name.to_lowercase())
+    });
+    out
+}
+
+fn scan_installed_apps_sync() -> Result<Vec<AppListEntry>, String> {
     use base64::Engine;
     use std::collections::HashSet;
 
@@ -1528,14 +2256,17 @@ fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
         }
     }
 
-    // Sort by display name
-    results.sort_by(|a, b| {
-        a.display_name
-            .to_lowercase()
-            .cmp(&b.display_name.to_lowercase())
-    });
-
+    let results = dedupe_installed_apps_by_display_name(results);
     Ok(results)
+}
+
+/// List installed applications (platform-specific). Runs the filesystem scan on a blocking pool
+/// so closing the UI or other work is not stalled for the whole scan duration.
+#[tauri::command]
+async fn get_installed_apps() -> Result<Vec<AppListEntry>, String> {
+    tokio::task::spawn_blocking(scan_installed_apps_sync)
+        .await
+        .map_err(|e| format!("installed apps scan: {e}"))?
 }
 
 #[tauri::command]
@@ -1945,15 +2676,389 @@ async fn skip_onboarding_with_defaults(state: tauri::State<'_, AppState>) -> Res
 }
 
 #[tauri::command]
+async fn get_active_mode(state: tauri::State<'_, AppState>) -> Result<DictationMode, String> {
+    let c = state.config.lock().await.get_all();
+    Ok(find_active_mode(&c))
+}
+
+#[tauri::command]
+async fn set_active_mode(state: tauri::State<'_, AppState>, mode_id: String) -> Result<(), String> {
+    let mut mgr = state.config.lock().await;
+    let mut cfg = mgr.get_all();
+    if !cfg.modes.iter().any(|m| m.id == mode_id) {
+        return Err(format!("Unknown mode id: {}", mode_id));
+    }
+    cfg.active_mode_id = mode_id;
+    crate::config::bump_sync_config_dirty(&mut cfg);
+    let updated = cfg.clone();
+    mgr.save(cfg).map_err(|e| e.to_string())?;
+    drop(mgr);
+    clear_auto_activate_tracking(&state);
+    let _ = state.app_handle.emit("settings_updated", &updated);
+    let _ = state
+        .app_handle
+        .emit("mode-changed", &updated.active_mode_id);
+    Ok(())
+}
+
+#[tauri::command]
+async fn create_mode(
+    state: tauri::State<'_, AppState>,
+    mut mode: DictationMode,
+) -> Result<DictationMode, String> {
+    mode.id = uuid::Uuid::new_v4().to_string();
+    if mode.accent_color.trim().is_empty() {
+        mode.accent_color = crate::config::default_accent_for_mode_id(&mode.id);
+    }
+    let ts = chrono::Utc::now().to_rfc3339();
+    mode.created_at = ts.clone();
+    mode.updated_at = ts;
+    mode.is_builtin = false;
+    mode.is_deletable = true;
+    let mut mgr = state.config.lock().await;
+    let mut cfg = mgr.get_all();
+    cfg.modes.push(mode.clone());
+    crate::config::bump_sync_config_dirty(&mut cfg);
+    let updated = cfg.clone();
+    mgr.save(cfg).map_err(|e| e.to_string())?;
+    drop(mgr);
+    let _ = state.app_handle.emit("settings_updated", &updated);
+    Ok(mode)
+}
+
+#[tauri::command]
+async fn update_mode(state: tauri::State<'_, AppState>, mode: DictationMode) -> Result<(), String> {
+    let mut mgr = state.config.lock().await;
+    let mut cfg = mgr.get_all();
+    let i = cfg
+        .modes
+        .iter()
+        .position(|m| m.id == mode.id)
+        .ok_or_else(|| "Mode not found".to_string())?;
+    let preserve_default = cfg.modes[i].id == "default";
+    let mut new_mode = mode;
+    if preserve_default {
+        new_mode.is_deletable = false;
+    }
+    new_mode.updated_at = chrono::Utc::now().to_rfc3339();
+    cfg.modes[i] = new_mode;
+    crate::config::bump_sync_config_dirty(&mut cfg);
+    let updated = cfg.clone();
+    mgr.save(cfg).map_err(|e| e.to_string())?;
+    drop(mgr);
+    let _ = state.app_handle.emit("settings_updated", &updated);
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_mode(state: tauri::State<'_, AppState>, mode_id: String) -> Result<(), String> {
+    let mut mgr = state.config.lock().await;
+    let mut cfg = mgr.get_all();
+    let idx = cfg
+        .modes
+        .iter()
+        .position(|m| m.id == mode_id)
+        .ok_or_else(|| "Mode not found".to_string())?;
+    if !cfg.modes[idx].is_deletable {
+        return Err("This mode cannot be deleted.".to_string());
+    }
+    cfg.modes.remove(idx);
+    if cfg.active_mode_id == mode_id {
+        cfg.active_mode_id = "default".to_string();
+    }
+    crate::config::bump_sync_config_dirty(&mut cfg);
+    let updated = cfg.clone();
+    mgr.save(cfg).map_err(|e| e.to_string())?;
+    drop(mgr);
+    clear_auto_activate_tracking(&state);
+    let _ = state.app_handle.emit("settings_updated", &updated);
+    Ok(())
+}
+
+/// Phase 8 recipe file format (v2 adds listing metadata; v1 files still import).
+#[derive(serde::Serialize)]
+struct RecipeExport {
+    kalam_recipe_version: u32,
+    name: String,
+    icon: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    accent_color: String,
+    /// Human-readable blurb for the community library (optional in file; empty when exporting from a mode).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
+    ai_instructions: String,
+    voice_model: crate::config::ModeModelRef,
+    language_model: crate::config::ModeModelRef,
+    polish_recommended: bool,
+    context: crate::config::ModeContextConfig,
+    examples: Vec<String>,
+}
+
+/// Extra fields are accepted for forward compatibility (v2 metadata is ignored when building `DictationMode`).
+#[derive(serde::Deserialize)]
+#[allow(dead_code)]
+struct RecipeImport {
+    #[serde(default)]
+    kalam_recipe_version: u32,
+    name: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    ai_instructions: String,
+    #[serde(default)]
+    voice_model: crate::config::ModeModelRef,
+    #[serde(default)]
+    language_model: crate::config::ModeModelRef,
+    #[serde(default)]
+    polish_recommended: bool,
+    #[serde(default)]
+    context: crate::config::ModeContextConfig,
+    #[serde(default)]
+    accent_color: String,
+}
+
+fn dictation_mode_from_recipe_import(r: RecipeImport) -> DictationMode {
+    let ts = chrono::Utc::now().to_rfc3339();
+    let RecipeImport {
+        name,
+        icon,
+        accent_color,
+        ai_instructions,
+        voice_model,
+        language_model,
+        polish_recommended,
+        context,
+        ..
+    } = r;
+    let id = uuid::Uuid::new_v4().to_string();
+    let accent_color = if accent_color.trim().is_empty() {
+        crate::config::default_accent_for_mode_id(&id)
+    } else {
+        accent_color
+    };
+    DictationMode {
+        id,
+        name,
+        icon,
+        accent_color,
+        ai_instructions,
+        voice_model,
+        language_model,
+        polish: polish_recommended,
+        context,
+        auto_activate_rules: vec![],
+        is_builtin: false,
+        is_deletable: true,
+        created_at: ts.clone(),
+        updated_at: ts,
+    }
+}
+
+async fn import_recipe_json_into_config(
+    state: &AppState,
+    json: &str,
+) -> Result<DictationMode, String> {
+    let r: RecipeImport =
+        serde_json::from_str(json).map_err(|e| format!("Invalid recipe: {}", e))?;
+    let mode = dictation_mode_from_recipe_import(r);
+    let mut mgr = state.config.lock().await;
+    let mut cfg = mgr.get_all();
+    cfg.modes.push(mode.clone());
+    crate::config::bump_sync_config_dirty(&mut cfg);
+    let updated = cfg.clone();
+    mgr.save(cfg).map_err(|e| e.to_string())?;
+    drop(mgr);
+    let _ = state.app_handle.emit("settings_updated", &updated);
+    Ok(mode)
+}
+
+/// `kalam://import-recipe?slug=my-recipe` or `kalam://import-recipe/my-recipe`
+fn slug_from_import_recipe_url(url_str: &str) -> Option<String> {
+    let u = url::Url::parse(url_str.trim()).ok()?;
+    if u.scheme() != "kalam" {
+        return None;
+    }
+    if u.host_str() != Some("import-recipe") {
+        return None;
+    }
+    for (k, v) in u.query_pairs() {
+        if k == "slug" && !v.is_empty() {
+            return Some(v.into_owned());
+        }
+    }
+    let path = u.path().trim_start_matches('/');
+    if !path.is_empty() && !path.contains('/') {
+        return Some(path.to_string());
+    }
+    None
+}
+
+fn spawn_recipe_import_from_deep_link(app: tauri::AppHandle, url_or_arg: String) {
+    let Some(slug) = slug_from_import_recipe_url(&url_or_arg) else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let client = crate::recipe_library::recipe_http_client();
+        let base = {
+            let c = state.config.lock().await.get_all();
+            c.recipe_library_url.clone()
+        };
+        let json =
+            match crate::recipe_library::post_recipe_download_json(&client, &base, &slug).await {
+                Ok(j) => j,
+                Err(e) => {
+                    log::error!("deep-link recipe download: {}", e);
+                    let _ = app.emit("recipe-import-failed", serde_json::json!({ "message": e }));
+                    return;
+                }
+            };
+        match import_recipe_json_into_config(&state, &json).await {
+            Ok(mode) => {
+                let _ = app.emit(
+                    "recipe-imported",
+                    serde_json::json!({ "mode_id": mode.id, "name": mode.name }),
+                );
+            }
+            Err(e) => {
+                log::error!("deep-link recipe import: {}", e);
+                let _ = app.emit("recipe-import-failed", serde_json::json!({ "message": e }));
+            }
+        }
+    });
+}
+
+#[tauri::command]
+async fn export_recipe(
+    state: tauri::State<'_, AppState>,
+    mode_id: String,
+) -> Result<String, String> {
+    let cfg = state.config.lock().await.get_all();
+    let mode = cfg
+        .modes
+        .iter()
+        .find(|m| m.id == mode_id)
+        .ok_or_else(|| "Mode not found".to_string())?;
+    let recipe = RecipeExport {
+        kalam_recipe_version: 2,
+        name: mode.name.clone(),
+        icon: mode.icon.clone(),
+        accent_color: crate::config::effective_accent_color(mode),
+        description: String::new(),
+        category: None,
+        tags: vec![],
+        ai_instructions: mode.ai_instructions.clone(),
+        voice_model: mode.voice_model.clone(),
+        language_model: mode.language_model.clone(),
+        polish_recommended: mode.polish,
+        context: mode.context.clone(),
+        examples: vec![],
+    };
+    serde_json::to_string_pretty(&recipe).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn import_recipe(
+    state: tauri::State<'_, AppState>,
+    json: String,
+) -> Result<DictationMode, String> {
+    import_recipe_json_into_config(&state, &json).await
+}
+
+#[tauri::command]
+async fn fetch_recipe_library(
+    state: tauri::State<'_, AppState>,
+    query: Option<String>,
+    category: Option<String>,
+    sort: Option<String>,
+    page: Option<u32>,
+    limit: Option<u32>,
+) -> Result<serde_json::Value, String> {
+    let base = {
+        let c = state.config.lock().await.get_all();
+        c.recipe_library_url.clone()
+    };
+    let client = crate::recipe_library::recipe_http_client();
+    let sort_s = sort.as_deref().unwrap_or("newest");
+    let page = page.unwrap_or(1);
+    let lim = limit.unwrap_or(24).min(100);
+    crate::recipe_library::fetch_recipe_list(
+        &client,
+        &base,
+        query.as_deref(),
+        category.as_deref(),
+        sort_s,
+        page,
+        lim,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn install_recipe_from_library(
+    state: tauri::State<'_, AppState>,
+    slug: String,
+) -> Result<DictationMode, String> {
+    let base = {
+        let c = state.config.lock().await.get_all();
+        c.recipe_library_url.clone()
+    };
+    let client = crate::recipe_library::recipe_http_client();
+    let json = crate::recipe_library::post_recipe_download_json(&client, &base, &slug).await?;
+    import_recipe_json_into_config(&state, &json).await
+}
+
+#[tauri::command]
+async fn cycle_mode(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let mut mgr = state.config.lock().await;
+    let mut cfg = mgr.get_all();
+    if cfg.modes.is_empty() {
+        return Err("No modes".to_string());
+    }
+    let idx = cfg
+        .modes
+        .iter()
+        .position(|m| m.id == cfg.active_mode_id)
+        .unwrap_or(0);
+    let next = (idx + 1) % cfg.modes.len();
+    cfg.active_mode_id = cfg.modes[next].id.clone();
+    let id = cfg.active_mode_id.clone();
+    crate::config::bump_sync_config_dirty(&mut cfg);
+    let updated = cfg.clone();
+    mgr.save(cfg).map_err(|e| e.to_string())?;
+    drop(mgr);
+    clear_auto_activate_tracking(&state);
+    let _ = state.app_handle.emit("settings_updated", &updated);
+    let _ = state.app_handle.emit("mode-changed", &id);
+    Ok(id)
+}
+
+#[tauri::command]
 async fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppConfig, String> {
     let config = state.config.lock().await;
     let cfg = config.get_all();
+    let p = cfg.stt_config.provider.trim();
     let selected_api_key_present = cfg
-        .stt_config
-        .api_keys
-        .get(&cfg.stt_config.provider)
+        .provider_keys
+        .get(p)
         .map(|s| !s.is_empty())
         .unwrap_or(false)
+        || cfg
+            .stt_config
+            .api_keys
+            .get(p)
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
         || cfg
             .stt_config
             .api_key
@@ -1970,17 +3075,19 @@ async fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppConfig, St
 #[tauri::command]
 async fn save_settings(
     state: tauri::State<'_, AppState>,
-    new_config: AppConfig,
+    mut new_config: AppConfig,
 ) -> Result<(), String> {
+    crate::config::merge_provider_keys_from_nested_maps(&mut new_config);
     // Reconfigure logger immediately so this save operation is captured in the in-app log
     app_log::reconfigure(new_config.logging.clone());
 
     log::info!("=== SAVE_SETTINGS CALLED ===");
+    let prov = new_config.stt_config.provider.trim();
     let selected_api_key_len = new_config
-        .stt_config
-        .api_keys
-        .get(&new_config.stt_config.provider)
+        .provider_keys
+        .get(prov)
         .map(|s| s.len())
+        .or_else(|| new_config.stt_config.api_keys.get(prov).map(|s| s.len()))
         .or_else(|| new_config.stt_config.api_key.as_ref().map(|s| s.len()));
     log::info!(
         "Selected provider API key present: {}",
@@ -2083,10 +3190,14 @@ async fn save_settings(
     );
 
     // Persist config with None for default (so we don't store "" or "null")
-    let config_to_save = AppConfig {
+    // Phase 9: any Settings save may change synced prefs; bump rev so multi-PC LWW can order pushes.
+    let now_rev = chrono::Utc::now().to_rfc3339();
+    let mut config_to_save = AppConfig {
         audio_device: device_id_to_apply.map(String::from),
         ..new_config
     };
+    config_to_save.sync_settings_rev = Some(now_rev);
+    config_to_save.sync_config_dirty = true;
 
     let mut config = state.config.lock().await;
     match config.save(config_to_save.clone()) {
@@ -2125,6 +3236,10 @@ async fn save_settings(
                 .then(|| config_to_save.command_config.hotkey.clone())
                 .flatten()
                 .filter(|s| !s.trim().is_empty());
+            let ve_hk = config_to_save
+                .voice_edit_hotkey
+                .clone()
+                .filter(|s| !s.trim().is_empty());
 
             let registrations = create_registrations(
                 &state.app_handle,
@@ -2133,6 +3248,8 @@ async fn save_settings(
                 config_to_save.toggle_dictation_hotkey.clone(),
                 config_to_save.language_toggle_hotkey.clone(),
                 cmd_hk,
+                ve_hk,
+                config_to_save.mode_cycle_hotkey.clone(),
                 config_to_save.recording_mode,
             );
             crate::hotkey::update_registrations(registrations);
@@ -2145,6 +3262,36 @@ async fn save_settings(
             Err(e.to_string())
         }
     }
+}
+
+#[tauri::command]
+async fn sync_now(app: tauri::AppHandle) -> Result<(), String> {
+    crate::sync::run_sync_cycle(&app).await
+}
+
+#[tauri::command]
+async fn get_sync_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::sync::SyncStatusDto, String> {
+    let cm = state.config.lock().await;
+    Ok(crate::sync::get_sync_status_dto(&cm.get_all()))
+}
+
+#[tauri::command]
+async fn enable_sync(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut mgr = state.config.lock().await;
+    crate::sync::enable_sync(&mut mgr)
+}
+
+#[tauri::command]
+async fn disable_sync(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut mgr = state.config.lock().await;
+    crate::sync::disable_sync(&mut mgr)
+}
+
+#[tauri::command]
+async fn reset_sync(app: tauri::AppHandle) -> Result<(), String> {
+    crate::sync::reset_remote_and_local_meta(&app).await
 }
 
 #[tauri::command]
@@ -2261,6 +3408,10 @@ async fn reset_application(state: tauri::State<'_, AppState>) -> Result<(), Stri
         .then(|| default_config.command_config.hotkey.clone())
         .flatten()
         .filter(|s| !s.trim().is_empty());
+    let ve_hk = default_config
+        .voice_edit_hotkey
+        .clone()
+        .filter(|s| !s.trim().is_empty());
     let registrations = create_registrations(
         &state.app_handle,
         state.is_recording.clone(),
@@ -2268,6 +3419,8 @@ async fn reset_application(state: tauri::State<'_, AppState>) -> Result<(), Stri
         default_config.toggle_dictation_hotkey.clone(),
         default_config.language_toggle_hotkey.clone(),
         cmd_hk,
+        ve_hk,
+        default_config.mode_cycle_hotkey.clone(),
         default_config.recording_mode,
     );
     crate::hotkey::update_registrations(registrations);
@@ -2579,6 +3732,72 @@ async fn download_model(
 }
 
 #[tauri::command]
+async fn set_provider_key(
+    state: tauri::State<'_, AppState>,
+    provider: String,
+    api_key: String,
+) -> Result<AppConfig, String> {
+    let p = provider.trim().to_string();
+    if p.is_empty() {
+        return Err("Provider id is empty.".to_string());
+    }
+    let mut mgr = state.config.lock().await;
+    let mut c = mgr.get_all();
+    if api_key.trim().is_empty() {
+        c.provider_keys.remove(&p);
+    } else {
+        c.provider_keys.insert(p, api_key.trim().to_string());
+    }
+    crate::config::bump_sync_config_dirty(&mut c);
+    mgr.save(c.clone()).map_err(|e| e.to_string())?;
+    drop(mgr);
+    let _ = state.app_handle.emit("settings_updated", &c);
+    Ok(c)
+}
+
+#[tauri::command]
+async fn remove_provider_key(
+    state: tauri::State<'_, AppState>,
+    provider: String,
+) -> Result<AppConfig, String> {
+    let p = provider.trim().to_string();
+    if p.is_empty() {
+        return Err("Provider id is empty.".to_string());
+    }
+    let mut mgr = state.config.lock().await;
+    let mut c = mgr.get_all();
+    c.provider_keys.remove(&p);
+    crate::config::bump_sync_config_dirty(&mut c);
+    mgr.save(c.clone()).map_err(|e| e.to_string())?;
+    drop(mgr);
+    let _ = state.app_handle.emit("settings_updated", &c);
+    Ok(c)
+}
+
+/// Validate a key for STT (Groq/OpenAI) or LLM (other catalog providers). `local` is not applicable.
+#[tauri::command]
+async fn test_provider_key(provider: String, api_key: String) -> Result<bool, String> {
+    let p = provider.trim().to_lowercase();
+    if api_key.trim().is_empty() {
+        return Ok(false);
+    }
+    match p.as_str() {
+        "local" => Err("Local speech does not use an API key.".to_string()),
+        "groq" | "openai" => stt::validate_api_key(&p, &api_key)
+            .await
+            .map_err(|e| e.to_string()),
+        _ => {
+            let Some(model) = crate::catalog::default_llm_model_for_provider_test(&p) else {
+                return Err(format!("Unknown provider for test: {}", provider));
+            };
+            commands::test_llm_model(p, api_key, model.to_string())
+                .await
+                .map(|_| true)
+        }
+    }
+}
+
+#[tauri::command]
 async fn check_api_key(provider: String, api_key: String) -> Result<bool, String> {
     log::info!(
         "check_api_key called with provider: {}, api_key length: {}",
@@ -2611,19 +3830,57 @@ fn check_model_requirements(model_id: String) -> Result<system_reqs::HardwareChe
 const OVERLAY_LABEL: &str = "overlay";
 /// Extra space so pill box-shadow can spill outside the window (not clipped)
 const OVERLAY_SHADOW_MARGIN: i32 = 24;
-/// Expanded pill size (matches .blip.expanded in Overlay.svelte) + shadow margin
-const OVERLAY_EXPANDED_WIDTH: i32 = 250 + OVERLAY_SHADOW_MARGIN * 2;
-const OVERLAY_EXPANDED_HEIGHT: i32 = 48 + OVERLAY_SHADOW_MARGIN * 2;
-/// Collapsed pill size: fits .blip.collapsed (48×10) + 1px border + small margin so edges aren't clipped + shadow margin
-const OVERLAY_COLLAPSED_WIDTH: i32 = 52 + OVERLAY_SHADOW_MARGIN * 2;
-const OVERLAY_COLLAPSED_HEIGHT: i32 = 14 + OVERLAY_SHADOW_MARGIN * 2;
+/// Phase 6: idle / hover-actions width (fits dormant hover bar in Overlay.svelte)
+const OVERLAY_DORMANT_WIDTH: i32 = 340 + OVERLAY_SHADOW_MARGIN * 2;
+const OVERLAY_DORMANT_HEIGHT: i32 = 44 + OVERLAY_SHADOW_MARGIN * 2;
+const OVERLAY_MINI_WIDTH: i32 = 280 + OVERLAY_SHADOW_MARGIN * 2;
+const OVERLAY_MINI_HEIGHT: i32 = 52 + OVERLAY_SHADOW_MARGIN * 2;
+const OVERLAY_FULL_WIDTH: i32 = 360 + OVERLAY_SHADOW_MARGIN * 2;
+const OVERLAY_FULL_HEIGHT: i32 = 200 + OVERLAY_SHADOW_MARGIN * 2;
 const OVERLAY_BOTTOM_MARGIN: i32 = 24;
+
+fn overlay_logical_size_for_tier(tier: u8) -> (f64, f64) {
+    match tier {
+        1 => (OVERLAY_MINI_WIDTH as f64, OVERLAY_MINI_HEIGHT as f64),
+        2 => (OVERLAY_FULL_WIDTH as f64, OVERLAY_FULL_HEIGHT as f64),
+        _ => (OVERLAY_DORMANT_WIDTH as f64, OVERLAY_DORMANT_HEIGHT as f64),
+    }
+}
+
+/// Build `Dormant` from current config + last history row (sync).
+fn overlay_dormant_event(cfg: &AppConfig) -> OverlayEvent {
+    let mode_name = cfg
+        .modes
+        .iter()
+        .find(|m| m.id == cfg.active_mode_id)
+        .map(|m| m.name.clone())
+        .unwrap_or_else(|| "Default".to_string());
+    let last_transcription_preview = crate::history::peek_last_history_text_preview(100);
+    let accent_color = cfg
+        .modes
+        .iter()
+        .find(|m| m.id == cfg.active_mode_id)
+        .map(crate::config::effective_accent_color)
+        .unwrap_or_else(|| crate::config::default_accent_for_mode_id("default"));
+    OverlayEvent::Dormant {
+        mode_name,
+        accent_color,
+        sensitive_app: false,
+        last_transcription_preview,
+    }
+}
 
 #[derive(serde::Serialize, Clone)]
 #[serde(tag = "kind")]
 enum OverlayEvent {
     Hidden,
-    Collapsed,
+    Dormant {
+        mode_name: String,
+        /// CSS color from active mode (`accent_color` / default by id).
+        accent_color: String,
+        sensitive_app: bool,
+        last_transcription_preview: Option<String>,
+    },
     Listening {
         sensitive_app: bool,
     },
@@ -2631,7 +3888,18 @@ enum OverlayEvent {
     Recording {
         level: f32,
         is_command: bool,
+        /// True when the voice-editing hotkey started this session (Phase 5).
+        #[serde(default)]
+        is_voice_edit: bool,
+        /// True when highlighted text was captured for voice editing.
+        #[serde(default)]
+        voice_edit_has_selection: bool,
         sensitive_app: bool,
+        #[serde(default)]
+        context_active: bool,
+        context_label: Option<String>,
+        #[serde(default)]
+        context_sources: Vec<String>,
     },
     /// Processing with progress: elapsed/expected for timeout hint, attempt for retry badge.
     Processing {
@@ -2639,6 +3907,13 @@ enum OverlayEvent {
         expected_secs: u32,
         attempt: u32,
         message: Option<String>,
+        #[serde(default)]
+        is_voice_edit: bool,
+        #[serde(default)]
+        context_active: bool,
+        context_label: Option<String>,
+        #[serde(default)]
+        context_sources: Vec<String>,
     },
     #[allow(dead_code)] // Reserved for future "transcription succeeded" UI
     Success,
@@ -2655,24 +3930,14 @@ enum OverlayEvent {
     SensitiveAppPeek,
 }
 
-#[tauri::command]
-fn resize_overlay(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+/// Phase 6: resize overlay window. `tier` 0 = dormant, 1 = mini, 2 = full.
+fn resize_overlay(app: tauri::AppHandle, tier: u8) -> Result<(), String> {
     let state = app.state::<AppState>();
-    state
-        .overlay_expanded
-        .store(expanded, std::sync::atomic::Ordering::Relaxed);
+    let tier = tier.min(2);
+    state.overlay_size_tier.store(tier, Ordering::Relaxed);
 
     if let Some(overlay) = app.get_webview_window(OVERLAY_LABEL) {
-        let width = if expanded {
-            OVERLAY_EXPANDED_WIDTH as f64
-        } else {
-            OVERLAY_COLLAPSED_WIDTH as f64
-        };
-        let height = if expanded {
-            OVERLAY_EXPANDED_HEIGHT as f64
-        } else {
-            OVERLAY_COLLAPSED_HEIGHT as f64
-        };
+        let (width, height) = overlay_logical_size_for_tier(tier);
 
         // Resize first, then update position: when a window resizes, its top-left stays fixed
         // and it grows down/right. The pill is centered via flexbox, so it would appear to move.
@@ -2683,6 +3948,71 @@ fn resize_overlay(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
         let _ = overlay.set_always_on_top(true);
     }
     Ok(())
+}
+
+#[tauri::command]
+fn resize_overlay_to(app: tauri::AppHandle, size: String) -> Result<(), String> {
+    let tier: u8 = match size.as_str() {
+        "Dormant" => 0,
+        "Mini" => 1,
+        "Full" => 2,
+        _ => return Err(format!("Unknown overlay size: {}", size)),
+    };
+    resize_overlay(app, tier)
+}
+
+#[tauri::command]
+async fn copy_last_transcription() -> Result<(), String> {
+    let entries = crate::history::get_history(Some(1), Some(0))
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(entry) = entries.first() {
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        clipboard
+            .set_text(entry.text.as_str())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn toggle_polish_from_overlay(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let new_val = {
+        let mut mgr = state.config.lock().await;
+        let mut all = mgr.get_all();
+        all.polish_enabled = !all.polish_enabled;
+        mgr.save(all.clone()).map_err(|e| e.to_string())?;
+        all.polish_enabled
+    };
+    let updated = state.config.lock().await.get_all();
+    let _ = state.app_handle.emit("settings_updated", &updated);
+    Ok(new_val)
+}
+
+#[tauri::command]
+async fn get_context_previews(
+    state: tauri::State<'_, AppState>,
+) -> Result<crate::context::ContextPreviewsForOverlay, String> {
+    let cfg = state.config.lock().await.get_all();
+    // Don't leak context when the global toggle is off or a sensitive app is focused.
+    if !cfg.context_awareness_enabled
+        || crate::config::privacy::foreground_matches_sensitive_app(&cfg)
+    {
+        return Ok(crate::context::ContextPreviewsForOverlay {
+            app_label: None,
+            clipboard_preview: None,
+            selection_preview: None,
+        });
+    }
+    let mut base = crate::context::context_previews_for_overlay();
+    let sel = state.pending_selected_text.lock().await;
+    if let Some(ref s) = *sel {
+        let t = s.trim();
+        if !t.is_empty() {
+            base.selection_preview = Some(crate::context::truncate_str(t, 100));
+        }
+    }
+    Ok(base)
 }
 
 fn emit_overlay_event(app: &tauri::AppHandle, event: OverlayEvent) {
@@ -2735,8 +4065,6 @@ fn nudge_overlay_renderer(app: &tauri::AppHandle) {
     }
 }
 
-/// Returns the initial overlay state (Collapsed or Hidden) for the overlay to fetch when it mounts.
-/// Used because the startup emit can happen before the overlay webview has registered its listener.
 #[tauri::command]
 async fn cancel_transcription(state: tauri::State<'_, AppState>) -> Result<(), String> {
     log::info!("User requested transcription cancellation");
@@ -2755,31 +4083,44 @@ async fn ui_toggle_dictation(state: tauri::State<'_, AppState>) -> Result<(), St
     Ok(())
 }
 
+/// Initial overlay state for the overlay webview on mount (may run before `overlay-state` listener is ready).
 #[tauri::command]
 fn get_overlay_initial_state(state: tauri::State<AppState>) -> OverlayEvent {
-    let dictation_enabled = if let Ok(config) = state.config.try_lock() {
-        config.get_all().dictation_enabled
-    } else {
-        true
-    };
-    if dictation_enabled {
-        OverlayEvent::Collapsed
-    } else {
-        OverlayEvent::Hidden
+    if let Ok(config) = state.config.try_lock() {
+        let all = config.get_all();
+        if !all.dictation_enabled {
+            return OverlayEvent::Hidden;
+        }
+        return overlay_dormant_event(&all);
+    }
+    OverlayEvent::Dormant {
+        mode_name: "Default".to_string(),
+        accent_color: crate::config::default_accent_for_mode_id("default"),
+        sensitive_app: false,
+        last_transcription_preview: None,
     }
 }
 
 fn reset_overlay_state(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
-    let dictation_enabled = if let Ok(config) = state.config.try_lock() {
-        config.get_all().dictation_enabled
+    let (dictation_enabled, dormant) = if let Ok(config) = state.config.try_lock() {
+        let all = config.get_all();
+        (all.dictation_enabled, overlay_dormant_event(&all))
     } else {
-        true // default fallback
+        (
+            true,
+            OverlayEvent::Dormant {
+                mode_name: "Default".to_string(),
+                accent_color: crate::config::default_accent_for_mode_id("default"),
+                sensitive_app: false,
+                last_transcription_preview: None,
+            },
+        )
     };
-    // Pre-collapse the window from Rust so JS doesn't have to roundtrip.
-    let _ = resize_overlay(app.clone(), false);
+    // Tier 0 from Rust so JS does not need a roundtrip for idle.
+    let _ = resize_overlay(app.clone(), 0);
     if dictation_enabled {
-        emit_overlay_event(app, OverlayEvent::Collapsed);
+        emit_overlay_event(app, dormant);
     } else {
         emit_overlay_event(app, OverlayEvent::Hidden);
     }
@@ -2813,18 +4154,8 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
         }
     };
 
-    let expanded = state.overlay_expanded.load(Ordering::Relaxed);
-    let (logical_width, logical_height) = if expanded {
-        (
-            OVERLAY_EXPANDED_WIDTH as f64,
-            OVERLAY_EXPANDED_HEIGHT as f64,
-        )
-    } else {
-        (
-            OVERLAY_COLLAPSED_WIDTH as f64,
-            OVERLAY_COLLAPSED_HEIGHT as f64,
-        )
-    };
+    let tier = state.overlay_size_tier.load(Ordering::Relaxed);
+    let (logical_width, logical_height) = overlay_logical_size_for_tier(tier);
 
     // Get absolute cursor position using the OS API, then find the matching monitor
     let cursor_screen_pos: Option<(i32, i32)> = {
@@ -2864,8 +4195,8 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
         let physical_margin = (OVERLAY_BOTTOM_MARGIN as f64 * scale_factor).round() as i32;
         let physical_offset_x = (offset_x as f64 * scale_factor).round() as i32;
         let physical_offset_y = (offset_y as f64 * scale_factor).round() as i32;
-        let full_width = (OVERLAY_EXPANDED_WIDTH as f64 * scale_factor).round() as i32;
-        let full_height = (OVERLAY_EXPANDED_HEIGHT as f64 * scale_factor).round() as i32;
+        let full_width = (OVERLAY_FULL_WIDTH as f64 * scale_factor).round() as i32;
+        let full_height = (OVERLAY_FULL_HEIGHT as f64 * scale_factor).round() as i32;
         let physical_width = (logical_width * scale_factor).round() as i32;
         let physical_height = (logical_height * scale_factor).round() as i32;
 
@@ -3052,11 +4383,115 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
 
     log::info!("Starting dictation...");
 
+    // Capture highlighted text before the overlay resizes — keeps focus in the target app for Ctrl+C.
+    let recording_type_start = *state.recording_type.lock().await;
+    *state.pending_selected_text.lock().await = None;
+
+    // Voice-activated editing: requires LLM on selection — block sensitive apps entirely.
+    if recording_type_start == RecordingType::VoiceEdit {
+        let cfg = state.config.lock().await.get_all();
+        if sensitive_app_forces_local(&cfg) {
+            *state.audio_state.lock().await = AudioState::Idle;
+            let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Idle);
+            emit_overlay_event(
+                &state.app_handle,
+                OverlayEvent::Error {
+                    message: "Voice editing is disabled for sensitive apps.".to_string(),
+                },
+            );
+            let app_for_ov = state.app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                reset_overlay_state(&app_for_ov);
+            });
+            return;
+        }
+    }
+
+    #[cfg(not(windows))]
+    if recording_type_start == RecordingType::VoiceEdit {
+        *state.audio_state.lock().await = AudioState::Idle;
+        let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Idle);
+        emit_overlay_event(
+            &state.app_handle,
+            OverlayEvent::Error {
+                message: "Voice editing is not supported on this platform yet (selection capture is Windows-only)."
+                    .to_string(),
+            },
+        );
+        let app_for_ov = state.app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+            reset_overlay_state(&app_for_ov);
+        });
+        return;
+    }
+
+    if recording_type_start == RecordingType::Dictation {
+        let do_selection = {
+            let cfg = state.config.lock().await.get_all();
+            let mode = find_active_mode(&cfg);
+            cfg.context_awareness_enabled
+                && mode.context.enabled
+                && mode.context.read_selection
+                && !sensitive_app_forces_local(&cfg)
+        };
+        if do_selection {
+            match tauri::async_runtime::spawn_blocking(crate::context::capture_selected_text).await
+            {
+                Ok(Some(s)) => *state.pending_selected_text.lock().await = Some(s),
+                Ok(None) => {}
+                Err(e) => log::warn!("Selection capture task failed: {}", e),
+            }
+        }
+    } else if recording_type_start == RecordingType::VoiceEdit {
+        #[cfg(windows)]
+        {
+            match tauri::async_runtime::spawn_blocking(crate::context::capture_selected_text).await
+            {
+                Ok(Some(s)) => *state.pending_selected_text.lock().await = Some(s),
+                Ok(None) => {}
+                Err(e) => log::warn!("Voice-edit selection capture failed: {}", e),
+            }
+            let sel_empty = state
+                .pending_selected_text
+                .lock()
+                .await
+                .as_ref()
+                .map_or(true, |s| s.trim().is_empty());
+            if sel_empty {
+                *state.audio_state.lock().await = AudioState::Idle;
+                let _ =
+                    crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Idle);
+                emit_overlay_event(
+                    &state.app_handle,
+                    OverlayEvent::Error {
+                        message: "No text selected — highlight text in the target app, then hold the voice editing hotkey."
+                            .to_string(),
+                    },
+                );
+                let app_for_ov = state.app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                    reset_overlay_state(&app_for_ov);
+                });
+                return;
+            }
+        }
+    }
+
     // Pre-resize the overlay to expanded BEFORE emitting Listening so the window is already
     // large enough when JS processes the event. Eliminates the IPC roundtrip (JS → Rust resize)
     // that was the main source of perceived delay.
     latency_trace_write("T2_before_resize");
-    let _ = resize_overlay(state.app_handle.clone(), true);
+    let listen_tier = {
+        let cfg = state.config.lock().await.get_all();
+        match cfg.overlay_active_preference {
+            OverlayActivePreference::Full => 2u8,
+            OverlayActivePreference::Mini => 1u8,
+        }
+    };
+    let _ = resize_overlay(state.app_handle.clone(), listen_tier);
     latency_trace_write("T2_after_resize");
 
     #[cfg(windows)]
@@ -3165,16 +4600,47 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     let audio_capture = state.audio_capture.clone();
     let is_recording_level = is_recording.clone();
     let is_sensitive_app_active = state.is_sensitive_app_active.clone();
-    let is_command = *state.recording_type.lock().await == RecordingType::Command;
+    let recording_type_overlay = *state.recording_type.lock().await;
+    let is_command = recording_type_overlay == RecordingType::Command;
+    let is_voice_edit = recording_type_overlay == RecordingType::VoiceEdit;
+    let config_for_overlay = state.config.clone();
+    let process_for_overlay = state.foreground_process_name.clone();
+    let pending_for_overlay = state.pending_selected_text.clone();
     tauri::async_runtime::spawn(async move {
         while is_recording_level.load(Ordering::SeqCst) {
             let level = audio_capture.lock().await.get_current_recording_level();
+            let sensitive = is_sensitive_app_active.load(Ordering::SeqCst);
+            let voice_edit_has_selection = pending_for_overlay
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|s| !s.trim().is_empty());
+            let (ctx_active, ctx_label, mut ctx_sources) = {
+                let proc = process_for_overlay.lock().await.clone();
+                if let Ok(c) = config_for_overlay.try_lock() {
+                    compute_overlay_context_hint(&c.get_all(), proc)
+                } else {
+                    (false, None, vec![])
+                }
+            };
+            // Command pipeline does not use screen context; sensitive-app sessions force context off.
+            // Voice editing: show that highlighted text was captured (Phase 5).
+            if is_voice_edit && voice_edit_has_selection {
+                ctx_sources.push("selection".to_string());
+            }
+            let context_active = (ctx_active && !is_command && !sensitive && !is_voice_edit)
+                || (is_voice_edit && voice_edit_has_selection);
             emit_overlay_event(
                 &app_handle_level,
                 OverlayEvent::Recording {
                     level,
                     is_command,
-                    sensitive_app: is_sensitive_app_active.load(Ordering::SeqCst),
+                    is_voice_edit,
+                    voice_edit_has_selection,
+                    sensitive_app: sensitive,
+                    context_active,
+                    context_label: ctx_label,
+                    context_sources: ctx_sources,
                 },
             );
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -3191,6 +4657,8 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
 enum TranscribeJob {
     FromConfig {
         stt_config: STTConfig,
+        /// Unified provider API keys (Phase 2); cloud STT reads key for `stt_config.provider`.
+        provider_keys: HashMap<String, String>,
         app_handle: Option<tauri::AppHandle>,
         audio_data: Arc<Vec<f32>>,
         sample_rate: u32,
@@ -3259,20 +4727,7 @@ async fn run_command_pipeline(
         return Ok(());
     }
 
-    let cmd = &config.command_config;
-    let provider = cmd.provider.as_deref().unwrap_or("");
-    let use_llm = cmd.enabled
-        && !provider.is_empty()
-        && cmd
-            .api_keys
-            .get(provider)
-            .map(|s| !s.is_empty())
-            .unwrap_or(false)
-        && cmd
-            .models
-            .get(provider)
-            .map(|s| !s.is_empty())
-            .unwrap_or(false);
+    let use_llm = config.command_config.enabled && resolve_command_llm(config).is_some();
 
     // When LLM is enabled: infer entry_type and all fields from full transcription. No "new note/task/reminder" required.
     // When LLM is disabled: require literal prefix and use the rest as payload.
@@ -3317,8 +4772,7 @@ async fn run_command_pipeline(
     let mut subtasks: Option<Vec<crate::models::Subtask>> = None;
 
     if use_llm {
-        let api_key = cmd.api_keys.get(provider).map(|s| s.as_str()).unwrap_or("");
-        let model = cmd.models.get(provider).map(|s| s.as_str()).unwrap_or("");
+        let resolved = resolve_command_llm(config).expect("use_llm implies resolve");
         let today = now.format("%Y-%m-%d").to_string();
         let system_prompt = format!(
             r#"You are a command parser for a voice-controlled productivity app. The user spoke one phrase. Your job is to classify it as a TASK, REMINDER, or NOTE and extract structured fields.
@@ -3343,15 +4797,37 @@ Return ONLY a valid JSON object with these keys (omit any key that is not presen
 Today's date is {}. Use it to resolve relative dates like "tomorrow", "next Monday", "in two hours", "at 3pm". Always include a time component (default to 09:00 UTC if only a date is mentioned). Return only the JSON object, no markdown or explanation."#,
             today
         );
-        match crate::commands::generate_structured_data(
-            provider.to_string(),
-            api_key.to_string(),
-            model.to_string(),
-            system_prompt,
-            payload.clone(),
-        )
-        .await
-        {
+        let gen_result = match resolved {
+            ResolvedLlm::Builtin {
+                provider,
+                api_key,
+                model,
+            } => {
+                crate::commands::generate_structured_data(
+                    provider,
+                    api_key,
+                    model,
+                    system_prompt,
+                    payload.clone(),
+                )
+                .await
+            }
+            ResolvedLlm::CustomOpenAi {
+                base_url,
+                api_key,
+                model,
+            } => {
+                crate::commands::generate_structured_data_openai_compatible(
+                    base_url,
+                    api_key,
+                    model,
+                    system_prompt,
+                    payload.clone(),
+                )
+                .await
+            }
+        };
+        match gen_result {
             Ok(json_str) => {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
                     if let Some(obj) = v.as_object() {
@@ -3632,6 +5108,7 @@ fn calculate_transcription_timeout(
 fn run_transcribe_job(job: TranscribeJob) -> anyhow::Result<crate::stt::TranscriptionResult> {
     let TranscribeJob::FromConfig {
         stt_config,
+        provider_keys,
         app_handle,
         audio_data,
         sample_rate,
@@ -3641,7 +5118,11 @@ fn run_transcribe_job(job: TranscribeJob) -> anyhow::Result<crate::stt::Transcri
     } = job;
     let language = language.as_deref();
     let vocabulary = vocabulary.as_deref();
-    let provider = crate::stt::provider::create_provider_sync(&stt_config, app_handle.as_ref())?;
+    let provider = crate::stt::provider::create_provider_sync(
+        &stt_config,
+        Some(&provider_keys),
+        app_handle.as_ref(),
+    )?;
     log::info!(
         "Starting transcription with {} (chunked + prompt chaining)",
         provider.name()
@@ -3669,6 +5150,35 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         log::info!("Stopping dictation...");
         *audio_state = AudioState::Processing;
         is_recording.store(false, Ordering::SeqCst);
+        // Preserve sensitive-app state for this session's LLM/context policy before clearing the flag for idle UI.
+        let sensitive_for_session = state.is_sensitive_app_active.load(Ordering::SeqCst);
+        let proc_snap = state.foreground_process_name.lock().await.clone();
+        let recording_type_snap = *state.recording_type.lock().await;
+        let pending_snap_for_processing = state.pending_selected_text.lock().await.clone();
+        let processing_ctx_overlay = {
+            if recording_type_snap == RecordingType::VoiceEdit {
+                let has_sel = pending_snap_for_processing
+                    .as_ref()
+                    .is_some_and(|s| !s.trim().is_empty());
+                if has_sel {
+                    (true, None, vec!["selection".to_string()])
+                } else {
+                    (false, None, vec![])
+                }
+            } else {
+                let cfg = state.config.lock().await.get_all();
+                let (mut ctx_on, ctx_label, ctx_sources) =
+                    compute_overlay_context_hint(&cfg, proc_snap.clone());
+                if recording_type_snap == RecordingType::Command || sensitive_for_session {
+                    ctx_on = false;
+                }
+                (
+                    ctx_on,
+                    if ctx_on { ctx_label } else { None },
+                    if ctx_on { ctx_sources } else { vec![] },
+                )
+            }
+        };
         state.is_sensitive_app_active.store(false, Ordering::SeqCst);
         emit_overlay_event(
             &state.app_handle,
@@ -3677,6 +5187,10 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                 expected_secs: 120,
                 attempt: 1,
                 message: None,
+                is_voice_edit: recording_type_snap == RecordingType::VoiceEdit,
+                context_active: processing_ctx_overlay.0,
+                context_label: processing_ctx_overlay.1.clone(),
+                context_sources: processing_ctx_overlay.2.clone(),
             },
         );
         let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Processing);
@@ -3759,16 +5273,34 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
         let last_injected_len = state.last_injected_len.clone();
         let last_injected_text = state.last_injected_text.clone();
         let app_handle = state.app_handle.clone();
-        #[allow(unused_variables)]
         let foreground_hwnd = state.foreground_for_injection.lock().await.take();
-        #[allow(unused_variables)]
         let foreground_process = state.foreground_process_name.lock().await.take();
         let foreground_exe_path = state.foreground_exe_path.lock().await.take();
         let recording_type = *state.recording_type.lock().await;
         let transcription_cancel = state.transcription_cancel.clone();
+        // Command hotkey triggers the command pipeline (notes/tasks/reminders) from any active mode.
+        let use_command_pipeline = recording_type == RecordingType::Command;
+        let voice_ref = {
+            let active = config
+                .modes
+                .iter()
+                .find(|m| m.id == config.active_mode_id)
+                .or_else(|| config.modes.iter().find(|m| m.id == "default"));
+            active
+                .map(|m| m.voice_model.clone())
+                .unwrap_or_default()
+        };
+
+        let pending_selection = state.pending_selected_text.lock().await.take();
+        let session_sensitive_for_llm = sensitive_for_session;
+        let (ctx_a, ctx_l, ctx_s) = processing_ctx_overlay.clone();
+        let is_voice_edit_progress = recording_type == RecordingType::VoiceEdit;
 
         tokio::spawn(async move {
-            let stt_config = crate::config::privacy::effective_stt_config(&config);
+            let merged_stt = merge_stt_config_for_voice(&config.stt_config, &voice_ref);
+            let mut cfg_for_privacy = config.clone();
+            cfg_for_privacy.stt_config = merged_stt;
+            let stt_config = crate::config::privacy::effective_stt_config(&cfg_for_privacy);
             let vad_config = stt_config.vad_config();
             // Create provider inside the OS thread so reqwest::blocking::Client is never
             // created/dropped on a tokio worker (avoids "Cannot drop a runtime" panic).
@@ -3796,6 +5328,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
             };
             let job = TranscribeJob::FromConfig {
                 stt_config: stt_config.clone(),
+                provider_keys: config.provider_keys.clone(),
                 app_handle: app_handle_for_job.clone(),
                 audio_data: audio_data.clone(),
                 sample_rate,
@@ -3824,6 +5357,9 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
             let progress_token = cancel_token.clone();
             let current_attempt = Arc::new(AtomicUsize::new(1));
             let progress_attempt = current_attempt.clone();
+            let ctx_a_prog = ctx_a;
+            let ctx_l_prog = ctx_l.clone();
+            let ctx_s_prog = ctx_s.clone();
             let progress_handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
                 interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -3841,7 +5377,11 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                     } else if elapsed >= long_threshold {
                         Some("Slow response...".to_string())
                     } else if elapsed >= 3 {
-                        Some("Transcribing".to_string())
+                        Some(if is_voice_edit_progress {
+                            "Transforming...".to_string()
+                        } else {
+                            "Transcribing".to_string()
+                        })
                     } else {
                         None
                     };
@@ -3852,6 +5392,10 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             expected_secs,
                             attempt,
                             message,
+                            is_voice_edit: is_voice_edit_progress,
+                            context_active: ctx_a_prog,
+                            context_label: ctx_l_prog.clone(),
+                            context_sources: ctx_s_prog.clone(),
                         },
                     );
                 }
@@ -3878,6 +5422,10 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             expected_secs,
                             attempt,
                             message: Some(format!("Retry {}/3", attempt)),
+                            is_voice_edit: is_voice_edit_progress,
+                            context_active: ctx_a,
+                            context_label: ctx_l.clone(),
+                            context_sources: ctx_s.clone(),
                         },
                     );
                 }
@@ -3994,7 +5542,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             words_count: u32,
                         }
 
-                        if recording_type == RecordingType::Command {
+                        if use_command_pipeline {
                             let cmd_text = transcription_result.text.trim().to_string();
                             let words_count = cmd_text.split_whitespace().count() as u32;
                             let meta = crate::history::HistorySaveMeta {
@@ -4044,12 +5592,285 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                     OverlayEvent::Error { message: e.clone() },
                                 );
                             }
+                        } else if recording_type == RecordingType::VoiceEdit {
+                            let instruction = transcription_result.text.trim().to_string();
+                            let active_mode = find_active_mode(&config);
+                            let selection_opt = pending_selection.and_then(|s| {
+                                let t = s.trim();
+                                if t.is_empty() {
+                                    None
+                                } else {
+                                    Some(s)
+                                }
+                            });
+                            let mut overlay_error: Option<String> = None;
+
+                            if session_sensitive_for_llm {
+                                overlay_error = Some(
+                                    "Voice editing is disabled for sensitive apps.".to_string(),
+                                );
+                            } else if let Some(ref selection) = selection_opt {
+                                if let Some(resolved) =
+                                    resolve_llm_for_dictation_mode(&config, &active_mode)
+                                {
+                                    let system = build_voice_edit_system_prompt();
+                                    let user = format!(
+                                        "Selected text:\n\"\"\"\n{}\n\"\"\"\n\nInstruction: {}",
+                                        selection.trim(),
+                                        instruction
+                                    );
+                                    let llm_out = match resolved {
+                                        ResolvedLlm::Builtin {
+                                            provider,
+                                            api_key,
+                                            model,
+                                        } => {
+                                            crate::commands::complete_plain_text(
+                                                provider, api_key, model, system, user,
+                                            )
+                                            .await
+                                        }
+                                        ResolvedLlm::CustomOpenAi {
+                                            base_url,
+                                            api_key,
+                                            model,
+                                        } => {
+                                            crate::commands::complete_plain_text_openai_compatible(
+                                                base_url, api_key, model, system, user,
+                                            )
+                                            .await
+                                        }
+                                    };
+                                    match llm_out {
+                                        Ok(out) if !out.trim().is_empty() => {
+                                            let formatted = out.trim().to_string();
+                                            let words_count =
+                                                formatted.split_whitespace().count() as u32;
+                                            let meta = crate::history::HistorySaveMeta {
+                                                word_count: words_count,
+                                                stt_latency_ms: latency_ms,
+                                                stt_mode: stt_mode_label.clone(),
+                                                stt_provider: stt_config
+                                                    .provider
+                                                    .trim()
+                                                    .to_string(),
+                                                dictation_language: dictation_language.clone(),
+                                                session_mode: "voice_edit".to_string(),
+                                            };
+                                            if let Err(e) = history::save_transcription(
+                                                &formatted,
+                                                foreground_process.clone(),
+                                                foreground_exe_path.clone(),
+                                                recording_duration_ms,
+                                                meta,
+                                                config.privacy.history_retention_days,
+                                            )
+                                            .await
+                                            {
+                                                log::error!(
+                                                    "Failed to save voice-edit to DB: {}",
+                                                    e
+                                                );
+                                            }
+                                            let date =
+                                                chrono::Utc::now().format("%Y-%m-%d").to_string();
+                                            if let Ok(conn) = db::open_db() {
+                                                let _ = db::record_transcription_stats(
+                                                    &conn,
+                                                    &date,
+                                                    words_count,
+                                                    latency_ms,
+                                                );
+                                            }
+                                            let _ = app_handle.emit(
+                                                "transcription-saved",
+                                                TranscriptionSavedPayload {
+                                                    latency_ms,
+                                                    words_count,
+                                                },
+                                            );
+                                            let _ = app_handle.emit("dictation-result", &formatted);
+                                            #[cfg(windows)]
+                                            if let Some(hwnd) = foreground_hwnd {
+                                                let _ = unsafe {
+                                                    windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(
+                                                        hwnd as isize,
+                                                    )
+                                                };
+                                                std::thread::sleep(
+                                                    std::time::Duration::from_millis(150),
+                                                );
+                                            }
+                                            #[cfg(not(windows))]
+                                            {
+                                                let _ = foreground_hwnd;
+                                            }
+                                            let mut clip_formatting = config.formatting.clone();
+                                            clip_formatting.injection_method =
+                                                crate::config::InjectionMethod::Clipboard;
+                                            if let Ok(injector) =
+                                                crate::injection::TextInjector::new()
+                                            {
+                                                if let Err(e) = injector
+                                                    .inject_with_config(
+                                                        &formatted,
+                                                        &clip_formatting,
+                                                    )
+                                                    .await
+                                                {
+                                                    log::error!(
+                                                        "Voice-edit injection failed: {}",
+                                                        e
+                                                    );
+                                                    overlay_error = Some(format!(
+                                                        "Could not insert text: {}",
+                                                        e
+                                                    ));
+                                                } else if config.notifications.show_completion {
+                                                    let nm = &app_handle
+                                                        .state::<AppState>()
+                                                        .notification_manager;
+                                                    let _ = nm.success("Text replaced");
+                                                }
+                                            }
+                                        }
+                                        Ok(_) => {
+                                            overlay_error = Some(
+                                                "The AI returned no text — try a clearer instruction."
+                                                    .to_string(),
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::warn!("Voice-edit LLM failed: {}", e);
+                                            overlay_error =
+                                                Some(format!("Voice editing failed: {}", e));
+                                        }
+                                    }
+                                } else {
+                                    overlay_error = Some(
+                                        "Voice editing requires an AI provider. Configure one in Settings → AI providers."
+                                            .to_string(),
+                                    );
+                                }
+                            } else {
+                                overlay_error = Some(
+                                    "No text selected — highlight text first, then use the voice editing hotkey."
+                                        .to_string(),
+                                );
+                            }
+
+                            if let Some(msg) = overlay_error {
+                                emit_overlay_event(
+                                    &app_handle,
+                                    OverlayEvent::Error { message: msg },
+                                );
+                            }
                         } else {
+                            let active_mode = find_active_mode(&config);
+                            let mut text_after_llm = transcription_result.text.clone();
+
+                            // Phase 3: gate context capture and context-only LLM on Pro/Trial when subscription ships.
+                            let mut merged_ctx = crate::context::CapturedContext::default();
+                            if !session_sensitive_for_llm
+                                && config.context_awareness_enabled
+                                && active_mode.context.enabled
+                                && (active_mode.context.read_app
+                                    || active_mode.context.read_clipboard
+                                    || active_mode.context.include_system_info)
+                            {
+                                merged_ctx = crate::context::capture_context_post_session(
+                                    &active_mode.context,
+                                    foreground_hwnd,
+                                );
+                            }
+                            if let Some(sel) = pending_selection.filter(|_| {
+                                active_mode.context.enabled && active_mode.context.read_selection
+                            }) {
+                                if !sel.trim().is_empty() {
+                                    merged_ctx.selected_text = Some(sel);
+                                }
+                            }
+
+                            let context_will_run = !session_sensitive_for_llm
+                                && config.context_awareness_enabled
+                                && active_mode.context.enabled
+                                && crate::context::context_has_llm_payload(&merged_ctx);
+
+                            let needs_llm = !active_mode.ai_instructions.trim().is_empty()
+                                || (config.polish_enabled && active_mode.polish)
+                                || context_will_run;
+                            if needs_llm {
+                                if let Some(resolved) =
+                                    resolve_llm_for_dictation_mode(&config, &active_mode)
+                                {
+                                    let ctx_block =
+                                        crate::context::context_system_section(&merged_ctx);
+                                    let system = build_dictation_system_prompt(
+                                        &config,
+                                        &active_mode,
+                                        ctx_block.as_deref(),
+                                    );
+                                    let mut user = format!(
+                                        "Transcript:\n{}",
+                                        transcription_result.text.trim()
+                                    );
+                                    if let Some(ref sel) = merged_ctx.selected_text {
+                                        let t = sel.trim();
+                                        if !t.is_empty() {
+                                            user.push_str(&format!(
+                                                "\n\nSelected text (user may want to edit or transform this):\n\"\"\"\n{}\n\"\"\"",
+                                                t
+                                            ));
+                                        }
+                                    }
+                                    let llm_out = match resolved {
+                                        ResolvedLlm::Builtin {
+                                            provider,
+                                            api_key,
+                                            model,
+                                        } => {
+                                            crate::commands::complete_plain_text(
+                                                provider, api_key, model, system, user,
+                                            )
+                                            .await
+                                        }
+                                        ResolvedLlm::CustomOpenAi {
+                                            base_url,
+                                            api_key,
+                                            model,
+                                        } => {
+                                            crate::commands::complete_plain_text_openai_compatible(
+                                                base_url, api_key, model, system, user,
+                                            )
+                                            .await
+                                        }
+                                    };
+                                    match llm_out {
+                                        Ok(out) if !out.trim().is_empty() => {
+                                            text_after_llm = out;
+                                        }
+                                        Ok(_) => {
+                                            log::warn!("LLM returned empty; using raw transcript");
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "LLM dictation step failed: {}; using raw transcript",
+                                                e
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    log::warn!(
+                                        "Mode {:?} needs LLM but no provider/key/model configured; using raw transcript",
+                                        active_mode.id
+                                    );
+                                }
+                            }
                             let len = last_injected_len.load(Ordering::SeqCst);
                             let prev_text = last_injected_text.lock().await.clone();
                             let prev_ref = prev_text.as_str();
                             let (formatted, actions) = crate::formatting::format_text(
-                                &transcription_result.text,
+                                &text_after_llm,
                                 &config.formatting,
                                 &config.snippets,
                                 len,
@@ -4057,7 +5878,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             );
                             log::info!(
                                 "Transcription completed: raw_len={} formatted_len={} actions={} injection={:?}",
-                                transcription_result.text.len(),
+                                text_after_llm.len(),
                                 formatted.len(),
                                 actions.len(),
                                 config.formatting.injection_method
@@ -4069,7 +5890,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                 stt_mode: stt_mode_label,
                                 stt_provider: stt_config.provider.trim().to_string(),
                                 dictation_language,
-                                session_mode: "dictation".to_string(),
+                                session_mode: active_mode.id.clone(),
                             };
                             if let Err(e) = history::save_transcription(
                                 &formatted,
@@ -4205,7 +6026,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
             *audio_state = AudioState::Idle;
             let _ = crate::tray::TrayManager::set_tray_state(&app_handle, AudioState::Idle);
 
-            // No Success UI: go straight to Collapsed after brief delay
+            // No Success UI: go straight to Dormant after brief delay
             let app_for_overlay = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;

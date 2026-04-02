@@ -19,6 +19,8 @@ export interface DictationRuntimeSnapshot {
   /** Mic level 0–1 while recording (from overlay payload). */
   audioLevel: number
   isCommand: boolean
+  /** Voice-activated editing hotkey session (Phase 5). */
+  isVoiceEdit: boolean
   processingElapsedSec: number
   processingExpectedSec: number
   processingAttempt: number
@@ -34,6 +36,7 @@ const baseSnapshot = (): DictationRuntimeSnapshot => ({
   phase: 'idle',
   audioLevel: 0,
   isCommand: false,
+  isVoiceEdit: false,
   processingElapsedSec: 0,
   processingExpectedSec: 120,
   processingAttempt: 1,
@@ -77,6 +80,7 @@ export function applyOverlayBroadcast(payload: unknown): void {
 
   switch (kind) {
     case 'Hidden':
+    case 'Dormant':
     case 'Collapsed':
     case 'Success':
     case 'ShortPress':
@@ -91,12 +95,14 @@ export function applyOverlayBroadcast(payload: unknown): void {
     case 'Recording': {
       const level = typeof p.level === 'number' ? Math.min(1, Math.max(0, p.level)) : 0
       const isCommand = p.is_command === true
+      const isVoiceEdit = p.is_voice_edit === true
       if (recordingStartedAt == null) startRecordingWallClock()
       dictationRuntimeStore.update((s) => ({
         ...s,
         phase: 'recording',
         audioLevel: level,
         isCommand: isCommand,
+        isVoiceEdit,
       }))
       return
     }
@@ -105,6 +111,7 @@ export function applyOverlayBroadcast(payload: unknown): void {
       dictationRuntimeStore.update((s) => ({
         ...baseSnapshot(),
         phase: 'processing',
+        isVoiceEdit: p.is_voice_edit === true,
         processingElapsedSec: typeof p.elapsed_secs === 'number' ? p.elapsed_secs : 0,
         processingExpectedSec: typeof p.expected_secs === 'number' ? p.expected_secs : 120,
         processingAttempt: typeof p.attempt === 'number' ? p.attempt : 1,

@@ -239,7 +239,7 @@ fn sanitize_prompt_leakage(text: &str, vocabulary: Option<&str>) -> String {
     // Also try after stripping trailing sentence punctuation (e.g. "...dfssdfsdf.").
     {
         let lower_vocab = vocab.to_lowercase();
-        let trimmed_trailing = cleaned.trim_end_matches(|c: char| c == '.' || c == '!' || c == '?');
+        let trimmed_trailing = cleaned.trim_end_matches(['.', '!', '?']);
         let candidate = if trimmed_trailing.to_lowercase().ends_with(&lower_vocab) {
             trimmed_trailing
         } else if cleaned.to_lowercase().ends_with(&lower_vocab) {
@@ -266,7 +266,10 @@ fn sanitize_prompt_leakage(text: &str, vocabulary: Option<&str>) -> String {
         let parts: Vec<&str> = cleaned.split(',').collect();
         let mut trailing_vocab_parts = 0usize;
         for p in parts.iter().rev() {
-            let token = p.trim().trim_end_matches(|c: char| c.is_ascii_punctuation() && c != '\'').to_lowercase();
+            let token = p
+                .trim()
+                .trim_end_matches(|c: char| c.is_ascii_punctuation() && c != '\'')
+                .to_lowercase();
             if token.is_empty() {
                 break;
             }
@@ -282,9 +285,7 @@ fn sanitize_prompt_leakage(text: &str, vocabulary: Option<&str>) -> String {
             }
             cleaned = parts[..parts.len() - trailing_vocab_parts]
                 .join(",")
-                .trim_end_matches(|c: char| {
-                    c.is_whitespace() || [',', ';', ':', '-'].contains(&c)
-                })
+                .trim_end_matches(|c: char| c.is_whitespace() || [',', ';', ':', '-'].contains(&c))
                 .trim_end()
                 .to_string();
         }

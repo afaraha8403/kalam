@@ -5,7 +5,8 @@
   import { dictationRuntimeStore } from '../lib/dictationState'
   import { languageLabel } from '../lib/languages'
   import { invoke, isTauriRuntime } from '../lib/backend'
-  import type { AppConfig, AudioDevice } from '../types'
+  import { effectiveModeAccent } from '../lib/modeAccent'
+  import type { AppConfig, AudioDevice, DictationMode } from '../types'
 
   type SttMode = AppConfig['stt_config']['mode']
 
@@ -24,6 +25,8 @@
 
   let sttMenuOpen = false
   let sttWrapEl: HTMLDivElement | null = null
+  let modeMenuOpen = false
+  let modeWrapEl: HTMLDivElement | null = null
 
   let audioDevices: AudioDevice[] = []
   /** Bound to mic `<select>`; synced from `config` when settings change. */
@@ -89,9 +92,13 @@
       case 'listening':
         return '🎧 Listening…'
       case 'recording':
-        return `🔴 Recording ${formatMmSs(rt.recordingDurationSec)}`
+        return rt.isVoiceEdit
+          ? `✏️ Editing ${formatMmSs(rt.recordingDurationSec)}`
+          : `🔴 Recording ${formatMmSs(rt.recordingDurationSec)}`
       case 'processing':
-        return `⏳ Processing ${rt.processingElapsedSec}s`
+        return rt.isVoiceEdit
+          ? `⏳ Transforming ${rt.processingElapsedSec}s`
+          : `⏳ Processing ${rt.processingElapsedSec}s`
       case 'error':
         return `⚠️ ${truncate(rt.errorMessage ?? 'Error', 38)}`
       case 'status':
@@ -210,9 +217,29 @@
   }
 
   function onDocClick(e: MouseEvent) {
-    if (!sttMenuOpen || !sttWrapEl) return
     const t = e.target as Node
-    if (!sttWrapEl.contains(t)) sttMenuOpen = false
+    if (sttMenuOpen && sttWrapEl && !sttWrapEl.contains(t)) sttMenuOpen = false
+    if (modeMenuOpen && modeWrapEl && !modeWrapEl.contains(t)) modeMenuOpen = false
+  }
+
+  $: modesList = (config?.modes ?? []) as DictationMode[]
+  $: activeMode = modesList.find((m) => m.id === config?.active_mode_id)
+  $: activeModeName = activeMode?.name ?? 'Default'
+  $: activeModeColor = activeMode
+    ? effectiveModeAccent(activeMode)
+    : effectiveModeAccent({ id: config?.active_mode_id ?? 'default', accent_color: '' })
+
+  async function setActiveModeFromBar(modeId: string) {
+    if (!isTauriRuntime()) {
+      modeMenuOpen = false
+      return
+    }
+    try {
+      await invoke('set_active_mode', { modeId })
+    } catch (err) {
+      console.error('set_active_mode failed:', err)
+    }
+    modeMenuOpen = false
   }
 
   onMount(() => {
@@ -252,6 +279,37 @@
     <span class="emoji-cell" aria-hidden="true">{dbEmoji}</span>
     <span class="db-label">Storage</span>
   </button>
+
+  <div class="stt-wrap" bind:this={modeWrapEl}>
+    <button
+      type="button"
+      class="segment stt-mode interactive mode-mode-btn"
+      title={`Dictation mode: ${activeModeName}. Click to switch.`}
+      disabled={!config || !isTauriRuntime() || modesList.length === 0}
+      on:click|stopPropagation={() => {
+        if (config && isTauriRuntime() && modesList.length) modeMenuOpen = !modeMenuOpen
+      }}
+    >
+      <span class="mode-color-dot" aria-hidden="true" style="background: {activeModeColor}"></span>
+      <span class="mode-short-label">{truncate(activeModeName, 14)}</span>
+      <span class="stt-chevron" aria-hidden="true">{modeMenuOpen ? '▲' : '▼'}</span>
+    </button>
+    {#if modeMenuOpen && config && modesList.length}
+      <div class="stt-menu mode-menu" role="menu">
+        {#each modesList as m (m.id)}
+          <button
+            type="button"
+            role="menuitem"
+            class:active={config.active_mode_id === m.id}
+            on:click|stopPropagation={() => setActiveModeFromBar(m.id)}
+          >
+            <span class="menu-color-dot" aria-hidden="true" style="background: {effectiveModeAccent(m)}"></span>
+            {m.name}
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
 
   <div class="stt-wrap" bind:this={sttWrapEl}>
     <button
@@ -531,6 +589,8 @@
     font-weight: 400;
     cursor: pointer;
     color: var(--text-primary);
+    display: flex;
+    align-items: center;
   }
 
   .stt-menu button:hover {
@@ -561,6 +621,24 @@
 
   .lang-badge {
     font: inherit;
+  }
+
+  /* Mode color dots - replace emoji with color coding */
+  .mode-color-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-block;
+  }
+
+  .menu-color-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: inline-block;
+    margin-right: 6px;
   }
 
   .audio-level {

@@ -220,6 +220,54 @@ pub async fn generate_structured_data(
     }
 }
 
+/// Dictation polish / mode instructions: one LLM call returning plain text (no JSON schema).
+pub async fn complete_plain_text(
+    provider: String,
+    api_key: String,
+    model: String,
+    system_prompt: String,
+    user_text: String,
+) -> Result<String, String> {
+    if api_key.trim().is_empty() || model.trim().is_empty() {
+        return Err("API key and model are required".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    match provider.to_lowercase().as_str() {
+        "groq" | "openrouter" | "openai" => {
+            chat_openai_style_plain(
+                &client,
+                &provider,
+                &api_key,
+                &model,
+                &system_prompt,
+                &user_text,
+            )
+            .await
+        }
+        "anthropic" => {
+            chat_anthropic_plain(&client, &api_key, &model, &system_prompt, &user_text).await
+        }
+        "gemini" => chat_gemini_plain(&client, &api_key, &model, &system_prompt, &user_text).await,
+        _ => Err(format!("Unknown LLM provider: {}", provider)),
+    }
+}
+
+#[tauri::command]
+pub async fn complete_plain_text_command(
+    provider: String,
+    api_key: String,
+    model: String,
+    system_prompt: String,
+    user_text: String,
+) -> Result<String, String> {
+    complete_plain_text(provider, api_key, model, system_prompt, user_text).await
+}
+
 fn openai_style_base(provider: &str) -> &'static str {
     match provider.to_lowercase().as_str() {
         "groq" => GROQ_BASE,
@@ -267,6 +315,31 @@ async fn chat_openai_style(
     user_text: &str,
 ) -> Result<String, String> {
     let base = openai_style_base(provider);
+    post_openai_chat_completion(
+        client,
+        base,
+        api_key,
+        model,
+        system_prompt,
+        user_text,
+        Some(OpenAIResponseFormat {
+            type_: "json_object".to_string(),
+        }),
+    )
+    .await
+}
+
+/// `base` is the OpenAI-compatible root including `/v1` when applicable (e.g. `https://api.openai.com/v1`).
+async fn post_openai_chat_completion(
+    client: &reqwest::Client,
+    base: &str,
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_text: &str,
+    response_format: Option<OpenAIResponseFormat>,
+) -> Result<String, String> {
+    let base = base.trim().trim_end_matches('/');
     let url = format!("{}/chat/completions", base);
 
     let body = OpenAIRequest {
@@ -281,9 +354,7 @@ async fn chat_openai_style(
                 content: user_text.to_string(),
             },
         ],
-        response_format: Some(OpenAIResponseFormat {
-            type_: "json_object".to_string(),
-        }),
+        response_format,
     };
 
     let res = client
@@ -308,6 +379,82 @@ async fn chat_openai_style(
         .map(|c| c.message.content)
         .unwrap_or_default();
     Ok(content.trim().to_string())
+}
+
+async fn chat_openai_style_plain(
+    client: &reqwest::Client,
+    provider: &str,
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_text: &str,
+) -> Result<String, String> {
+    let base = openai_style_base(provider);
+    post_openai_chat_completion(client, base, api_key, model, system_prompt, user_text, None).await
+}
+
+/// Custom OpenAI-compatible HTTPS endpoint (BYO base URL).
+pub async fn complete_plain_text_openai_compatible(
+    base_url: String,
+    api_key: String,
+    model: String,
+    system_prompt: String,
+    user_text: String,
+) -> Result<String, String> {
+    if api_key.trim().is_empty() || model.trim().is_empty() {
+        return Err("API key and model are required".to_string());
+    }
+    let base = base_url.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Err("Base URL is required".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    post_openai_chat_completion(
+        &client,
+        &base,
+        &api_key,
+        &model,
+        &system_prompt,
+        &user_text,
+        None,
+    )
+    .await
+}
+
+/// JSON-object response (command mode) against a custom OpenAI-compatible base URL.
+pub async fn generate_structured_data_openai_compatible(
+    base_url: String,
+    api_key: String,
+    model: String,
+    system_prompt: String,
+    user_text: String,
+) -> Result<String, String> {
+    if api_key.trim().is_empty() || model.trim().is_empty() {
+        return Err("API key and model are required".to_string());
+    }
+    let base = base_url.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Err("Base URL is required".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    post_openai_chat_completion(
+        &client,
+        &base,
+        &api_key,
+        &model,
+        &system_prompt,
+        &user_text,
+        Some(OpenAIResponseFormat {
+            type_: "json_object".to_string(),
+        }),
+    )
+    .await
 }
 
 #[derive(Serialize)]
@@ -350,6 +497,54 @@ async fn chat_anthropic(
         max_tokens: 4096,
         system: format!(
             "{}\n\nRespond with ONLY a valid JSON object, no markdown or explanation.",
+            system_prompt
+        ),
+        messages: vec![AnthropicMessage {
+            role: "user".to_string(),
+            content: user_text.to_string(),
+        }],
+    };
+
+    let res = client
+        .post(&url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        let status = res.status();
+        let text = res.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status, text));
+    }
+
+    let data: AnthropicResponse = res.json().await.map_err(|e| e.to_string())?;
+    let text = data
+        .content
+        .into_iter()
+        .find(|c| c.type_ == "text")
+        .and_then(|c| c.text)
+        .unwrap_or_default();
+    Ok(text.trim().to_string())
+}
+
+async fn chat_anthropic_plain(
+    client: &reqwest::Client,
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_text: &str,
+) -> Result<String, String> {
+    let url = format!("{}/messages", ANTHROPIC_BASE);
+
+    let body = AnthropicRequest {
+        model: model.to_string(),
+        max_tokens: 4096,
+        system: format!(
+            "{}\n\nReply with plain text only (the final dictation result). No JSON, no preamble.",
             system_prompt
         ),
         messages: vec![AnthropicMessage {
@@ -445,6 +640,59 @@ async fn chat_gemini(
         }],
         generation_config: GeminiGenerationConfig {
             response_mime_type: "application/json".to_string(),
+        },
+    };
+
+    let res = client
+        .post(&url)
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        let status = res.status();
+        let text = res.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status, text));
+    }
+
+    let data: GeminiResponse = res.json().await.map_err(|e| e.to_string())?;
+    let text = data
+        .candidates
+        .and_then(|c| c.into_iter().next())
+        .and_then(|c| c.content)
+        .and_then(|c| c.parts)
+        .and_then(|p| p.into_iter().next())
+        .map(|p| p.text)
+        .unwrap_or_default();
+    Ok(text.trim().to_string())
+}
+
+async fn chat_gemini_plain(
+    client: &reqwest::Client,
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_text: &str,
+) -> Result<String, String> {
+    let path_name = model.strip_prefix("models/").unwrap_or(model);
+    let url = format!(
+        "{}/models/{}:generateContent?key={}",
+        GEMINI_BASE, path_name, api_key
+    );
+
+    let combined = format!(
+        "{}\n\nTranscript to process:\n{}\n\nOutput only the final plain text result.",
+        system_prompt, user_text
+    );
+
+    let body = GeminiRequest {
+        contents: vec![GeminiContent {
+            parts: vec![GeminiPart { text: combined }],
+        }],
+        generation_config: GeminiGenerationConfig {
+            response_mime_type: "text/plain".to_string(),
         },
     };
 

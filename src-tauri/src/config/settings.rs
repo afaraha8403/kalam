@@ -1,4 +1,137 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+// --- Dictation modes (Phase 1): recipes + per-mode STT/LLM refs ---
+
+/// Per-mode STT or LLM provider + model. Empty provider means "use global default"
+/// (`stt_config` for voice, `default_llm_provider`/`default_llm_model` for LLM).
+/// Legacy `"inherit"` values are treated the same as empty during resolution.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModeModelRef {
+    pub provider: String,
+    pub model_id: String,
+}
+
+impl ModeModelRef {
+    /// True when this ref defers to the global default (empty or legacy "inherit").
+    pub fn is_default(&self) -> bool {
+        let p = self.provider.trim();
+        p.is_empty() || p.eq_ignore_ascii_case("inherit")
+    }
+}
+
+impl Default for ModeModelRef {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            model_id: String::new(),
+        }
+    }
+}
+
+/// Context awareness toggles per mode (Phase 4 will read the screen; data model only in Phase 1).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ModeContextConfig {
+    pub enabled: bool,
+    pub read_app: bool,
+    pub read_clipboard: bool,
+    pub read_selection: bool,
+    pub include_system_info: bool,
+}
+
+/// Granular polish behavior (Pro may gate these later; all honored when polish runs).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PolishConfig {
+    pub fix_grammar: bool,
+    pub remove_filler: bool,
+    pub fix_punctuation: bool,
+    pub smart_formatting: bool,
+    pub self_correction: bool,
+}
+
+impl Default for PolishConfig {
+    fn default() -> Self {
+        Self {
+            fix_grammar: true,
+            remove_filler: true,
+            fix_punctuation: true,
+            smart_formatting: true,
+            self_correction: true,
+        }
+    }
+}
+
+/// Default accent when `accent_color` is empty (CSS color, usually OKLCH).
+pub fn default_accent_for_mode_id(id: &str) -> String {
+    match id {
+        "default" | "voice" => "oklch(68% 0.1 240)".to_string(),
+        "email" => "oklch(68% 0.1 220)".to_string(),
+        "message" => "oklch(70% 0.1 160)".to_string(),
+        "notes" => "oklch(72% 0.06 85)".to_string(),
+        _ => {
+            let mut hash: u32 = 0;
+            for b in id.bytes() {
+                hash = b as u32 + hash.wrapping_mul(31);
+            }
+            let hue = (hash % 360) as i32;
+            format!("oklch(68% 0.1 {hue})")
+        }
+    }
+}
+
+/// Resolved accent for UI (stored value or id-based default).
+pub fn effective_accent_color(mode: &DictationMode) -> String {
+    let t = mode.accent_color.trim();
+    if t.is_empty() {
+        default_accent_for_mode_id(&mode.id)
+    } else {
+        mode.accent_color.clone()
+    }
+}
+
+/// A dictation "recipe": name, models, AI instructions, polish default, etc.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DictationMode {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// CSS color for overlay + main UI (OKLCH, hex, etc.). Empty = derive from `id`.
+    #[serde(default)]
+    pub accent_color: String,
+    #[serde(default)]
+    pub ai_instructions: String,
+    #[serde(default)]
+    pub voice_model: ModeModelRef,
+    #[serde(default)]
+    pub language_model: ModeModelRef,
+    /// When true and global `polish_enabled` is true, polish instructions are included in the LLM call.
+    #[serde(default)]
+    pub polish: bool,
+    #[serde(default)]
+    pub context: ModeContextConfig,
+    #[serde(default)]
+    pub auto_activate_rules: Vec<AutoActivateRule>,
+    /// Shipped templates (Email, Notes, …); user may still delete most built-ins except Voice.
+    #[serde(default)]
+    pub is_builtin: bool,
+    #[serde(default = "default_true")]
+    pub is_deletable: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Advanced: OpenAI-compatible chat/completions endpoint (custom base URL + key + model).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct CustomOpenAiEndpoint {
+    pub base_url: String,
+    pub api_key: String,
+    pub model_id: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -46,6 +179,12 @@ pub struct AppConfig {
     pub overlay_offset_y: i32,
     #[serde(default)]
     pub overlay_expand_direction: ExpandDirection,
+    /// Compact pill vs full panel when recording starts (Phase 6).
+    #[serde(default)]
+    pub overlay_active_preference: OverlayActivePreference,
+    /// When true, idle overlay pill stays fully opaque (Phase 6).
+    #[serde(default)]
+    pub overlay_always_visible: bool,
     /// Master switch: when false, hotkeys and transcription are disabled.
     #[serde(default = "default_dictation_enabled")]
     pub dictation_enabled: bool,
@@ -67,6 +206,18 @@ pub struct AppConfig {
     /// Command mode: dedicated hotkey to create note/task/reminder from voice; optional LLM parsing.
     #[serde(default)]
     pub command_config: CommandConfig,
+    /// Unified API keys by provider id (`groq`, `openai`, …). Phase 2 migration merges legacy `stt_config.api_keys` / `command_config.api_keys`.
+    #[serde(default)]
+    pub provider_keys: HashMap<String, String>,
+    /// Global fallback LLM provider id (e.g. "groq", "openai"). Used when a mode has no LLM configured.
+    #[serde(default)]
+    pub default_llm_provider: Option<String>,
+    /// Global fallback LLM model id (e.g. "llama-3.3-70b-versatile"). Paired with `default_llm_provider`.
+    #[serde(default)]
+    pub default_llm_model: Option<String>,
+    /// Optional custom OpenAI-compatible endpoint for LLM (provider = `custom_openai`).
+    #[serde(default)]
+    pub custom_openai_endpoint: Option<CustomOpenAiEndpoint>,
     /// Update channel: stable (latest release) or beta (pre-releases).
     #[serde(default)]
     pub update_channel: UpdateChannel,
@@ -79,6 +230,66 @@ pub struct AppConfig {
     /// UI theme: fixed light/dark or follow OS appearance (`Auto`).
     #[serde(default)]
     pub theme_preference: ThemePreference,
+
+    // --- Dictation modes (config v2+) ---
+    #[serde(default)]
+    pub modes: Vec<DictationMode>,
+    #[serde(default = "default_active_mode_id")]
+    pub active_mode_id: String,
+    /// Global master switch: when false, polish instructions are never added.
+    #[serde(default)]
+    pub polish_enabled: bool,
+    #[serde(default)]
+    pub polish_config: PolishConfig,
+    /// Phase 4: master switch for context gathering (stored; not used for capture in Phase 1).
+    #[serde(default)]
+    pub context_awareness_enabled: bool,
+    /// Hotkey to cycle `active_mode_id` through `modes`.
+    #[serde(default = "default_mode_cycle_hotkey")]
+    pub mode_cycle_hotkey: Option<String>,
+    /// Hold-to-talk: highlight text, then speak an edit instruction (Phase 5). Empty/unset = disabled.
+    #[serde(default)]
+    pub voice_edit_hotkey: Option<String>,
+    /// Base URL for the community recipe library (HTTPS Worker). No trailing slash (Phase 8).
+    #[serde(default = "default_recipe_library_url")]
+    pub recipe_library_url: String,
+
+    // --- Phase 9: Pro multi-PC sync ---
+    /// Kalam Pro license key (`KALAM-XXXX-...`); used for Bearer auth against the website API (validate + sync).
+    #[serde(default)]
+    pub license_key: Option<String>,
+    #[serde(default)]
+    pub sync_enabled: bool,
+    /// ISO timestamp of last successful pull+push (from server `server_time` when available).
+    #[serde(default)]
+    pub sync_last_at: Option<String>,
+    /// Stable per-install id for support; generated when sync is first enabled.
+    #[serde(default)]
+    pub sync_device_id: Option<String>,
+    /// True after local settings/modes/keys change until a successful sync push acknowledges them.
+    #[serde(default)]
+    pub sync_config_dirty: bool,
+    /// Bumped on each successful Settings save; embedded in the synced settings blob for last-write-wins.
+    #[serde(default)]
+    pub sync_settings_rev: Option<String>,
+    /// Last `updated_at` from a merged remote settings blob (LWW on pull).
+    #[serde(default)]
+    pub sync_last_merged_settings_at: Option<String>,
+    /// Last `updated_at` from a merged remote encrypted keys blob.
+    #[serde(default)]
+    pub sync_last_merged_keys_at: Option<String>,
+}
+
+fn default_active_mode_id() -> String {
+    "default".to_string()
+}
+
+fn default_mode_cycle_hotkey() -> Option<String> {
+    Some("Ctrl+Shift+M".to_string())
+}
+
+fn default_recipe_library_url() -> String {
+    "https://kalam.stream".to_string()
 }
 
 /// Light / Dark fix the shell; Auto follows `prefers-color-scheme` on the frontend.
@@ -91,17 +302,19 @@ pub enum ThemePreference {
     Auto,
 }
 
+/// Command mode: voice-triggered note/task/reminder creation. Provider/model config removed in v6;
+/// commands now use the active mode's LLM or the global `default_llm_*` fallback.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CommandConfig {
     pub enabled: bool,
     pub hotkey: Option<String>,
-    /// "groq" | "openrouter" | "gemini" | "openai" | "anthropic"
+    // --- Legacy fields: deserialized for migration but never serialized ---
+    #[serde(default, skip_serializing)]
     pub provider: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub api_keys: std::collections::HashMap<String, String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub models: std::collections::HashMap<String, String>,
-    // Legacy fields for backwards compatibility
     #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
     #[serde(default, skip_serializing)]
@@ -132,6 +345,14 @@ pub enum ExpandDirection {
     Up,
     Down,
     Center,
+}
+
+/// Preferred overlay layout when dictation is active (Phase 6).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub enum OverlayActivePreference {
+    #[default]
+    Mini,
+    Full,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -180,7 +401,7 @@ fn default_hotkey() -> Option<String> {
 }
 
 fn default_config_version() -> u32 {
-    1
+    5
 }
 
 fn default_min_hold_ms() -> u64 {
@@ -218,6 +439,8 @@ impl Default for AppConfig {
             overlay_offset_x: 0,
             overlay_offset_y: 0,
             overlay_expand_direction: ExpandDirection::default(),
+            overlay_active_preference: OverlayActivePreference::default(),
+            overlay_always_visible: false,
             dictation_enabled: true,
             user_email: None,
             marketing_opt_in: false,
@@ -225,12 +448,144 @@ impl Default for AppConfig {
             onboarding_os_name: None,
             onboarding_os_version: None,
             command_config: CommandConfig::default(),
+            provider_keys: HashMap::new(),
+            default_llm_provider: None,
+            default_llm_model: None,
+            custom_openai_endpoint: None,
             update_channel: UpdateChannel::Stable,
             update_channel_locked: false,
             sidebar_collapsed: false,
             theme_preference: ThemePreference::default(),
+            modes: {
+                let ts = chrono::Utc::now().to_rfc3339();
+                build_default_modes(&ts)
+            },
+            active_mode_id: default_active_mode_id(),
+            polish_enabled: false,
+            polish_config: PolishConfig::default(),
+            context_awareness_enabled: false,
+            mode_cycle_hotkey: default_mode_cycle_hotkey(),
+            voice_edit_hotkey: None,
+            recipe_library_url: default_recipe_library_url(),
+            license_key: None,
+            sync_enabled: false,
+            sync_last_at: None,
+            sync_device_id: None,
+            sync_config_dirty: false,
+            sync_settings_rev: None,
+            sync_last_merged_settings_at: None,
+            sync_last_merged_keys_at: None,
         }
     }
+}
+
+/// Built-in modes for a new install or post-migration (Default is non-deletable).
+///
+/// Canonical source of truth for defaults. The JSON files under `src-tauri/recipes/`
+/// mirror these values for reference and community recipe library seeding -- they are
+/// NOT loaded at runtime. Keep both in sync when changing built-in mode definitions.
+pub fn build_default_modes(now_rfc3339: &str) -> Vec<DictationMode> {
+    let ts = now_rfc3339.to_string();
+    vec![
+        DictationMode {
+            id: "default".into(),
+            name: "Default".into(),
+            icon: Some("ph:microphone".into()),
+            accent_color: default_accent_for_mode_id("default"),
+            ai_instructions: String::new(),
+            voice_model: ModeModelRef::default(),
+            language_model: ModeModelRef::default(),
+            polish: false,
+            context: ModeContextConfig::default(),
+            auto_activate_rules: vec![],
+            is_builtin: true,
+            is_deletable: false,
+            created_at: ts.clone(),
+            updated_at: ts.clone(),
+        },
+        DictationMode {
+            id: "email".into(),
+            name: "Email".into(),
+            icon: Some("ph:envelope".into()),
+            accent_color: default_accent_for_mode_id("email"),
+            ai_instructions: "Format the user's dictation as a professional email body. Add an appropriate greeting and sign-off when suitable. Keep their natural tone; make it clear and professional. Do not add facts they did not say.".into(),
+            voice_model: ModeModelRef::default(),
+            language_model: ModeModelRef::default(),
+            polish: true,
+            context: ModeContextConfig {
+                enabled: true,
+                read_app: true,
+                read_clipboard: true,
+                read_selection: false,
+                include_system_info: true,
+            },
+            auto_activate_rules: vec![],
+            is_builtin: true,
+            is_deletable: true,
+            created_at: ts.clone(),
+            updated_at: ts.clone(),
+        },
+        DictationMode {
+            id: "message".into(),
+            name: "Message".into(),
+            icon: Some("ph:chat-circle-text".into()),
+            accent_color: default_accent_for_mode_id("message"),
+            ai_instructions: "Rewrite the user's dictation as a short, casual message suitable for chat or SMS. Be concise and friendly.".into(),
+            voice_model: ModeModelRef::default(),
+            language_model: ModeModelRef::default(),
+            polish: true,
+            context: ModeContextConfig::default(),
+            auto_activate_rules: vec![],
+            is_builtin: true,
+            is_deletable: true,
+            created_at: ts.clone(),
+            updated_at: ts.clone(),
+        },
+        DictationMode {
+            id: "notes".into(),
+            name: "Notes".into(),
+            icon: Some("ph:note-pencil".into()),
+            accent_color: default_accent_for_mode_id("notes"),
+            ai_instructions: "Structure the user's dictation as organized notes: use bullet points or short headings where helpful, capture key takeaways, keep their meaning.".into(),
+            voice_model: ModeModelRef::default(),
+            language_model: ModeModelRef::default(),
+            polish: true,
+            context: ModeContextConfig::default(),
+            auto_activate_rules: vec![],
+            is_builtin: true,
+            is_deletable: true,
+            created_at: ts.clone(),
+            updated_at: ts.clone(),
+        },
+    ]
+}
+
+/// Merge global STT settings with a mode's voice model ref (per-mode provider / local model / cloud model id).
+pub fn merge_stt_config_for_voice(global: &STTConfig, voice: &ModeModelRef) -> STTConfig {
+    let mut cfg = global.clone();
+    if voice.is_default() {
+        return cfg;
+    }
+    let p = voice.provider.trim();
+    match p.to_lowercase().as_str() {
+        "local" => {
+            cfg.mode = STTMode::Local;
+            if !voice.model_id.trim().is_empty() {
+                cfg.local_model = Some(voice.model_id.trim().to_string());
+            }
+        }
+        "groq" | "openai" => {
+            cfg.provider = p.to_string();
+            cfg.mode = STTMode::Cloud;
+            if !voice.model_id.trim().is_empty() {
+                cfg.cloud_transcription_model = Some(voice.model_id.trim().to_string());
+            } else {
+                cfg.cloud_transcription_model = None;
+            }
+        }
+        _ => {}
+    }
+    cfg
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,12 +641,16 @@ impl Default for TranscriptionTimeoutConfig {
 pub struct STTConfig {
     pub mode: STTMode,
     pub provider: String,
-    #[serde(default)]
+    /// Legacy; keys live in `provider_keys` after v3. Still deserialized from old files.
+    #[serde(default, skip_serializing)]
     pub api_keys: std::collections::HashMap<String, String>,
     // Legacy field for backwards compatibility; migrated into api_keys on load.
     #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
     pub local_model: Option<String>,
+    /// When set (Groq/OpenAI cloud), overrides the provider default transcription model id.
+    #[serde(default)]
+    pub cloud_transcription_model: Option<String>,
     pub vad_preset: VADPreset,
     #[serde(default)]
     pub audio_filter: crate::audio::filter::AudioFilterConfig,
@@ -307,6 +666,7 @@ impl Default for STTConfig {
             api_keys: std::collections::HashMap::new(),
             api_key: None,
             local_model: None,
+            cloud_transcription_model: None,
             vad_preset: VADPreset::Balanced,
             audio_filter: crate::audio::filter::AudioFilterConfig::default(),
             transcription_timeout: TranscriptionTimeoutConfig::default(),
@@ -442,11 +802,18 @@ pub struct SensitiveAppPattern {
     pub action: PrivacyAction,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PatternType {
     ProcessName,
     WindowTitle,
     BundleId,
+}
+
+/// Auto-switch mode when an app is focused (Phase 7; stored but not enforced in Phase 1).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AutoActivateRule {
+    pub app_pattern: String,
+    pub pattern_type: PatternType,
 }
 
 /// Only `ForceLocal` is implemented. Legacy `Block` / `RequireConfirmation` in JSON map to `ForceLocal` on load.

@@ -1,0 +1,18 @@
+{
+  "kalam_recipe_version": 2,
+  "name": "Notes",
+  "icon": "ph:note-pencil",
+  "accent_color": "oklch(72% 0.06 85)",
+  "ai_instructions": "Structure the user's dictation as organized notes: use bullet points or short headings where helpful, capture key takeaways, keep their meaning.",
+  "voice_model": { "provider": "inherit", "model_id": "" },
+  "language_model": { "provider": "inherit", "model_id": "" },
+  "polish_recommended": true,
+  "context": {
+    "enabled": false,
+    "read_app": false,
+    "read_clipboard": false,
+    "read_selection": false,
+    "include_system_info": false
+  },
+  "examples": []
+}
