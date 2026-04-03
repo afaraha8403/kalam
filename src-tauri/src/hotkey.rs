@@ -65,13 +65,28 @@ fn set_rdev_thread_priority_above_normal() {
 /// Called from WH_KEYBOARD_LL hook (Windows). Dispatches key so T0 runs in hook thread (low latency).
 #[cfg(windows)]
 pub(crate) fn dispatch_key_from_win_hook(vk_code: u32, is_press: bool) {
+    log::debug!(
+        "[HOOK] vk=0x{:X} is_press={} paused={}",
+        vk_code,
+        is_press,
+        HOTKEYS_PAUSED.load(Ordering::SeqCst)
+    );
     if let Some(key) = vk_code_to_key(vk_code) {
         if HOTKEYS_PAUSED.load(Ordering::SeqCst) {
             update_modifiers(key, is_press);
             return;
         }
         update_modifiers(key, is_press);
+        log::debug!(
+            "[HOOK] after update_modifiers: ctrl={} alt={} shift={} meta={}",
+            CTRL_PRESSED.load(Ordering::SeqCst),
+            ALT_PRESSED.load(Ordering::SeqCst),
+            SHIFT_PRESSED.load(Ordering::SeqCst),
+            META_PRESSED.load(Ordering::SeqCst),
+        );
         apply_key_event(key, is_press);
+    } else {
+        log::warn!("[HOOK] Unknown VK code 0x{:X}, ignored", vk_code);
     }
 }
 
@@ -115,13 +130,12 @@ fn vk_code_to_key(vk: u32) -> Option<Key> {
         0x37 => Key::Num7,
         0x38 => Key::Num8,
         0x39 => Key::Num9,
-        0xA2 => Key::ControlLeft,
+        0xA2 | 0x11 => Key::ControlLeft,
         0xA3 => Key::ControlRight,
-        0xA0 => Key::ShiftLeft,
+        0xA0 | 0x10 => Key::ShiftLeft,
         0xA1 => Key::ShiftRight,
-        0xA4 | 0xA5 => Key::Alt,
-        0x5B => Key::MetaLeft,
-        0x5C => Key::MetaRight,
+        0xA4 | 0xA5 | 0x12 => Key::Alt,
+        0x5B | 0x5C => Key::MetaLeft,
         0x20 => Key::Space,
         0x0D => Key::Return,
         0x1B => Key::Escape,
@@ -154,7 +168,10 @@ fn vk_code_to_key(vk: u32) -> Option<Key> {
 
 /// Sync tracked modifier state with OS physical state. Prevents ghost triggers when
 /// KeyRelease events were dropped (e.g. after Win+L or UAC). Windows-only.
+/// NOTE: Not called in the hot path anymore — GetAsyncKeyState has a race condition
+/// that clears modifier state before the OS updates its async key table. Kept for diagnostics.
 #[cfg(windows)]
+#[allow(dead_code)]
 fn verify_modifiers_physical_state() {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
     // Virtual key codes: Left/Right Control, Shift, Menu(Alt), Win
@@ -171,10 +188,22 @@ fn verify_modifiers_physical_state() {
     let shift = unsafe { GetAsyncKeyState(VK_LSHIFT) < 0 || GetAsyncKeyState(VK_RSHIFT) < 0 };
     let alt = unsafe { GetAsyncKeyState(VK_LMENU) < 0 || GetAsyncKeyState(VK_RMENU) < 0 };
     let meta = unsafe { GetAsyncKeyState(VK_LWIN) < 0 || GetAsyncKeyState(VK_RWIN) < 0 };
-    CTRL_PRESSED.store(ctrl, Ordering::SeqCst);
-    SHIFT_PRESSED.store(shift, Ordering::SeqCst);
-    ALT_PRESSED.store(alt, Ordering::SeqCst);
-    META_PRESSED.store(meta, Ordering::SeqCst);
+
+    // Only overwrite if the physical state says the key is NOT pressed, but we think it IS.
+    // We trust our own "pressed" state more than GetAsyncKeyState during the hook callback,
+    // but we trust GetAsyncKeyState if it says a key was released while we weren't looking.
+    if !ctrl && CTRL_PRESSED.load(Ordering::SeqCst) {
+        CTRL_PRESSED.store(false, Ordering::SeqCst);
+    }
+    if !shift && SHIFT_PRESSED.load(Ordering::SeqCst) {
+        SHIFT_PRESSED.store(false, Ordering::SeqCst);
+    }
+    if !alt && ALT_PRESSED.load(Ordering::SeqCst) {
+        ALT_PRESSED.store(false, Ordering::SeqCst);
+    }
+    if !meta && META_PRESSED.load(Ordering::SeqCst) {
+        META_PRESSED.store(false, Ordering::SeqCst);
+    }
 }
 
 #[cfg(not(windows))]
@@ -197,6 +226,16 @@ lazy_static! {
 /// Pause or resume global hotkey handling. Used when the user is capturing a new hotkey in settings.
 pub fn set_hotkeys_paused(paused: bool) {
     HOTKEYS_PAUSED.store(paused, Ordering::SeqCst);
+}
+
+/// Get the current internal state of modifier keys (for diagnostics).
+pub fn get_modifier_state() -> (bool, bool, bool, bool) {
+    (
+        CTRL_PRESSED.load(Ordering::SeqCst),
+        ALT_PRESSED.load(Ordering::SeqCst),
+        SHIFT_PRESSED.load(Ordering::SeqCst),
+        META_PRESSED.load(Ordering::SeqCst),
+    )
 }
 
 /// One hotkey registration with its own active state and callbacks.
@@ -423,7 +462,9 @@ fn handle_event_multi(event: Event) {
 /// Hotkey match and callback dispatch. Used by rdev, willhook (Windows), and WH_KEYBOARD_LL hook.
 fn apply_key_event(key: Key, is_press: bool) {
     if is_press {
-        verify_modifiers_physical_state();
+        // DO NOT call verify_modifiers_physical_state() here. GetAsyncKeyState has a race condition
+        // where it reports keys as "not pressed" even though the WH_KEYBOARD_LL hook just received
+        // the keydown event. We trust our own hook-driven state from update_modifiers instead.
 
         let regs = HOTKEY_REGISTRATIONS.lock().unwrap();
         for reg in regs.iter() {
@@ -455,6 +496,11 @@ fn apply_key_event(key: Key, is_press: bool) {
                         && !reg.active.load(Ordering::SeqCst)
                 }
             };
+            log::debug!(
+                "[APPLY] reg target: ctrl={} alt={} shift={} meta={} main_key={:?} => activated={}",
+                reg.target.ctrl, reg.target.alt, reg.target.shift, reg.target.meta,
+                reg.target.main_key, activated
+            );
             if activated {
                 let should_delay = reg.target.main_key.is_none()
                     && has_more_specific_modifier_hotkey(&regs, &reg.target);
@@ -523,7 +569,9 @@ fn schedule_delayed_modifier_activation(reg: &HotkeyRegistration) {
             pending.store(false, Ordering::SeqCst);
             return;
         }
-        verify_modifiers_physical_state();
+        // Don't call verify_modifiers_physical_state() here. It can falsely report keys as released
+        // if the user is typing quickly or if the OS hasn't updated its async state table yet.
+        // We already know the modifiers matched when the delay was scheduled.
         if modifiers_match(&target) && !active.load(Ordering::SeqCst) {
             active.store(true, Ordering::SeqCst);
             if is_dictation {

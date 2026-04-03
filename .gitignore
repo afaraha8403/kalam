@@ -65,3 +65,5 @@ Thumbs.db
 *.deb
 *.rpm
 *.exe
+kalam-diagnostics/nul
+nul

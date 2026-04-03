@@ -8,6 +8,7 @@ mod context;
 mod db;
 #[cfg(feature = "dev-bridge")]
 mod dev_bridge;
+mod diagnostics;
 mod formatting;
 mod history;
 mod hotkey;
@@ -1694,6 +1695,15 @@ pub fn run() {
             get_running_apps,
             pick_executable_file,
             get_installed_apps,
+            diagnostics::commands::run_hook_installation_test,
+            diagnostics::commands::run_key_capture_test,
+            diagnostics::commands::run_hotkey_matching_test,
+            diagnostics::commands::analyze_kalam_config_diagnostic,
+            diagnostics::commands::run_system_health_check,
+            diagnostics::commands::get_modifier_state,
+            diagnostics::commands::get_diagnostic_system_info,
+            diagnostics::commands::generate_diagnostics_report,
+            diagnostics::commands::save_diagnostics_report_to_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -6056,3 +6066,4 @@ async fn toggle_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<A
         }
     }
 }
+

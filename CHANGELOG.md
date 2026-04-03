@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Features
+- **Diagnostics page** (sidebar + tray): system summary, WH_KEYBOARD_LL install probe, timed key capture, hotkey match test (same parser as Kalam), config analysis, DISM health snapshot, and **Save report** (markdown under `.kalam/diagnostics/`). Tray **Run Diagnostics** opens this page.
 - **Dormant pill is now oval-shaped** (48px × 28px) instead of circular, keeping the color-coded accent visible but more compact.
 - **Per-mode accent color (config + UI):** Each `DictationMode` stores `accent_color` (any CSS color string, usually OKLCH). **Dictation** edit panel: preset swatches + custom field. List rows and status bar use the stored color; overlay dormant dot receives it via `overlay-state`. **Config v7** migration fills defaults for existing installs. Recipe **import/export** includes optional `accent_color`.
 - **Color-coded dictation modes** in the main app: StatusBar mode selector shows each mode’s configured accent (not a fixed emoji map). Mode dropdown uses the same per-mode colors.

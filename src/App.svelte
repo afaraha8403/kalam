@@ -10,6 +10,7 @@
   import Dictation from './pages/Dictation.svelte'
   import Home from './pages/Home.svelte'
   import Snippets from './pages/Snippets.svelte'
+  import Diagnostics from './pages/Diagnostics.svelte'
   import Dictionary from './pages/Dictionary.svelte'
   import Onboarding from './pages/Onboarding.svelte'
   import Overlay from './components/Overlay.svelte'
@@ -272,7 +273,14 @@
       unlistenTrayNavigate = await listen<string>('tray-navigate', (e) => {
         if (
           e.payload &&
-          ['settings', 'history', 'dictionary', 'snippets', 'dictation'].includes(e.payload)
+          [
+            'settings',
+            'history',
+            'dictionary',
+            'snippets',
+            'dictation',
+            'diagnostics',
+          ].includes(e.payload)
         ) {
           navigate(e.payload)
         }
@@ -487,6 +495,10 @@
               <Icon icon={currentPage === 'snippets' ? 'ph:text-aa-fill' : 'ph:text-aa'} />
               <span class="nav-text">Snippets</span>
             </button>
+            <button class="nav-link" class:active={currentPage === 'diagnostics'} on:click={() => navigate('diagnostics')} title="Diagnostics">
+              <Icon icon={currentPage === 'diagnostics' ? 'ph:stethoscope-fill' : 'ph:stethoscope'} />
+              <span class="nav-text">Diagnostics</span>
+            </button>
           </nav>
 
           <div class="sidebar-bottom">
@@ -538,6 +550,8 @@
             <Dictionary />
           {:else if currentPage === 'snippets'}
             <Snippets />
+          {:else if currentPage === 'diagnostics'}
+            <Diagnostics />
           {:else if currentPage === 'history'}
             <History navigate={navigate} />
           {:else if currentPage === 'history-detail'}

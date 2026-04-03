@@ -177,4 +177,77 @@ Full system restart required after repairs.
 ---
 
 **Document created:** 2026-04-01  
-**Issue status:** Resolved (pending Windows repair completion)
+**Issue status:** In Progress - Diagnostic tool built, further testing needed
+
+---
+
+## Update: 2026-04-02 - Diagnostic Suite Development
+
+### Phase 5: Comprehensive Diagnostic Tool Built
+
+To further isolate the root cause, a standalone **Kalam Diagnostics Suite** was developed with 5 comprehensive tests:
+
+**Tests Implemented:**
+1. **Hook Installation Test** - Tests WH_KEYBOARD_LL hook installation with detailed GetLastError() reporting
+2. **Key Capture Test** - Captures keyboard events for 5-30 seconds to verify event flow
+3. **Hotkey Matching Test** - Tests specific hotkey combinations (Ctrl+Win, Ctrl+Shift+Win)
+4. **Configuration Analysis** - Validates `~/.kalam/config.json` settings
+5. **System Health Check** - Checks DISM status, Windows version, VC++ redistributables
+
+**Key Findings from Development:**
+- Both default WH_KEYBOARD_LL hook AND rdev listener failed when tested with `KALAM_USE_RDEV=1`
+- This definitively rules out the listener type as the issue
+- Problem is deeper in the hotkey matching or registration logic, not the OS hook layer
+- Configuration verified correct: `hotkey: "Ctrl+Win"`, `toggle_dictation_hotkey: "Ctrl+Shift+Win"`, `dictation_enabled: true`
+
+**Attempted Alternative Hotkeys:**
+- Changed from `Ctrl+Win` to `Ctrl+Alt` temporarily - still did not work
+- This suggests the issue is not Windows key specific
+- Problem appears to be in the hotkey parsing/matching layer or Windows component corruption
+
+**Diagnostic Tool Location:**
+```
+C:\Users\alifa\Development\BalaHeadache Projects\kalam\kalam-diagnostics\
+```
+
+**To Run Diagnostics:**
+```powershell
+cd "C:\Users\alifa\Development\BalaHeadache Projects\kalam\kalam-diagnostics"
+npm install
+npm run tauridev
+```
+
+### Phase 6: Integration Attempt
+
+Attempted to integrate diagnostic capabilities directly into main Kalam app:
+- Added `mod diagnostics;` to lib.rs
+- Added 5 Tauri commands for diagnostic tests
+- Added "Run Diagnostics" menu item to system tray
+- Partial integration successful but requires additional type refactoring
+
+**Recommendation:** Use standalone diagnostic tool first to identify exact failure point, then fix main Kalam app based on results.
+
+### Next Steps
+
+1. **Run the standalone diagnostic tool** to pinpoint exact failure:
+   - If Hook Installation test fails → Windows system corruption confirmed
+   - If Hook passes but Key Capture fails → Hook callback not firing
+   - If both pass but Hotkey Matching fails → Issue in hotkey parsing logic
+
+2. **Based on diagnostic results:**
+   - Fix main Kalam code or
+   - Run DISM/RestoreHealth if system corruption confirmed
+
+---
+
+## Summary of Current Understanding
+
+| Test | Expected | Actual | Status |
+|------|----------|--------|--------|
+| StatusBar click works | ✅ | ✅ | Pass |
+| WH_KEYBOARD_LL hook | Should install | Unknown | Needs diagnostic |
+| Key events captured | Should capture | Unknown | Needs diagnostic |
+| Hotkey matching | Should match Ctrl+Win | Fails | Confirmed broken |
+| rdev listener (alternative) | Should work | Fails | Confirmed broken |
+
+**Current Hypothesis:** The Windows component store corruption identified earlier is preventing proper execution of hook callbacks, even though the hooks themselves install successfully. The diagnostic tool will confirm this.
