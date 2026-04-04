@@ -109,7 +109,9 @@ pub fn analyze_config() -> Result<ConfigAnalysis, String> {
     let mut recommendations = vec![];
 
     if !dictation_enabled {
-        warnings.push("Dictation is disabled in config — hotkeys will not start recording.".to_string());
+        warnings.push(
+            "Dictation is disabled in config — hotkeys will not start recording.".to_string(),
+        );
         recommendations
             .push("Enable dictation in Settings or set dictation_enabled to true.".to_string());
     }
@@ -127,7 +129,11 @@ pub fn analyze_config() -> Result<ConfigAnalysis, String> {
                     .to_string(),
             );
         }
-        let parts: Vec<&str> = hk.split('+').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let parts: Vec<&str> = hk
+            .split('+')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
         if parts.len() < 2 {
             warnings.push(format!(
                 "Hold hotkey \"{hk}\" has fewer than two parts — use modifier+key (e.g. Ctrl+Win)."
@@ -136,7 +142,11 @@ pub fn analyze_config() -> Result<ConfigAnalysis, String> {
     }
 
     if let Some(ref hk) = toggle_hotkey {
-        let parts: Vec<&str> = hk.split('+').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let parts: Vec<&str> = hk
+            .split('+')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
         if parts.len() < 2 {
             warnings.push(format!(
                 "Toggle hotkey \"{hk}\" has fewer than two parts — use modifier+key."
@@ -157,10 +167,14 @@ pub fn analyze_config() -> Result<ConfigAnalysis, String> {
         }
         "Both" => {
             if hotkey.is_none() {
-                warnings.push("Recording mode is Both (default) but no hold hotkey is set.".to_string());
+                warnings.push(
+                    "Recording mode is Both (default) but no hold hotkey is set.".to_string(),
+                );
             }
             if toggle_hotkey.is_none() {
-                warnings.push("Recording mode is Both (default) but no toggle hotkey is set.".to_string());
+                warnings.push(
+                    "Recording mode is Both (default) but no toggle hotkey is set.".to_string(),
+                );
             }
         }
         _ => {

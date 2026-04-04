@@ -786,7 +786,15 @@
         <div class="step step-permissions">
           <p class="step-eyebrow" aria-hidden="true">Step {step} of {totalSteps}</p>
           <h1>Access &amp; microphone</h1>
-          <p class="subtitle">Check status below, then confirm the mic picks you up. Kalam needs capture for dictation and (on some systems) accessibility for typing into other apps.</p>
+          <p class="subtitle">
+            Check status below, then confirm the mic picks you up. Kalam needs microphone access for dictation.
+            {#if platform === 'macos'}
+              On this Mac, <strong>Accessibility</strong> is also required so Kalam can insert text directly into other
+              apps (without relying on your clipboard).
+            {:else}
+              Use the status rows below for microphone, text insertion, and global hotkey where applicable.
+            {/if}
+          </p>
 
           <div class="perm-status-strip" aria-live="polite">
             {#if permCapsLoading}
@@ -879,6 +887,10 @@
                   <input type="checkbox" bind:checked={macAccessibilityDeferLater} />
                   <span>I’ll enable Accessibility later in System Settings</span>
                 </label>
+                <p class="perm-defer-consequence hint">
+                  Without Accessibility, Kalam will use <strong>clipboard paste</strong> to insert text, which
+                  temporarily replaces your clipboard contents.
+                </p>
               {/if}
             {/if}
           </div>
@@ -2047,6 +2059,13 @@
     background: var(--bg-input);
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
+  }
+
+  .perm-defer-consequence {
+    margin: 8px 0 0;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--text-secondary);
   }
 
   .perm-privacy-footnote {

@@ -84,7 +84,7 @@ use std::path::PathBuf;
 pub use settings::*;
 
 /// Current config schema version. Bump when making breaking changes and add a migration.
-pub const CURRENT_CONFIG_VERSION: u32 = 8;
+pub const CURRENT_CONFIG_VERSION: u32 = 10;
 
 /// Run migrations from config's current version to CURRENT_CONFIG_VERSION.
 fn migrate_config(mut config: AppConfig) -> AppConfig {
@@ -110,8 +110,46 @@ fn run_migration(config: AppConfig, from_version: u32) -> AppConfig {
         5 => migrate_v5_to_v6(config),
         6 => migrate_v6_to_v7(config),
         7 => migrate_v7_to_v8(config),
+        8 => migrate_v8_to_v9(config),
+        9 => migrate_v9_to_v10(config),
         _ => config,
     }
+}
+
+/// Config v10: schema bump for `InjectionMethod::AccessibilityAPI` and OS-aware Automatic injection on macOS.
+fn migrate_v9_to_v10(config: AppConfig) -> AppConfig {
+    config
+}
+
+/// Config v9: `force_clipboard_apps` → `app_injection_rules` (per-app method + optional tuning).
+fn migrate_v8_to_v9(mut config: AppConfig) -> AppConfig {
+    use crate::config::{AppInjectionRule, InjectionMethod};
+
+    let legacy = std::mem::take(&mut config.formatting.force_clipboard_apps);
+    for app in legacy {
+        let app = app.trim().to_string();
+        if app.is_empty() {
+            continue;
+        }
+        let exists = config
+            .formatting
+            .app_injection_rules
+            .iter()
+            .any(|r| r.process_name.eq_ignore_ascii_case(&app));
+        if !exists {
+            config
+                .formatting
+                .app_injection_rules
+                .push(AppInjectionRule {
+                    process_name: app,
+                    display_name: None,
+                    method: InjectionMethod::Clipboard,
+                    keystroke_delay_ms: None,
+                    clipboard_threshold: None,
+                });
+        }
+    }
+    config
 }
 
 /// Config v8: Rename built-in "voice" mode to "default" (id + name).
@@ -363,6 +401,7 @@ impl ConfigManager {
         merge_provider_keys_from_nested_maps(&mut config);
         // Safety net: re-create the "default" mode if it was manually removed from config.json.
         ensure_default_mode_exists(&mut config);
+        config.formatting.clamp_injection_fields();
 
         let mut mgr = Self {
             config_path,
@@ -379,7 +418,8 @@ impl ConfigManager {
         Ok(mgr)
     }
 
-    pub fn save(&mut self, config: AppConfig) -> anyhow::Result<()> {
+    pub fn save(&mut self, mut config: AppConfig) -> anyhow::Result<()> {
+        config.formatting.clamp_injection_fields();
         self.config = config;
         self.config.config_version = CURRENT_CONFIG_VERSION;
 

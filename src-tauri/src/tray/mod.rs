@@ -18,7 +18,6 @@ impl TrayManager {
         let dictionary_i = MenuItem::with_id(app, "dictionary", "Dictionary", true, None::<&str>)?;
         let snippets_i = MenuItem::with_id(app, "snippets", "Snippets", true, None::<&str>)?;
         let separator = PredefinedMenuItem::separator(app)?;
-        let diagnostics_i = MenuItem::with_id(app, "diagnostics", "Run Diagnostics", true, None::<&str>)?;
         let check_updates = MenuItem::with_id(
             app,
             "check_updates",
@@ -36,7 +35,6 @@ impl TrayManager {
                 &dictionary_i,
                 &snippets_i,
                 &separator,
-                &diagnostics_i,
                 &check_updates,
                 &quit_i,
             ],
@@ -76,11 +74,6 @@ impl TrayManager {
                             log::warn!("Update check failed: {}", e);
                         }
                     });
-                }
-                "diagnostics" => {
-                    if let Err(e) = show_window(app, "diagnostics") {
-                        log::error!("Failed to open diagnostics: {}", e);
-                    }
                 }
                 "quit" => {
                     app.exit(0);
@@ -124,11 +117,10 @@ fn show_window(app: &AppHandle, page: &str) -> anyhow::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
         window.show()?;
         window.set_focus()?;
-        // Tell frontend to navigate when opening from tray menu (Settings, History, Dictionary, Snippets, Diagnostics)
+        // Tell frontend to navigate when opening from tray menu (Settings, History, Dictionary, Snippets)
         if page != "main" {
             let _ = app.emit("tray-navigate", page);
         }
     }
     Ok(())
 }
-

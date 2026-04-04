@@ -40,10 +40,18 @@ impl TextInjector {
     ) -> anyhow::Result<()> {
         let method = match &config.injection_method {
             InjectionMethod::Auto => {
-                if text.len() > config.clipboard_threshold {
-                    InjectionMethod::Clipboard
-                } else {
-                    InjectionMethod::Keystrokes
+                #[cfg(target_os = "macos")]
+                {
+                    // Automatic on macOS: Accessibility API first, clipboard fallback in dispatch.
+                    InjectionMethod::AccessibilityAPI
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    if text.len() > config.clipboard_threshold {
+                        InjectionMethod::Clipboard
+                    } else {
+                        InjectionMethod::Keystrokes
+                    }
                 }
             }
             other => other.clone(),
@@ -59,6 +67,26 @@ impl TextInjector {
                         .await
                 }
                 InjectionMethod::Clipboard => self.inject_via_clipboard(text).await,
+                InjectionMethod::AccessibilityAPI => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        match self.inject_via_accessibility_api(text).await {
+                            Ok(()) => Ok(()),
+                            Err(ax_err) => {
+                                log::info!(
+                                    "AX API injection failed, falling back to clipboard: {}",
+                                    ax_err
+                                );
+                                self.inject_via_clipboard(text).await
+                            }
+                        }
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        // Config may sync from macOS; paste is the portable fallback.
+                        self.inject_via_clipboard(text).await
+                    }
+                }
                 InjectionMethod::Auto => unreachable!(),
             };
 
@@ -83,18 +111,32 @@ impl TextInjector {
     }
 
     async fn inject_via_keystrokes(&self, text: &str, delay_ms: u64) -> anyhow::Result<()> {
-        {
-            let mut enigo = Enigo::new(&Settings::default())
-                .map_err(|e| anyhow::anyhow!("Failed to init enigo: {:?}", e))?;
+        let mut enigo = Enigo::new(&Settings::default())
+            .map_err(|e| anyhow::anyhow!("Failed to init enigo: {:?}", e))?;
+
+        if text.is_empty() {
+            return Ok(());
+        }
+
+        // delay_ms == 0: one batch (fast). delay_ms > 0: pause between each Unicode scalar
+        // so "ms per character" matches Settings copy and helps flaky targets.
+        if delay_ms == 0 {
             enigo
                 .text(text)
                 .map_err(|e| anyhow::anyhow!("Failed to type text: {:?}", e))?;
+            return Ok(());
         }
-        if delay_ms > 0 {
-            sleep(Duration::from_millis(
-                delay_ms.saturating_mul(text.len() as u64),
-            ))
-            .await;
+
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            let mut buf = [0u8; 4];
+            let fragment = ch.encode_utf8(&mut buf);
+            enigo
+                .text(fragment)
+                .map_err(|e| anyhow::anyhow!("Failed to type text: {:?}", e))?;
+            if chars.peek().is_some() {
+                sleep(Duration::from_millis(delay_ms)).await;
+            }
         }
         Ok(())
     }
@@ -167,6 +209,91 @@ impl TextInjector {
             }
         } else {
             log::debug!("Clipboard already changed after paste, skipping restore");
+        }
+
+        Ok(())
+    }
+
+    /// macOS: set `AXSelectedText` on the focused accessibility element (requires trusted accessibility client).
+    #[cfg(target_os = "macos")]
+    async fn inject_via_accessibility_api(&self, text: &str) -> anyhow::Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        let owned = text.to_string();
+        tokio::task::spawn_blocking(move || macos_ax_inject_selected_text(&owned))
+            .await
+            .map_err(|e| anyhow::anyhow!("AX injection task join error: {}", e))?
+    }
+
+    /// Insert at caret / replace selection via Accessibility; clipboard is not used.
+    #[cfg(target_os = "macos")]
+    fn macos_ax_inject_selected_text(text: &str) -> anyhow::Result<()> {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+        use core_foundation_sys::base::{CFRelease, CFTypeRef};
+        use std::ffi::c_void;
+        use std::ptr;
+
+        const KAX_ERROR_SUCCESS: i32 = 0;
+
+        #[link(name = "ApplicationServices", kind = "framework")]
+        extern "C" {
+            fn AXUIElementCreateSystemWide() -> *const c_void;
+            fn AXUIElementCopyAttributeValue(
+                element: *const c_void,
+                attribute: core_foundation_sys::string::CFStringRef,
+                value: *mut CFTypeRef,
+            ) -> i32;
+            fn AXUIElementSetAttributeValue(
+                element: *const c_void,
+                attribute: core_foundation_sys::string::CFStringRef,
+                value: CFTypeRef,
+            ) -> i32;
+        }
+
+        // CFString constants match `kAXFocusedUIElementAttribute` / `kAXSelectedTextAttribute`.
+        let attr_focused = CFString::new("AXFocusedUIElement");
+        let attr_selected = CFString::new("AXSelectedText");
+        let text_cf = CFString::new(text);
+
+        unsafe {
+            let system_wide = AXUIElementCreateSystemWide();
+            if system_wide.is_null() {
+                return Err(anyhow::anyhow!("AXUIElementCreateSystemWide returned null"));
+            }
+
+            let mut focused_raw: CFTypeRef = ptr::null();
+            let copy_err = AXUIElementCopyAttributeValue(
+                system_wide,
+                attr_focused.as_concrete_TypeRef(),
+                &mut focused_raw,
+            );
+            CFRelease(system_wide as CFTypeRef);
+
+            if copy_err != KAX_ERROR_SUCCESS {
+                return Err(anyhow::anyhow!(
+                    "AXUIElementCopyAttributeValue(AXFocusedUIElement) failed: AXError {}",
+                    copy_err
+                ));
+            }
+            if focused_raw.is_null() {
+                return Err(anyhow::anyhow!("No focused accessibility element"));
+            }
+
+            let set_err = AXUIElementSetAttributeValue(
+                focused_raw as *const c_void,
+                attr_selected.as_concrete_TypeRef(),
+                text_cf.as_CFTypeRef(),
+            );
+            CFRelease(focused_raw);
+
+            if set_err != KAX_ERROR_SUCCESS {
+                return Err(anyhow::anyhow!(
+                    "AXUIElementSetAttributeValue(AXSelectedText) failed: AXError {}",
+                    set_err
+                ));
+            }
         }
 
         Ok(())

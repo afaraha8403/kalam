@@ -269,18 +269,29 @@ export interface STTConfig {
   transcription_timeout?: TranscriptionTimeoutConfig
 }
 
+/** Per-app text injection override (Rust `AppInjectionRule`). */
+export interface AppInjectionRule {
+  process_name: string
+  display_name?: string | null
+  method: 'Auto' | 'Keystrokes' | 'Clipboard' | 'AccessibilityAPI'
+  keystroke_delay_ms?: number | null
+  clipboard_threshold?: number | null
+}
+
 export interface FormattingConfig {
   voice_commands: boolean
   filler_word_removal: boolean
   auto_punctuation: boolean
   custom_rules: FormattingRule[]
-  injection_method: 'Auto' | 'Keystrokes' | 'Clipboard'
+  injection_method: 'Auto' | 'Keystrokes' | 'Clipboard' | 'AccessibilityAPI'
   keystroke_delay_ms: number
   clipboard_threshold: number
   /** Clipboard-injection retry count (Rust `injection` module). */
   retry_attempts?: number
   retry_delay_ms?: number
+  /** Legacy; merged into `app_injection_rules` on config v9. Kept empty after migration. */
   force_clipboard_apps: string[]
+  app_injection_rules: AppInjectionRule[]
 }
 
 export interface FormattingRule {

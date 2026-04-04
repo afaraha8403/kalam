@@ -7,11 +7,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-use chrono::Utc;
+use chrono::{Local, NaiveTime, TimeZone, Utc};
 use once_cell::sync::Lazy;
 
-use crate::config::LoggingConfig;
+use crate::config::{LogLevel, LoggingConfig};
 use crate::db;
+use regex::Regex;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
@@ -269,4 +270,63 @@ pub fn export_logs_csv() -> anyhow::Result<(String, String)> {
         chrono::Utc::now().format("%Y%m%d-%H%M%S")
     );
     Ok((csv, filename))
+}
+
+/// Temporarily force in-app logging to enabled + Debug (diagnostic test runs).
+/// Pair with [`deescalate`] so the user's normal logging preference is restored in memory
+/// (persisted `config.json` is unchanged unless they save settings).
+pub fn escalate() -> LoggingConfig {
+    let prev = current_config();
+    reconfigure(LoggingConfig {
+        enabled: true,
+        level: LogLevel::Debug,
+        max_records: prev.max_records.max(2000),
+    });
+    prev
+}
+
+/// Restore logging after [`escalate`].
+pub fn deescalate(prev: LoggingConfig) {
+    reconfigure(prev);
+}
+
+static LOG_LINE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+)\s+\[([^\]]*)\]\s*(.*)$")
+        .expect("log line regex")
+});
+
+/// Last `max` lines from the in-memory buffer as structured rows for markdown reports.
+/// Matches the format written by [`AppLoggerStatic::log`].
+pub fn recent_log_entries(max: usize) -> Vec<crate::diagnostics::LogEntry> {
+    let state = match APP_LOG_STATE.lock() {
+        Ok(s) => s,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut out = Vec::new();
+    for line in state.buffer.iter().rev().take(max).rev() {
+        if let Some(entry) = parse_log_buffer_line(line) {
+            out.push(entry);
+        }
+    }
+    out
+}
+
+fn parse_log_buffer_line(line: &str) -> Option<crate::diagnostics::LogEntry> {
+    let caps = LOG_LINE_RE.captures(line)?;
+    let time_s = caps.get(1)?.as_str();
+    let level = caps.get(2)?.as_str().to_string();
+    let message = caps.get(4)?.as_str().to_string();
+    let naive_time = NaiveTime::parse_from_str(time_s, "%H:%M:%S%.3f").ok()?;
+    let date = Local::now().date_naive();
+    let naive_dt = date.and_time(naive_time);
+    let timestamp = match Local.from_local_datetime(&naive_dt) {
+        chrono::LocalResult::Single(dt) => dt,
+        chrono::LocalResult::Ambiguous(dt, _) => dt,
+        chrono::LocalResult::None => Local::now(),
+    };
+    Some(crate::diagnostics::LogEntry {
+        timestamp,
+        level,
+        message,
+    })
 }

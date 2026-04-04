@@ -113,9 +113,11 @@ unsafe extern "system" fn latency_debug_keyboard_proc(
     if n_code == HC_ACTION as i32 && l_param != 0 {
         let hook_struct = &*(l_param as *const KBDLLHOOKSTRUCT);
         let vk = hook_struct.vkCode;
-        let is_press = w_param == WM_KEYDOWN as WPARAM || w_param == windows_sys::Win32::UI::WindowsAndMessaging::WM_SYSKEYDOWN as WPARAM;
-        let is_release = w_param == WM_KEYUP as WPARAM || w_param == windows_sys::Win32::UI::WindowsAndMessaging::WM_SYSKEYUP as WPARAM;
-        
+        let is_press = w_param == WM_KEYDOWN as WPARAM
+            || w_param == windows_sys::Win32::UI::WindowsAndMessaging::WM_SYSKEYDOWN as WPARAM;
+        let is_release = w_param == WM_KEYUP as WPARAM
+            || w_param == windows_sys::Win32::UI::WindowsAndMessaging::WM_SYSKEYUP as WPARAM;
+
         if is_press || is_release {
             if (std::env::var("KALAM_LATENCY_DEBUG").as_deref() == Ok("1")
                 || std::env::var("KALAM_LATENCY_DEBUG").as_deref() == Ok("true"))

@@ -134,7 +134,7 @@
     auto_punctuation: true,
     voice_commands: true,
     filler_word_removal: true,
-    injection_method: 'Auto' as 'Auto' | 'Keystrokes' | 'Clipboard',
+    injection_method: 'Auto' as 'Auto' | 'Keystrokes' | 'Clipboard' | 'AccessibilityAPI',
     history_retention_days: 90,
     telemetry_enabled: false,
     sidebar_collapsed: false,

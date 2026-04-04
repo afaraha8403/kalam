@@ -13,7 +13,10 @@ pub fn build_report(tests: Vec<TestResult>, summary: String) -> DiagnosticReport
 }
 
 /// Save markdown report under `.kalam/diagnostics/` (same root as `config.json`).
-pub fn save_report_markdown(report: &DiagnosticReport, logs: &[LogEntry]) -> Result<String, String> {
+pub fn save_report_markdown(
+    report: &DiagnosticReport,
+    logs: &[LogEntry],
+) -> Result<String, String> {
     let base = crate::config::get_kalam_dir()
         .map_err(|e| e.to_string())?
         .join("diagnostics");
@@ -36,8 +39,14 @@ fn format_report_markdown(report: &DiagnosticReport, logs: &[LogEntry]) -> Strin
 
     md.push_str("## System\n\n");
     md.push_str(&format!("- **OS:** {}\n", report.system_info.os_name));
-    md.push_str(&format!("- **Version:** {}\n", report.system_info.os_version));
-    md.push_str(&format!("- **Arch:** {}\n", report.system_info.architecture));
+    md.push_str(&format!(
+        "- **Version:** {}\n",
+        report.system_info.os_version
+    ));
+    md.push_str(&format!(
+        "- **Arch:** {}\n",
+        report.system_info.architecture
+    ));
     md.push_str(&format!(
         "- **Config:** {}\n",
         report.system_info.kalam_config_path
@@ -76,10 +85,7 @@ fn format_report_markdown(report: &DiagnosticReport, logs: &[LogEntry]) -> Strin
         md.push_str("## Log excerpt\n\n```\n");
         for entry in logs {
             let ts = entry.timestamp.format("%H:%M:%S");
-            md.push_str(&format!(
-                "[{ts}] [{}] {}\n",
-                entry.level, entry.message
-            ));
+            md.push_str(&format!("[{ts}] [{}] {}\n", entry.level, entry.message));
         }
         md.push_str("```\n\n");
     }

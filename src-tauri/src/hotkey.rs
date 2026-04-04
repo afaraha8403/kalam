@@ -86,7 +86,9 @@ pub(crate) fn dispatch_key_from_win_hook(vk_code: u32, is_press: bool) {
         );
         apply_key_event(key, is_press);
     } else {
-        log::warn!("[HOOK] Unknown VK code 0x{:X}, ignored", vk_code);
+        // Debug (not warn): unmapped VKs are normal while typing; stderr is Info-filtered in app_log.
+        // For VK mapping issues, enable Advanced logging at Debug — lines still go to buffer/DB then.
+        log::debug!("[HOOK] Unknown VK code 0x{:X}, ignored", vk_code);
     }
 }
 
@@ -498,8 +500,12 @@ fn apply_key_event(key: Key, is_press: bool) {
             };
             log::debug!(
                 "[APPLY] reg target: ctrl={} alt={} shift={} meta={} main_key={:?} => activated={}",
-                reg.target.ctrl, reg.target.alt, reg.target.shift, reg.target.meta,
-                reg.target.main_key, activated
+                reg.target.ctrl,
+                reg.target.alt,
+                reg.target.shift,
+                reg.target.meta,
+                reg.target.main_key,
+                activated
             );
             if activated {
                 let should_delay = reg.target.main_key.is_none()

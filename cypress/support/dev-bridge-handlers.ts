@@ -38,6 +38,7 @@ const BASE_ONBOARDING: Record<string, unknown> = {
     keystroke_delay_ms: 10,
     clipboard_threshold: 200,
     force_clipboard_apps: [],
+    app_injection_rules: [],
   },
   privacy: {
     history_retention_days: 90,

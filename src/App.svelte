@@ -10,7 +10,6 @@
   import Dictation from './pages/Dictation.svelte'
   import Home from './pages/Home.svelte'
   import Snippets from './pages/Snippets.svelte'
-  import Diagnostics from './pages/Diagnostics.svelte'
   import Dictionary from './pages/Dictionary.svelte'
   import Onboarding from './pages/Onboarding.svelte'
   import Overlay from './components/Overlay.svelte'
@@ -75,7 +74,16 @@
         injection_method: 'Auto',
         keystroke_delay_ms: 10,
         clipboard_threshold: 200,
-        force_clipboard_apps: []
+        force_clipboard_apps: [],
+        app_injection_rules: [
+          {
+            process_name: 'notepad.exe',
+            display_name: 'Notepad',
+            method: 'Clipboard',
+            keystroke_delay_ms: null,
+            clipboard_threshold: null,
+          },
+        ],
       },
       privacy: {
         history_retention_days: 90,
@@ -279,7 +287,6 @@
             'dictionary',
             'snippets',
             'dictation',
-            'diagnostics',
           ].includes(e.payload)
         ) {
           navigate(e.payload)
@@ -495,10 +502,6 @@
               <Icon icon={currentPage === 'snippets' ? 'ph:text-aa-fill' : 'ph:text-aa'} />
               <span class="nav-text">Snippets</span>
             </button>
-            <button class="nav-link" class:active={currentPage === 'diagnostics'} on:click={() => navigate('diagnostics')} title="Diagnostics">
-              <Icon icon={currentPage === 'diagnostics' ? 'ph:stethoscope-fill' : 'ph:stethoscope'} />
-              <span class="nav-text">Diagnostics</span>
-            </button>
           </nav>
 
           <div class="sidebar-bottom">
@@ -550,8 +553,6 @@
             <Dictionary />
           {:else if currentPage === 'snippets'}
             <Snippets />
-          {:else if currentPage === 'diagnostics'}
-            <Diagnostics />
           {:else if currentPage === 'history'}
             <History navigate={navigate} />
           {:else if currentPage === 'history-detail'}

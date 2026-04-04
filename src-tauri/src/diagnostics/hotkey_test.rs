@@ -1,7 +1,5 @@
 use crate::diagnostics::key_capture;
-use crate::diagnostics::{
-    HookInstallationResult, HotkeyMatchResult, KeyCaptureResult, TestEvent,
-};
+use crate::diagnostics::{HookInstallationResult, HotkeyMatchResult, KeyCaptureResult, TestEvent};
 use crate::hotkey::RdevHotkey;
 use std::collections::HashSet;
 
@@ -13,7 +11,9 @@ pub fn test_hook_installation() -> Result<HookInstallationResult, String> {
 /// Record global key events for `duration_secs` (dedicated capture path; does not replace the app listener).
 pub fn test_key_capture(duration_secs: u64) -> Result<KeyCaptureResult, String> {
     let capped = duration_secs.clamp(1, 120);
-    log::info!("[DIAGNOSTIC] Key capture for {capped}s — press modifiers and letter keys as needed.");
+    log::info!(
+        "[DIAGNOSTIC] Key capture for {capped}s — press modifiers and letter keys as needed."
+    );
 
     let test_events = key_capture::timed_capture(capped)?;
     let keys_captured = test_events.len();
@@ -34,7 +34,9 @@ pub fn test_key_capture(duration_secs: u64) -> Result<KeyCaptureResult, String> 
     let mut errors = Vec::new();
     if keys_captured == 0 {
         errors.push("No keys were captured.".to_string());
-        errors.push("If you pressed keys, another app or policy may be blocking input capture.".to_string());
+        errors.push(
+            "If you pressed keys, another app or policy may be blocking input capture.".to_string(),
+        );
     }
 
     let success = keys_captured > 0;

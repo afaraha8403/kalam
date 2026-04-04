@@ -168,39 +168,37 @@ pub fn timed_capture(duration_secs: u64) -> Result<Vec<TestEvent>, String> {
     }
 
     let (tx, rx) = mpsc::channel::<CaptureThreadMsg>();
-    let join = std::thread::spawn(move || {
-        unsafe {
-            let hmod = GetModuleHandleW(null_mut());
-            if hmod == 0 {
-                let _ = tx.send(CaptureThreadMsg::Failed(
-                    "GetModuleHandleW failed".to_string(),
-                ));
-                return;
-            }
-            let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(capture_keyboard_proc), hmod, 0);
-            if hook == 0 {
-                let _ = tx.send(CaptureThreadMsg::Failed(
-                    "SetWindowsHookExW failed for capture".to_string(),
-                ));
-                return;
-            }
-            WIN_CAPTURE_HHOOK.store(hook, Ordering::SeqCst);
-            let tid = GetCurrentThreadId();
-            if tx.send(CaptureThreadMsg::Ready(tid)).is_err() {
-                UnhookWindowsHookEx(hook as HHOOK);
-                WIN_CAPTURE_HHOOK.store(0, Ordering::SeqCst);
-                return;
-            }
-
-            let mut msg: MSG = zeroed();
-            while GetMessageW(&mut msg, 0 as _, 0, 0) > 0 {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-
+    let join = std::thread::spawn(move || unsafe {
+        let hmod = GetModuleHandleW(null_mut());
+        if hmod == 0 {
+            let _ = tx.send(CaptureThreadMsg::Failed(
+                "GetModuleHandleW failed".to_string(),
+            ));
+            return;
+        }
+        let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(capture_keyboard_proc), hmod, 0);
+        if hook == 0 {
+            let _ = tx.send(CaptureThreadMsg::Failed(
+                "SetWindowsHookExW failed for capture".to_string(),
+            ));
+            return;
+        }
+        WIN_CAPTURE_HHOOK.store(hook, Ordering::SeqCst);
+        let tid = GetCurrentThreadId();
+        if tx.send(CaptureThreadMsg::Ready(tid)).is_err() {
             UnhookWindowsHookEx(hook as HHOOK);
             WIN_CAPTURE_HHOOK.store(0, Ordering::SeqCst);
+            return;
         }
+
+        let mut msg: MSG = zeroed();
+        while GetMessageW(&mut msg, 0 as _, 0, 0) > 0 {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+
+        UnhookWindowsHookEx(hook as HHOOK);
+        WIN_CAPTURE_HHOOK.store(0, Ordering::SeqCst);
     });
 
     let thread_id = match rx.recv() {

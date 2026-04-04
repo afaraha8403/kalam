@@ -7,15 +7,14 @@ pub fn gather_system_info() -> SystemInfo {
     let os_version = get_windows_version();
     let architecture = std::env::consts::ARCH.to_string();
 
-    let (kalam_config_path, kalam_config_exists) =
-        match crate::config::get_kalam_dir() {
-            Ok(dir) => {
-                let p = dir.join("config.json");
-                let exists = p.exists();
-                (p.to_string_lossy().to_string(), exists)
-            }
-            Err(_) => (String::new(), false),
-        };
+    let (kalam_config_path, kalam_config_exists) = match crate::config::get_kalam_dir() {
+        Ok(dir) => {
+            let p = dir.join("config.json");
+            let exists = p.exists();
+            (p.to_string_lossy().to_string(), exists)
+        }
+        Err(_) => (String::new(), false),
+    };
 
     SystemInfo {
         os_name,
@@ -83,11 +82,7 @@ fn get_windows_version() -> String {
     }
     #[cfg(not(windows))]
     {
-        format!(
-            "{} {}",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        )
+        format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
     }
 }
 

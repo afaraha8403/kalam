@@ -1,14 +1,15 @@
-<script lang="ts">
+﻿<script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte'
   import { cubicOut } from 'svelte/easing'
   import { fade, fly, slide } from 'svelte/transition'
-  import { invoke, listenSafe } from '$lib/backend'
+  import { invoke, isTauriRuntime, listenSafe } from '$lib/backend'
   import Icon from '@iconify/svelte'
   import { initTelemetry, optOut } from '../lib/telemetry'
   import { sidebarDictationStore } from '../lib/sidebarDictation'
   import { LANGUAGE_OPTIONS, languageLabel, isLanguageSupportedByProvider } from '../lib/languages'
   import type {
     AppConfig,
+    AppInjectionRule,
     AudioDevice,
     AudioFilterPreset,
     CatalogProvider,
@@ -46,6 +47,22 @@
   let saveDebounceId: ReturnType<typeof setTimeout> | null = null
   let resetting = false
   let resetError: string | null = null
+
+  type DiagnosticSystemInfo = {
+    os_name: string
+    os_version: string
+    architecture: string
+    kalam_config_path: string
+    kalam_config_exists: boolean
+  }
+
+  let diagSystemInfo: DiagnosticSystemInfo | null = null
+  let diagLoadErr = ''
+  let diagBusy: string | null = null
+  let diagLastMessage = ''
+  let diagLastDetail = ''
+  let diagCaptureSecs = 8
+  let diagMatchHotkey = 'Ctrl+Win'
 
   type ModelRequirement = { can_run: boolean; reason: string | null }
   type ModelStatusEntry = {
@@ -153,6 +170,7 @@
     { id: 'general', label: 'General', icon: 'ph:sliders-horizontal' },
     { id: 'dictation', label: 'Audio & Dictation', icon: 'ph:microphone' },
     { id: 'connections', label: 'Connections', icon: 'ph:plugs-connected' },
+    { id: 'insertion', label: 'Text Insertion', icon: 'ph:text-aa' },
     { id: 'privacy', label: 'Privacy', icon: 'ph:shield' },
     { id: 'advanced', label: 'Advanced', icon: 'ph:wrench' },
     { id: 'about', label: 'About', icon: 'ph:info' },
@@ -196,7 +214,10 @@
     privacy_data: false,
     privacy_notifications: false,
     advanced_logs: false,
+    advanced_diagnostics: true,
     advanced_danger: false,
+    insertion_default: false,
+    insertion_per_app: false,
   }
 
   function recordingModeSegment(): 'Hold' | 'Toggle' | 'Both' {
@@ -354,7 +375,7 @@
     invoke('request_system_permission', { permission }).catch((e) => console.error(e))
   }
 
-  $: if (activeTab === 'dictation') {
+  $: if (activeTab === 'dictation' || activeTab === 'insertion') {
     void loadRuntimeCapabilities()
   }
 
@@ -556,9 +577,23 @@
           config.command_config = { enabled: false, hotkey: null }
         }
         if (config.command_config.hotkey === undefined) config.command_config.hotkey = null
+
+        if (!Array.isArray(config.formatting.force_clipboard_apps)) {
+          config.formatting.force_clipboard_apps = []
+        }
+        if (!Array.isArray(config.formatting.app_injection_rules)) {
+          config.formatting.app_injection_rules = []
+        }
+        if (config.formatting.retry_attempts == null) config.formatting.retry_attempts = 3
+        if (config.formatting.retry_delay_ms == null) config.formatting.retry_delay_ms = 100
+
+        const dhk = config.hotkey || config.toggle_dictation_hotkey
+        if (dhk) diagMatchHotkey = dhk
       }
 
       if (!config.provider_keys) config.provider_keys = {}
+
+      void refreshDiagnosticSystemInfo()
 
       await checkLogEmpty()
       await refreshSyncStatus()
@@ -874,6 +909,130 @@
       )
     : installedApps
 
+  // --- Text insertion: per-app rules (same installed-app scan as Privacy) ---
+  let injectionAppPickerOpen = false
+  let injectionInstalledApps: AppListEntry[] = []
+  let injectionAppsLoading = false
+  let injectionAppsSearch = ''
+  let injectionAppsLoadGeneration = 0
+
+  function ensureAppInjectionRulesArray() {
+    if (!config) return
+    if (!Array.isArray(config.formatting.app_injection_rules)) {
+      config.formatting.app_injection_rules = []
+    }
+    if (!Array.isArray(config.formatting.force_clipboard_apps)) {
+      config.formatting.force_clipboard_apps = []
+    }
+  }
+
+  function removeAppInjectionRule(index: number) {
+    if (!config) return
+    ensureAppInjectionRulesArray()
+    config.formatting.app_injection_rules = config.formatting.app_injection_rules.filter((_, i) => i !== index)
+    scheduleSave()
+  }
+
+  async function openInjectionAppPicker() {
+    injectionAppsLoadGeneration += 1
+    injectionAppPickerOpen = true
+    injectionAppsSearch = ''
+    injectionInstalledApps = []
+    void loadInjectionInstalledApps()
+  }
+
+  function closeInjectionAppPicker() {
+    injectionAppsLoadGeneration += 1
+    injectionAppPickerOpen = false
+    injectionInstalledApps = []
+    injectionAppsSearch = ''
+    injectionAppsLoading = false
+  }
+
+  async function loadInjectionInstalledApps() {
+    const gen = injectionAppsLoadGeneration
+    injectionAppsLoading = true
+    try {
+      const list = (await invoke('get_installed_apps')) as AppListEntry[]
+      if (gen !== injectionAppsLoadGeneration) return
+      injectionInstalledApps = list
+    } catch (e) {
+      if (gen !== injectionAppsLoadGeneration) return
+      console.error('Failed to load installed apps (injection picker):', e)
+      injectionInstalledApps = []
+    } finally {
+      if (gen === injectionAppsLoadGeneration) {
+        injectionAppsLoading = false
+      }
+    }
+  }
+
+  function isInjectionAppAlreadyAdded(processName: string): boolean {
+    return !!config?.formatting.app_injection_rules?.some(
+      (r) => r.process_name.toLowerCase() === processName.toLowerCase()
+    )
+  }
+
+  function addInjectionAppFromPicker(processName: string, displayName: string) {
+    if (!config) return
+    if (isInjectionAppAlreadyAdded(processName)) {
+      closeInjectionAppPicker()
+      return
+    }
+    ensureAppInjectionRulesArray()
+    const next: AppInjectionRule = {
+      process_name: processName,
+      display_name: displayName?.trim() ? displayName.trim() : null,
+      method: 'Clipboard',
+      keystroke_delay_ms: null,
+      clipboard_threshold: null,
+    }
+    config.formatting.app_injection_rules = [...config.formatting.app_injection_rules, next]
+    scheduleSave()
+    closeInjectionAppPicker()
+  }
+
+  function injectionRuleDisplayName(rule: AppInjectionRule): string {
+    if (rule.display_name?.trim()) return rule.display_name.trim()
+    return rule.process_name.replace(/\.exe$/i, '').replace(/\.app$/i, '')
+  }
+
+  /** Global defaults: “length before paste” only applies to Automatic on Windows/Linux. */
+  $: insertionShowThreshold =
+    !!config &&
+    config.formatting.injection_method === 'Auto' &&
+    appPlatform !== 'macos'
+  $: insertionShowTypingSpeed =
+    !!config &&
+    (config.formatting.injection_method === 'Keystrokes' ||
+      (config.formatting.injection_method === 'Auto' && appPlatform !== 'macos'))
+
+  /** macOS Automatic / Accessibility API benefit from Accessibility permission (see inline note). */
+  $: insertionShowAccessibilityNote =
+    appPlatform === 'macos' &&
+    !!config &&
+    (config.formatting.injection_method === 'Auto' ||
+      config.formatting.injection_method === 'AccessibilityAPI')
+
+  /** Max pause between typed characters (ms); higher values make long text impractical. */
+  const INSERTION_KEYSTROKE_PAUSE_MAX_MS = 100
+
+  function injectionRuleShowsSpeed(rule: AppInjectionRule): boolean {
+    return rule.method === 'Keystrokes' || (rule.method === 'Auto' && appPlatform !== 'macos')
+  }
+
+  function injectionRuleShowsThreshold(rule: AppInjectionRule): boolean {
+    return rule.method === 'Auto' && appPlatform !== 'macos'
+  }
+
+  $: filteredInjectionInstalledApps = injectionAppsSearch
+    ? injectionInstalledApps.filter(
+        (a) =>
+          a.display_name.toLowerCase().includes(injectionAppsSearch.toLowerCase()) ||
+          a.process_name.toLowerCase().includes(injectionAppsSearch.toLowerCase())
+      )
+    : injectionInstalledApps
+
   async function onSttModeChange() {
     await saveSettingsImmediate()
     if (config?.stt_config?.mode === 'Cloud' || config?.stt_config?.mode === 'Hybrid') {
@@ -1023,6 +1182,10 @@
     if (config.language_toggle_hotkey === '') config.language_toggle_hotkey = null
     if (!Array.isArray(config.languages) || config.languages.length === 0) config.languages = ['en']
     if (!Array.isArray(config.privacy.sensitive_app_patterns)) config.privacy.sensitive_app_patterns = []
+    if (!Array.isArray(config.formatting.force_clipboard_apps)) config.formatting.force_clipboard_apps = []
+    if (!Array.isArray(config.formatting.app_injection_rules)) config.formatting.app_injection_rules = []
+    if (config.formatting.retry_attempts == null) config.formatting.retry_attempts = 3
+    if (config.formatting.retry_delay_ms == null) config.formatting.retry_delay_ms = 100
 
     saveError = null
     try {
@@ -1113,6 +1276,93 @@
       resetError = err?.message ?? String(e)
     } finally {
       resetting = false
+    }
+  }
+
+  async function refreshDiagnosticSystemInfo() {
+    if (!isTauriRuntime()) {
+      diagLoadErr = 'Diagnostics run inside the desktop app only.'
+      return
+    }
+    diagLoadErr = ''
+    try {
+      diagSystemInfo = (await invoke('get_diagnostic_system_info')) as DiagnosticSystemInfo
+    } catch (e) {
+      diagLoadErr = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  function setDiagBusy(id: string | null) {
+    diagBusy = id
+    diagLastMessage = ''
+    diagLastDetail = ''
+  }
+
+  async function diagRun(id: string, fn: () => Promise<unknown>) {
+    if (!isTauriRuntime()) return
+    setDiagBusy(id)
+    try {
+      const out = await fn()
+      diagLastMessage = 'Done.'
+      diagLastDetail = JSON.stringify(out, null, 2)
+    } catch (e) {
+      diagLastMessage = 'Failed.'
+      diagLastDetail = e instanceof Error ? e.message : String(e)
+    } finally {
+      diagBusy = null
+    }
+  }
+
+  function diagRunHook() {
+    return diagRun('hook', () => invoke('run_hook_installation_test'))
+  }
+
+  function diagRunCapture() {
+    const s = Math.min(120, Math.max(1, Math.floor(Number(diagCaptureSecs)) || 8))
+    diagCaptureSecs = s
+    return diagRun('capture', () => invoke('run_key_capture_test', { durationSecs: s }))
+  }
+
+  function diagRunMatch() {
+    const hk = diagMatchHotkey.trim()
+    return diagRun('match', () => invoke('run_hotkey_matching_test', { hotkeyStr: hk }))
+  }
+
+  function diagRunConfig() {
+    return diagRun('config', () => invoke('analyze_kalam_config_diagnostic'))
+  }
+
+  function diagRunHealth() {
+    return diagRun('health', () => invoke('run_system_health_check'))
+  }
+
+  async function diagGetModifierState() {
+    if (!isTauriRuntime()) return
+    setDiagBusy('modifier')
+    try {
+      const [ctrl, alt, shift, meta] = (await invoke('get_modifier_state')) as [boolean, boolean, boolean, boolean]
+      diagLastMessage = 'Internal Modifier State'
+      diagLastDetail = JSON.stringify({ ctrl, alt, shift, meta }, null, 2)
+    } catch (e) {
+      diagLastMessage = 'Failed to get state.'
+      diagLastDetail = e instanceof Error ? e.message : String(e)
+    } finally {
+      diagBusy = null
+    }
+  }
+
+  async function diagSaveReport() {
+    if (!isTauriRuntime()) return
+    setDiagBusy('save')
+    try {
+      const path = (await invoke('save_diagnostics_report_to_file')) as string
+      diagLastMessage = 'Report saved.'
+      diagLastDetail = path
+    } catch (e) {
+      diagLastMessage = 'Save failed.'
+      diagLastDetail = e instanceof Error ? e.message : String(e)
+    } finally {
+      diagBusy = null
     }
   }
 
@@ -2151,19 +2401,10 @@
                 </label>
               </div>
             </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">How text is typed</span>
-                <span class="setting-desc">Paste from clipboard or simulate keystrokes</span>
-              </div>
-              <div class="setting-control">
-                <select class="form-select" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
-                  <option value="Auto">Automatic</option>
-                  <option value="Keystrokes">Simulate Keystrokes</option>
-                  <option value="Clipboard">Use Clipboard</option>
-                </select>
-              </div>
-            </div>
+            <p class="hint hint--after-toggles">
+              How transcribed text is sent to the active app (clipboard vs keystrokes, timing, per-app rules) is under
+              <strong>Text Insertion</strong>.
+            </p>
           </div>
           {/if}
         </section>
@@ -2541,6 +2782,407 @@
           </section>
         </div>
 
+      {:else if activeTab === 'insertion'}
+        <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.insertion_default}>
+            <button type="button" class="section-header" on:click={() => toggleSection('insertion_default')}>
+              <h3>Text insertion defaults</h3>
+              <Icon icon={collapsedSections.insertion_default ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.insertion_default}
+              <div class="section-content">
+                <p class="hint">
+                  Choose how Kalam puts your spoken text into the app you’re using.
+                </p>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">How text is added</span>
+                    <span class="setting-desc">Use whatever works best in the apps you dictate into</span>
+                  </div>
+                  <div class="setting-control">
+                    <select class="form-select" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
+                      <option value="Auto">Automatic</option>
+                      <option value="Keystrokes">Type each character</option>
+                      <option value="Clipboard">Paste</option>
+                      {#if appPlatform === 'macos'}
+                        <option value="AccessibilityAPI">Accessibility API</option>
+                      {:else if config.formatting.injection_method === 'AccessibilityAPI'}
+                        <option value="AccessibilityAPI">Accessibility API (uses Paste on this system)</option>
+                      {/if}
+                    </select>
+                  </div>
+                </div>
+                {#if insertionShowAccessibilityNote}
+                  <p class="hint insertion-accessibility-hint" role="status">
+                    <strong>Accessibility</strong> permission is required for direct text insertion on macOS (System
+                    Settings → Privacy &amp; Security → Accessibility).
+                    {#if runtimeCaps}
+                      <span class="insertion-perm-inline">
+                        Status:
+                        <span
+                          class="perm-cap-badge perm-cap-badge--inline"
+                          class:perm-cap-badge--granted={runtimeCaps.text_inject_state === 'granted'}
+                          class:perm-cap-badge--needs={runtimeCaps.text_inject_state === 'needs_action'}
+                          class:perm-cap-badge--unknown={runtimeCaps.text_inject_state === 'unknown'}
+                          >{badgeLabelForState(runtimeCaps.text_inject_state)}</span
+                        >
+                        {#if runtimeCaps.text_inject_state !== 'granted'}
+                          <button
+                            type="button"
+                            class="settings-secondary-btn insertion-perm-btn"
+                            on:click={() => requestPermission('accessibility')}>Request prompt</button
+                          >
+                          <button
+                            type="button"
+                            class="settings-secondary-btn insertion-perm-btn"
+                            on:click={() => openPermissionPage('accessibility')}>Open settings</button
+                          >
+                        {/if}
+                      </span>
+                    {:else if permCapsLoading}
+                      <span class="insertion-perm-inline">Checking permission…</span>
+                    {/if}
+                    Without it, Kalam falls back to <strong>Paste</strong> (clipboard is used briefly).
+                  </p>
+                {/if}
+                {#if config.formatting.injection_method === 'Auto' && appPlatform === 'macos'}
+                  <p class="hint">
+                    With <strong>Automatic</strong> on macOS, Kalam uses the Accessibility API when possible, then
+                    <strong>Paste</strong> if the target does not support it.
+                  </p>
+                {/if}
+                {#if insertionShowThreshold}
+                  <p class="hint">
+                    With <strong>Automatic</strong>, short phrases are typed and longer passages are pasted. The number
+                    below is roughly how long the text can get before Kalam switches to paste.
+                  </p>
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span class="setting-name">Length before pasting</span>
+                      <span class="setting-desc">
+                        When using Automatic, paste is used when your text is longer than this many characters. Lower
+                        means paste sooner.
+                      </span>
+                    </div>
+                    <div class="setting-control">
+                      <div class="number-input">
+                        <input
+                          type="number"
+                          min="1"
+                          max="100000"
+                          bind:value={config.formatting.clipboard_threshold}
+                          on:change={scheduleSave}
+                          aria-label="Character count before automatic mode uses paste"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+                {#if insertionShowTypingSpeed}
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span class="setting-name">Pause between letters</span>
+                      <span class="setting-desc">
+                        Extra wait after each character, in milliseconds (0–{INSERTION_KEYSTROKE_PAUSE_MAX_MS}). Leave at
+                        0 for the fastest result. Add a small amount only if the app drops or jumbles text—high values
+                        make long dictation very slow.
+                      </span>
+                    </div>
+                    <div class="setting-control">
+                      <div class="number-input">
+                        <input
+                          type="number"
+                          min="0"
+                          max={INSERTION_KEYSTROKE_PAUSE_MAX_MS}
+                          step="1"
+                          bind:value={config.formatting.keystroke_delay_ms}
+                          on:change={scheduleSave}
+                          aria-label="Pause in milliseconds between each typed character"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Try again</span>
+                    <span class="setting-desc">How many times Kalam retries if the text doesn’t go through</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="number-input">
+                      <input
+                        type="number"
+                        min="1"
+                        max="20"
+                        bind:value={config.formatting.retry_attempts}
+                        on:change={scheduleSave}
+                        aria-label="Number of times to retry inserting text"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Wait between tries</span>
+                    <span class="setting-desc">How long to pause before each retry (milliseconds)</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="number-input">
+                      <input
+                        type="number"
+                        min="0"
+                        max="5000"
+                        bind:value={config.formatting.retry_delay_ms}
+                        on:change={scheduleSave}
+                        aria-label="Milliseconds to wait between retry attempts"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {/if}
+          </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.insertion_per_app}>
+            <button type="button" class="section-header" on:click={() => toggleSection('insertion_per_app')}>
+              <h3>Application-specific rules</h3>
+              <Icon icon={collapsedSections.insertion_per_app ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.insertion_per_app}
+              <div class="section-content">
+                <p class="hint">
+                  Override defaults for a single program when typing or pasting misbehaves there. Kalam matches the
+                  running app by its file name (for example <code class="injection-picker-code">notepad.exe</code>).
+                </p>
+
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Per-app rules</span>
+                    <span class="setting-desc">Each rule uses the same options as above, scoped to one application</span>
+                  </div>
+                  <div class="setting-control">
+                    <button type="button" class="settings-secondary-btn" on:click={openInjectionAppPicker}>
+                      <Icon icon="ph:plus" />
+                      Add application
+                    </button>
+                  </div>
+                </div>
+
+                {#if config.formatting.app_injection_rules?.length > 0}
+                  <div class="injection-rules-stack">
+                    {#each config.formatting.app_injection_rules as rule, i (i)}
+                      <article
+                        class="injection-rule-card"
+                        aria-labelledby={`injection-rule-heading-${i}`}
+                      >
+                        <div class="injection-rule-card-head">
+                          <div class="injection-rule-card-identity" id={`injection-rule-heading-${i}`}>
+                            <div class="injection-rule-card-icon" aria-hidden="true">
+                              <Icon icon="ph:app-window" />
+                            </div>
+                            <div class="injection-rule-card-titles">
+                              <span class="injection-rule-card-name">{injectionRuleDisplayName(rule)}</span>
+                              <span class="injection-rule-card-process">{rule.process_name}</span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            class="btn-icon remove"
+                            title={`Remove rule for ${injectionRuleDisplayName(rule)}`}
+                            aria-label={`Remove rule for ${injectionRuleDisplayName(rule)}`}
+                            on:click={() => removeAppInjectionRule(i)}
+                          >
+                            <Icon icon="ph:x" />
+                          </button>
+                        </div>
+
+                        <div class="injection-rule-card-body">
+                          <div class="setting-row">
+                            <div class="setting-label">
+                              <span class="setting-name">How text is added</span>
+                              <span class="setting-desc">For this app only</span>
+                            </div>
+                            <div class="setting-control">
+                              <select
+                                class="form-select"
+                                bind:value={rule.method}
+                                on:change={scheduleSave}
+                                aria-label={`How text is added for ${injectionRuleDisplayName(rule)}`}
+                              >
+                                <option value="Auto">Automatic</option>
+                                <option value="Keystrokes">Type each character</option>
+                                <option value="Clipboard">Paste</option>
+                                {#if appPlatform === 'macos'}
+                                  <option value="AccessibilityAPI">Accessibility API</option>
+                                {:else if rule.method === 'AccessibilityAPI'}
+                                  <option value="AccessibilityAPI">Accessibility API (uses Paste on this system)</option>
+                                {/if}
+                              </select>
+                            </div>
+                          </div>
+
+                          {#if injectionRuleShowsSpeed(rule)}
+                            <div class="setting-row">
+                              <div class="setting-label">
+                                <span class="setting-name">Pause between letters</span>
+                                <span class="setting-desc">
+                                  Leave blank to use the default. 0–{INSERTION_KEYSTROKE_PAUSE_MAX_MS} ms; raise only if
+                                  this app drops or jumbles typed text.
+                                </span>
+                              </div>
+                              <div class="setting-control">
+                                <div class="number-input">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={INSERTION_KEYSTROKE_PAUSE_MAX_MS}
+                                    step="1"
+                                    placeholder="Default"
+                                    title="Leave blank to use the default pause between letters"
+                                    value={rule.keystroke_delay_ms ?? ''}
+                                    aria-label={`Pause between letters in milliseconds for ${injectionRuleDisplayName(rule)}`}
+                                    on:input={(e) => {
+                                      const raw = e.currentTarget.value
+                                      rule.keystroke_delay_ms = raw === '' ? null : Number(raw)
+                                      scheduleSave()
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          {/if}
+
+                          {#if injectionRuleShowsThreshold(rule)}
+                            <div class="setting-row">
+                              <div class="setting-label">
+                                <span class="setting-name">Length before pasting</span>
+                                <span class="setting-desc">
+                                  Leave blank to use the default. Used when this rule is set to Automatic.
+                                </span>
+                              </div>
+                              <div class="setting-control">
+                                <div class="number-input">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="100000"
+                                    placeholder="Default"
+                                    title="Leave blank to use the default length before pasting"
+                                    value={rule.clipboard_threshold ?? ''}
+                                    aria-label={`Character count before pasting for ${injectionRuleDisplayName(rule)}`}
+                                    on:input={(e) => {
+                                      const raw = e.currentTarget.value
+                                      rule.clipboard_threshold = raw === '' ? null : Number(raw)
+                                      scheduleSave()
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          {/if}
+                        </div>
+                      </article>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="injection-rules-empty">
+                    <Icon icon="ph:text-aa" />
+                    <p>No rules yet. Add an app here if the defaults work everywhere except one program.</p>
+                  </div>
+                {/if}
+
+                {#if injectionAppPickerOpen}
+                  <!-- svelte-ignore a11y-click-events-have-key-events -->
+                  <!-- svelte-ignore a11y-no-static-element-interactions -->
+                  <div
+                    class="sensitive-apps-picker-overlay"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Close panel"
+                    on:click={closeInjectionAppPicker}
+                    on:keydown={(e) => e.key === 'Enter' && closeInjectionAppPicker()}
+                    transition:fade
+                    use:portalAppShell
+                  ></div>
+                  <aside
+                    class="sensitive-apps-picker-panel kalam-sleek"
+                    transition:fly={{ x: 420, duration: 250, opacity: 1 }}
+                    use:portalAppShell
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="injection-apps-picker-title"
+                  >
+                    <div class="sensitive-apps-picker-header">
+                      <h3 id="injection-apps-picker-title">Add application</h3>
+                      <button type="button" class="btn-icon" on:click={closeInjectionAppPicker} aria-label="Close">
+                        <Icon icon="ph:x" />
+                      </button>
+                    </div>
+                    <p class="sensitive-apps-picker-intro">
+                      Pick from applications installed on this device. Rules match the <strong>process name</strong> (for example
+                      <code class="injection-picker-code">notepad.exe</code>).
+                    </p>
+                    <div class="sensitive-apps-picker-search">
+                      <Icon icon="ph:magnifying-glass" />
+                      <input
+                        type="text"
+                        placeholder="Search installed apps…"
+                        bind:value={injectionAppsSearch}
+                        disabled={injectionAppsLoading}
+                      />
+                    </div>
+                    <div class="sensitive-apps-picker-scroll">
+                      {#if injectionAppsLoading}
+                        <div class="sensitive-apps-loading">
+                          <Icon icon="ph:spinner" class="spin" />
+                          <span>Scanning installed apps…</span>
+                        </div>
+                      {:else if filteredInjectionInstalledApps.length > 0}
+                        <ul class="sensitive-apps-list-select">
+                          {#each filteredInjectionInstalledApps as app}
+                            <li>
+                              <button
+                                type="button"
+                                class="sensitive-app-select-row"
+                                class:already-added={isInjectionAppAlreadyAdded(app.process_name)}
+                                on:click={() => addInjectionAppFromPicker(app.process_name, app.display_name)}
+                                disabled={isInjectionAppAlreadyAdded(app.process_name)}
+                              >
+                                {#if app.icon_base64}
+                                  <img
+                                    src="data:image/png;base64,{app.icon_base64}"
+                                    alt=""
+                                    class="sensitive-app-select-icon"
+                                  />
+                                {:else}
+                                  <div class="sensitive-app-select-icon-placeholder">
+                                    <Icon icon="ph:app-window" />
+                                  </div>
+                                {/if}
+                                <span class="sensitive-app-select-name">{app.display_name}</span>
+                                {#if isInjectionAppAlreadyAdded(app.process_name)}
+                                  <span class="sensitive-app-select-badge">Added</span>
+                                {:else}
+                                  <Icon icon="ph:caret-right" class="sensitive-app-select-chevron" />
+                                {/if}
+                              </button>
+                            </li>
+                          {/each}
+                        </ul>
+                      {:else}
+                        <div class="sensitive-apps-empty-state">
+                          <Icon icon="ph:package" />
+                          <p>{injectionAppsSearch ? 'No installed apps match your search.' : 'No installed apps found.'}</p>
+                        </div>
+                      {/if}
+                    </div>
+                  </aside>
+                {/if}
+              </div>
+            {/if}
+          </section>
+        </div>
+
       {:else if activeTab === 'privacy'}
         <div class="settings-tab-content">
           <section class="settings-section" class:collapsed={collapsedSections.privacy_data}>
@@ -2798,7 +3440,7 @@
         <div class="settings-tab-content">
           <section class="settings-section" class:collapsed={collapsedSections.advanced_logs}>
             <button type="button" class="section-header" on:click={() => toggleSection('advanced_logs')}>
-              <h3>Logging &amp; Diagnostics</h3>
+              <h3>Logging</h3>
               <Icon icon={collapsedSections.advanced_logs ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
             {#if !collapsedSections.advanced_logs}
@@ -2866,6 +3508,194 @@
                 </p>
                 {#if logExportMessage}
                   <p class="hint error">{logExportMessage}</p>
+                {/if}
+              </div>
+            {/if}
+          </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.advanced_diagnostics}>
+            <button type="button" class="section-header" on:click={() => toggleSection('advanced_diagnostics')}>
+              <h3>Diagnostics</h3>
+              <Icon icon={collapsedSections.advanced_diagnostics ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.advanced_diagnostics}
+              <div class="section-content adv-diag">
+                <p class="adv-diag-lede">
+                  Hotkey and config checks use a short listener alongside Kalam’s own. Logging is raised to <strong>Debug</strong> only while a test runs.
+                  <strong>Save report</strong> attaches structured rows from runs since your last save, plus a log excerpt.
+                </p>
+                {#if diagLoadErr}
+                  <p class="hint error" role="alert">{diagLoadErr}</p>
+                {/if}
+                {#if diagSystemInfo}
+                  <div class="adv-diag-env">
+                    <p class="adv-diag-eyebrow" id="adv-diag-env-h">Environment</p>
+                    <dl class="adv-diag-dl" aria-labelledby="adv-diag-env-h">
+                      <dt>OS</dt>
+                      <dd>{diagSystemInfo.os_name} <span class="adv-diag-muted">({diagSystemInfo.architecture})</span></dd>
+                      <dt>Version</dt>
+                      <dd>{diagSystemInfo.os_version}</dd>
+                      <dt>Config</dt>
+                      <dd class="adv-diag-path">{diagSystemInfo.kalam_config_path}</dd>
+                      <dt>Config file</dt>
+                      <dd>{diagSystemInfo.kalam_config_exists ? 'Found' : 'Missing'}</dd>
+                    </dl>
+                  </div>
+                {/if}
+
+                <div class="adv-diag-stack">
+                  <div class="adv-diag-block">
+                    <p class="adv-diag-eyebrow" id="adv-diag-kb-h">Keyboard and hooks</p>
+                    <div class="adv-diag-block-inner" role="group" aria-labelledby="adv-diag-kb-h">
+                      <div class="adv-diag-tool">
+                        <span class="adv-diag-tool-name">Low-level hook</span>
+                        <div class="adv-diag-tool-ctrl">
+                          <button
+                            type="button"
+                            class="settings-secondary-btn"
+                            disabled={!isTauriRuntime() || diagBusy !== null}
+                            on:click={() => void diagRunHook()}
+                          >
+                            {#if diagBusy === 'hook'}
+                              <span class="adv-diag-spin"><Icon icon="ph:spinner" /></span>
+                            {:else}
+                              <Icon icon="ph:plug" />
+                            {/if}
+                            Install probe
+                          </button>
+                        </div>
+                      </div>
+                      <div class="adv-diag-tool">
+                        <span class="adv-diag-tool-name">Key capture</span>
+                        <div class="adv-diag-tool-ctrl">
+                          <label class="adv-diag-sr-only" for="adv-diag-cap-secs">Duration in seconds</label>
+                          <div class="adv-diag-field">
+                            <span class="adv-diag-field-label" aria-hidden="true">Seconds</span>
+                            <input
+                              id="adv-diag-cap-secs"
+                              type="number"
+                              min="1"
+                              max="120"
+                              bind:value={diagCaptureSecs}
+                              class="adv-diag-input adv-diag-input-narrow"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            class="settings-secondary-btn"
+                            disabled={!isTauriRuntime() || diagBusy !== null}
+                            on:click={() => void diagRunCapture()}
+                          >
+                            {#if diagBusy === 'capture'}
+                              <span class="adv-diag-spin"><Icon icon="ph:spinner" /></span>
+                            {:else}
+                              <Icon icon="ph:keyboard" />
+                            {/if}
+                            Run capture
+                          </button>
+                        </div>
+                      </div>
+                      <div class="adv-diag-tool">
+                        <span class="adv-diag-tool-name">Hotkey match</span>
+                        <div class="adv-diag-tool-ctrl">
+                          <label class="adv-diag-sr-only" for="adv-diag-match-hk">Hotkey string to test</label>
+                          <input
+                            id="adv-diag-match-hk"
+                            type="text"
+                            bind:value={diagMatchHotkey}
+                            class="adv-diag-input adv-diag-input-hotkey"
+                            placeholder="e.g. Ctrl+Win"
+                            autocomplete="off"
+                          />
+                          <button
+                            type="button"
+                            class="settings-secondary-btn"
+                            disabled={!isTauriRuntime() || diagBusy !== null}
+                            on:click={() => void diagRunMatch()}
+                          >
+                            {#if diagBusy === 'match'}
+                              <span class="adv-diag-spin"><Icon icon="ph:spinner" /></span>
+                            {:else}
+                              <Icon icon="ph:crosshair" />
+                            {/if}
+                            10s window
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="adv-diag-block">
+                    <p class="adv-diag-eyebrow" id="adv-diag-sys-h">Config and system</p>
+                    <div class="adv-diag-btn-cluster" role="group" aria-labelledby="adv-diag-sys-h">
+                      <button
+                        type="button"
+                        class="settings-secondary-btn"
+                        disabled={!isTauriRuntime() || diagBusy !== null}
+                        on:click={() => void diagRunConfig()}
+                      >
+                        {#if diagBusy === 'config'}
+                          <span class="adv-diag-spin"><Icon icon="ph:spinner" /></span>
+                        {:else}
+                          <Icon icon="ph:file-json" />
+                        {/if}
+                        Analyze config
+                      </button>
+                      <button
+                        type="button"
+                        class="settings-secondary-btn"
+                        disabled={!isTauriRuntime() || diagBusy !== null}
+                        on:click={() => void diagRunHealth()}
+                      >
+                        {#if diagBusy === 'health'}
+                          <span class="adv-diag-spin"><Icon icon="ph:spinner" /></span>
+                        {:else}
+                          <Icon icon="ph:heartbeat" />
+                        {/if}
+                        DISM health
+                      </button>
+                      <button
+                        type="button"
+                        class="settings-secondary-btn"
+                        disabled={!isTauriRuntime() || diagBusy !== null}
+                        on:click={() => void diagGetModifierState()}
+                      >
+                        {#if diagBusy === 'modifier'}
+                          <span class="adv-diag-spin"><Icon icon="ph:spinner" /></span>
+                        {:else}
+                          <Icon icon="ph:keyboard" />
+                        {/if}
+                        Modifier snapshot
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="adv-diag-export">
+                    <button
+                      type="button"
+                      class="btn-primary adv-diag-save"
+                      disabled={!isTauriRuntime() || diagBusy !== null}
+                      on:click={() => void diagSaveReport()}
+                    >
+                      {#if diagBusy === 'save'}
+                        <span class="adv-diag-spin"><Icon icon="ph:spinner" /></span>
+                      {:else}
+                        <Icon icon="ph:floppy-disk" />
+                      {/if}
+                      Save diagnostic report
+                    </button>
+                    <p class="hint adv-diag-export-hint">Writes markdown under <code class="adv-diag-code">.kalam/diagnostics/</code></p>
+                  </div>
+                </div>
+
+                {#if diagLastMessage || diagLastDetail}
+                  <div class="adv-diag-result">
+                    <p class="adv-diag-result-eyebrow">Last output</p>
+                    <p class="adv-diag-result-title">{diagLastMessage}</p>
+                    {#if diagLastDetail}
+                      <pre class="adv-diag-pre" tabindex="0">{diagLastDetail}</pre>
+                    {/if}
+                  </div>
                 {/if}
               </div>
             {/if}
@@ -3226,6 +4056,128 @@
     font-size: 11px;
     color: var(--text-secondary);
     text-transform: lowercase;
+  }
+
+  .hint--after-toggles {
+    margin: var(--space-md) 0 0;
+  }
+
+  /* Per-app text insertion: same setting-row pattern as defaults; stacks cleanly on narrow widths */
+  .injection-rules-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    margin-top: var(--space-md);
+  }
+
+  .injection-rule-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  .injection-rule-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    border-bottom: 1px solid var(--border-light);
+    background: color-mix(in oklch, var(--bg) 92%, var(--text) 8%);
+  }
+
+  .injection-rule-card-identity {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    min-width: 0;
+    flex: 1;
+  }
+
+  .injection-rule-card-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in oklch, var(--bg) 88%, var(--text) 12%);
+    color: var(--text-secondary);
+  }
+
+  .injection-rule-card-icon :global(svg) {
+    font-size: 1.25rem;
+  }
+
+  .injection-rule-card-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .injection-rule-card-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .injection-rule-card-process {
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .injection-rule-card-body {
+    padding: 0 var(--space-md);
+  }
+
+  .injection-rule-card-body .setting-row:last-child {
+    border-bottom: none;
+  }
+
+  .injection-rules-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+    padding: var(--space-xl) var(--space-md);
+    color: var(--text-secondary);
+    text-align: center;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md);
+    background: color-mix(in oklch, var(--bg) 96%, var(--text) 4%);
+  }
+
+  .injection-rules-empty :global(svg) {
+    font-size: 2rem;
+    opacity: 0.45;
+  }
+
+  .injection-rules-empty p {
+    margin: 0;
+    max-width: 22rem;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  :global(code.injection-picker-code) {
+    font-size: 0.9em;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-family: ui-monospace, 'Cascadia Code', monospace;
   }
 
   .sensitive-apps-empty {
@@ -3840,6 +4792,22 @@
     color: var(--text-secondary);
   }
 
+  .perm-cap-badge.perm-cap-badge--inline {
+    display: inline-block;
+    vertical-align: middle;
+    margin: 0 4px;
+  }
+
+  .insertion-accessibility-hint .insertion-perm-inline {
+    display: block;
+    margin-top: 6px;
+  }
+
+  button.insertion-perm-btn {
+    margin-right: 6px;
+    margin-top: 4px;
+  }
+
   .perm-cap-msg {
     margin: 0 0 8px !important;
     color: var(--text-secondary) !important;
@@ -4100,6 +5068,266 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+
+  /* Advanced → Diagnostics: grouped layout, env snapshot, tool rows */
+  .adv-diag {
+    container-type: inline-size;
+    container-name: adv-diag;
+  }
+
+  .adv-diag-lede {
+    margin: 0 0 clamp(1rem, 2.5vw, 1.35rem);
+    max-width: 52ch;
+    font-size: clamp(0.8125rem, 0.8rem + 0.2vw, 0.9rem);
+    line-height: 1.55;
+    color: color-mix(in srgb, var(--text, #e8e8e8) 78%, transparent);
+  }
+
+  .adv-diag-lede strong {
+    color: color-mix(in srgb, var(--text, #e8e8e8) 92%, transparent);
+    font-weight: 600;
+  }
+
+  .adv-diag-eyebrow {
+    margin: 0 0 0.65rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--text-muted, #999) 92%, var(--accent, #6b9) 8%);
+  }
+
+  .adv-diag-env {
+    margin-bottom: clamp(1.1rem, 3vw, 1.5rem);
+    padding: 0.75rem 1rem 0.85rem 1rem;
+    border-radius: 0 var(--radius-md, 10px) var(--radius-md, 10px) 0;
+    border-left: 3px solid color-mix(in srgb, var(--accent, #5a8) 55%, var(--border, #333));
+    background: color-mix(in srgb, var(--accent, #5a8) 7%, var(--bg-elevated, rgba(255, 255, 255, 0.04)));
+  }
+
+  .adv-diag-env .adv-diag-eyebrow {
+    margin-bottom: 0.5rem;
+  }
+
+  .adv-diag-dl {
+    display: grid;
+    grid-template-columns: minmax(5.5rem, auto) 1fr;
+    gap: 0.35rem 1rem;
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+  }
+
+  .adv-diag-dl dt {
+    margin: 0;
+    font-weight: 600;
+    color: color-mix(in srgb, var(--text, #fff) 72%, transparent);
+  }
+
+  .adv-diag-dl dd {
+    margin: 0;
+    word-break: break-word;
+  }
+
+  .adv-diag-muted {
+    font-weight: 400;
+    color: color-mix(in srgb, var(--text-muted, #aaa) 95%, transparent);
+  }
+
+  .adv-diag-path {
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+
+  .adv-diag-stack {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(1.15rem, 3vw, 1.65rem);
+  }
+
+  .adv-diag-block-inner {
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+    border-radius: var(--radius-md, 10px);
+    background: color-mix(in srgb, var(--bg-elevated, #1a1a1c) 88%, transparent);
+    overflow: hidden;
+  }
+
+  .adv-diag-tool {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem 1rem;
+    padding: 0.65rem 0.85rem;
+    border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  }
+
+  .adv-diag-tool:last-child {
+    border-bottom: none;
+  }
+
+  .adv-diag-tool-name {
+    flex: 0 1 auto;
+    min-width: min(100%, 7.5rem);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: color-mix(in srgb, var(--text, #fff) 88%, transparent);
+  }
+
+  .adv-diag-tool-ctrl {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.65rem;
+    justify-content: flex-end;
+    flex: 1 1 auto;
+    min-width: min(100%, 12rem);
+  }
+
+  @container adv-diag (min-width: 440px) {
+    .adv-diag-tool {
+      flex-wrap: nowrap;
+    }
+    .adv-diag-tool-ctrl {
+      justify-content: flex-end;
+    }
+  }
+
+  .adv-diag-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .adv-diag-field-label {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--text-muted, #999) 95%, transparent);
+  }
+
+  .adv-diag-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .adv-diag-input {
+    padding: 0.4rem 0.55rem;
+    border-radius: var(--radius-sm, 8px);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+    background: color-mix(in srgb, var(--bg, #0f0f10) 92%, var(--accent, #5a8) 4%);
+    color: inherit;
+    font-size: 0.8125rem;
+  }
+
+  .adv-diag-input:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent, #5a8) 65%, transparent);
+    outline-offset: 1px;
+  }
+
+  .adv-diag-input-narrow {
+    width: 3.5rem;
+    text-align: center;
+  }
+
+  .adv-diag-input-hotkey {
+    min-width: 8rem;
+    flex: 1 1 10rem;
+    max-width: 16rem;
+  }
+
+  .adv-diag-btn-cluster {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .adv-diag-export {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+    padding-top: 0.25rem;
+    border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+    margin-top: 0.15rem;
+  }
+
+  .adv-diag-save.btn-primary {
+    margin-top: 0.15rem;
+  }
+
+  .adv-diag-export-hint {
+    margin: 0;
+    font-size: 0.75rem;
+    max-width: 48ch;
+  }
+
+  .adv-diag-code {
+    font-size: 0.85em;
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--text, #fff) 8%, transparent);
+  }
+
+  .adv-diag-result {
+    margin-top: clamp(1rem, 2.5vw, 1.35rem);
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  }
+
+  .adv-diag-result-eyebrow {
+    margin: 0 0 0.35rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--text-muted, #999) 88%, transparent);
+  }
+
+  .adv-diag-result-title {
+    margin: 0 0 0.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: color-mix(in srgb, var(--text, #fff) 92%, transparent);
+  }
+
+  .adv-diag-pre {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    max-height: min(40vh, 320px);
+    overflow: auto;
+    padding: 0.75rem 0.85rem;
+    border-radius: var(--radius-sm, 8px);
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+    background: color-mix(in srgb, var(--bg, #000) 94%, var(--accent, #5a8) 6%);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-variant-ligatures: none;
+  }
+
+  .adv-diag-spin {
+    display: inline-flex;
+    animation: adv-diag-spin 0.75s linear infinite;
+  }
+
+  @keyframes adv-diag-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .adv-diag-spin {
+      animation: none;
+    }
   }
 
   .settings-secondary-btn.small {

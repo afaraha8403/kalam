@@ -51,14 +51,7 @@ pub fn probe_wh_keyboard_ll() -> crate::diagnostics::HookInstallationResult {
         };
     }
 
-    let hook = unsafe {
-        SetWindowsHookExW(
-            WH_KEYBOARD_LL,
-            Some(probe_keyboard_proc),
-            hmod,
-            0,
-        )
-    };
+    let hook = unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(probe_keyboard_proc), hmod, 0) };
 
     if hook == 0 {
         let error = unsafe { GetLastError() };
@@ -91,7 +84,8 @@ pub fn probe_wh_keyboard_ll() -> crate::diagnostics::HookInstallationResult {
         thread_id,
         recommendations: vec![
             "Hook installation is allowed for this process.".to_string(),
-            "If dictation hotkeys still fail, check config, other hooks, or security software.".to_string(),
+            "If dictation hotkeys still fail, check config, other hooks, or security software."
+                .to_string(),
         ],
     }
 }
@@ -111,7 +105,8 @@ fn hook_failure_recommendations(error: u32) -> Vec<String> {
     match error {
         5 => vec![
             "Try running Kalam as Administrator.".to_string(),
-            "Check whether antivirus or endpoint software blocks low-level keyboard hooks.".to_string(),
+            "Check whether antivirus or endpoint software blocks low-level keyboard hooks."
+                .to_string(),
         ],
         126 | 127 => vec![
             "Run DISM /Online /Cleanup-Image /RestoreHealth and reboot.".to_string(),
@@ -136,7 +131,8 @@ pub fn probe_wh_keyboard_ll() -> crate::diagnostics::HookInstallationResult {
         thread_id: 0,
         recommendations: vec![
             "No low-level Windows hook is used on this OS.".to_string(),
-            "If hotkeys fail here, check desktop environment permissions and shortcuts.".to_string(),
+            "If hotkeys fail here, check desktop environment permissions and shortcuts."
+                .to_string(),
         ],
     }
 }

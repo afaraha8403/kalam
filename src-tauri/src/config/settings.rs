@@ -6,7 +6,7 @@ use std::collections::HashMap;
 /// Per-mode STT or LLM provider + model. Empty provider means "use global default"
 /// (`stt_config` for voice, `default_llm_provider`/`default_llm_model` for LLM).
 /// Legacy `"inherit"` values are treated the same as empty during resolution.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ModeModelRef {
     pub provider: String,
     pub model_id: String,
@@ -17,15 +17,6 @@ impl ModeModelRef {
     pub fn is_default(&self) -> bool {
         let p = self.provider.trim();
         p.is_empty() || p.eq_ignore_ascii_case("inherit")
-    }
-}
-
-impl Default for ModeModelRef {
-    fn default() -> Self {
-        Self {
-            provider: String::new(),
-            model_id: String::new(),
-        }
     }
 }
 
@@ -401,7 +392,7 @@ fn default_hotkey() -> Option<String> {
 }
 
 fn default_config_version() -> u32 {
-    5
+    10
 }
 
 fn default_min_hold_ms() -> u64 {
@@ -702,6 +693,39 @@ pub enum VADPreset {
     Accurate,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum InjectionMethod {
+    Keystrokes,
+    Clipboard,
+    /// macOS: insert via Accessibility API (`AXSelectedText`); other platforms fall back to clipboard.
+    AccessibilityAPI,
+    Auto,
+}
+
+/// Per-app override for text injection. The foreground process name must **contain**
+/// `process_name` (case-insensitive), matching the legacy `force_clipboard_apps` behavior.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppInjectionRule {
+    pub process_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub method: InjectionMethod,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keystroke_delay_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clipboard_threshold: Option<usize>,
+}
+
+fn default_app_injection_rules() -> Vec<AppInjectionRule> {
+    vec![AppInjectionRule {
+        process_name: "notepad.exe".to_string(),
+        display_name: Some("Notepad".to_string()),
+        method: InjectionMethod::Clipboard,
+        keystroke_delay_ms: None,
+        clipboard_threshold: None,
+    }]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormattingConfig {
     pub voice_commands: bool,
@@ -715,11 +739,11 @@ pub struct FormattingConfig {
     pub retry_attempts: u32,
     #[serde(default = "default_retry_delay_ms")]
     pub retry_delay_ms: u64,
-    /// Process names (lowercase, e.g. "notepad.exe") that should always use
-    /// Clipboard injection regardless of injection_method / clipboard_threshold.
-    /// Win11 Notepad and similar TSF-heavy apps corrupt rapid keystroke bursts.
-    #[serde(default = "default_force_clipboard_apps")]
+    /// Legacy-only: values are merged into `app_injection_rules` when upgrading to config v9.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub force_clipboard_apps: Vec<String>,
+    #[serde(default)]
+    pub app_injection_rules: Vec<AppInjectionRule>,
 }
 
 fn default_retry_attempts() -> u32 {
@@ -727,9 +751,6 @@ fn default_retry_attempts() -> u32 {
 }
 fn default_retry_delay_ms() -> u64 {
     100
-}
-fn default_force_clipboard_apps() -> Vec<String> {
-    vec!["notepad.exe".to_string()]
 }
 
 impl Default for FormattingConfig {
@@ -744,16 +765,67 @@ impl Default for FormattingConfig {
             clipboard_threshold: 50,
             retry_attempts: 3,
             retry_delay_ms: 100,
-            force_clipboard_apps: default_force_clipboard_apps(),
+            force_clipboard_apps: Vec::new(),
+            app_injection_rules: default_app_injection_rules(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum InjectionMethod {
-    Keystrokes,
-    Clipboard,
-    Auto,
+impl FormattingConfig {
+    /// Clamp injection-related fields to the same bounds as the Settings UI (and manual JSON edits).
+    pub fn clamp_injection_fields(&mut self) {
+        // Cap per-character pause so long dictation stays usable (matches Settings UI).
+        const KEYSTROKE_DELAY_MAX_MS: u64 = 100;
+        const CLIPBOARD_THRESHOLD_MIN: usize = 1;
+        const CLIPBOARD_THRESHOLD_MAX: usize = 100_000;
+        const RETRY_ATTEMPTS_MIN: u32 = 1;
+        const RETRY_ATTEMPTS_MAX: u32 = 20;
+        const RETRY_DELAY_MAX_MS: u64 = 5000;
+
+        self.keystroke_delay_ms = self.keystroke_delay_ms.min(KEYSTROKE_DELAY_MAX_MS);
+        self.clipboard_threshold = self
+            .clipboard_threshold
+            .clamp(CLIPBOARD_THRESHOLD_MIN, CLIPBOARD_THRESHOLD_MAX);
+        self.retry_attempts = self
+            .retry_attempts
+            .clamp(RETRY_ATTEMPTS_MIN, RETRY_ATTEMPTS_MAX);
+        self.retry_delay_ms = self.retry_delay_ms.min(RETRY_DELAY_MAX_MS);
+
+        for rule in &mut self.app_injection_rules {
+            if let Some(d) = rule.keystroke_delay_ms.as_mut() {
+                *d = (*d).min(KEYSTROKE_DELAY_MAX_MS);
+            }
+            if let Some(t) = rule.clipboard_threshold.as_mut() {
+                *t = (*t).clamp(CLIPBOARD_THRESHOLD_MIN, CLIPBOARD_THRESHOLD_MAX);
+            }
+        }
+    }
+
+    /// Clone and apply the first matching per-app rule (substring match on process name).
+    pub fn with_applied_app_rules(&self, foreground_process: Option<&str>) -> Self {
+        let Some(pname) = foreground_process.filter(|s| !s.trim().is_empty()) else {
+            return self.clone();
+        };
+        let name_lower = pname.to_lowercase();
+        for rule in &self.app_injection_rules {
+            let needle = rule.process_name.to_lowercase();
+            if needle.is_empty() {
+                continue;
+            }
+            if name_lower.contains(&needle) {
+                let mut eff = self.clone();
+                eff.injection_method = rule.method.clone();
+                if let Some(d) = rule.keystroke_delay_ms {
+                    eff.keystroke_delay_ms = d;
+                }
+                if let Some(t) = rule.clipboard_threshold {
+                    eff.clipboard_threshold = t;
+                }
+                return eff;
+            }
+        }
+        self.clone()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

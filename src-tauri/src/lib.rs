@@ -9,6 +9,7 @@ mod db;
 #[cfg(feature = "dev-bridge")]
 mod dev_bridge;
 mod diagnostics;
+mod focus;
 mod formatting;
 mod history;
 mod hotkey;
@@ -224,8 +225,7 @@ fn resolve_llm_for_mode(config: &AppConfig, mode: &DictationMode) -> Option<Reso
     let api_key = provider_api_key(config, &provider)?;
     let model = if mode.language_model.model_id.trim().is_empty() {
         // Mode specifies provider but not model — try catalog default.
-        crate::catalog::default_llm_model_for_provider_test(&provider)
-            .map(|s| s.to_string())?
+        crate::catalog::default_llm_model_for_provider_test(&provider).map(|s| s.to_string())?
     } else {
         mode.language_model.model_id.clone()
     };
@@ -523,7 +523,7 @@ pub struct AppState {
     pub audio_capture: Arc<Mutex<crate::audio::capture::AudioCapture>>,
     pub last_injected_len: Arc<AtomicUsize>,
     pub last_injected_text: Arc<Mutex<String>>,
-    /// On Windows: HWND of foreground window at recording start; restore before injection so text goes to the right app.
+    /// Platform-specific id to restore focus before injection: **Windows** = HWND, **macOS** = unix PID, **Linux** = X11 window id (decimal).
     pub foreground_for_injection: Arc<Mutex<Option<usize>>>,
     /// On Windows: lowercase process filename (e.g. "notepad.exe") of the foreground window at recording start.
     pub foreground_process_name: Arc<Mutex<Option<String>>>,
@@ -2011,7 +2011,6 @@ async fn pick_executable_file() -> Result<Option<String>, String> {
 /// Stable key for merging picker rows that share the same product name (e.g. many `firefox*.exe`).
 fn installed_app_display_key(display_name: &str) -> String {
     display_name
-        .trim()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -4536,6 +4535,17 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
             }
         }
         if let Ok(window) = active_win_pos_rs::get_active_window() {
+            // Remember where dictation started so we can refocus before inject (toggle mode).
+            #[cfg(target_os = "macos")]
+            {
+                *state.foreground_for_injection.lock().await = Some(window.process_id as usize);
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if let Ok(wid) = window.window_id.parse::<u32>() {
+                    *state.foreground_for_injection.lock().await = Some(wid as usize);
+                }
+            }
             let pid = window.process_id;
             use sysinfo::{Pid, ProcessesToUpdate, System};
             let mut sys = System::new();
@@ -5296,9 +5306,7 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                 .iter()
                 .find(|m| m.id == config.active_mode_id)
                 .or_else(|| config.modes.iter().find(|m| m.id == "default"));
-            active
-                .map(|m| m.voice_model.clone())
-                .unwrap_or_default()
+            active.map(|m| m.voice_model.clone()).unwrap_or_default()
         };
 
         let pending_selection = state.pending_selected_text.lock().await.take();
@@ -5700,20 +5708,12 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                                 },
                                             );
                                             let _ = app_handle.emit("dictation-result", &formatted);
-                                            #[cfg(windows)]
-                                            if let Some(hwnd) = foreground_hwnd {
-                                                let _ = unsafe {
-                                                    windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(
-                                                        hwnd as isize,
-                                                    )
-                                                };
+                                            if let Some(target_id) = foreground_hwnd {
+                                                let _ = crate::focus::restore_foreground(target_id);
+                                                // Give the target (e.g. Win11 XAML) time to accept focus before synthetic input.
                                                 std::thread::sleep(
                                                     std::time::Duration::from_millis(150),
                                                 );
-                                            }
-                                            #[cfg(not(windows))]
-                                            {
-                                                let _ = foreground_hwnd;
                                             }
                                             let mut clip_formatting = config.formatting.clone();
                                             clip_formatting.injection_method =
@@ -5933,38 +5933,28 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                                 },
                             );
                             let _ = app_handle.emit("dictation-result", &formatted);
-                            #[cfg(windows)]
-                            if let Some(hwnd) = foreground_hwnd {
-                                let _ = unsafe {
-                                    windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(
-                                        hwnd as isize,
-                                    )
-                                };
+                            if let Some(target_id) = foreground_hwnd {
+                                let _ = crate::focus::restore_foreground(target_id);
                                 // Win11 XAML apps (e.g. Notepad) need extra time to fully settle
                                 // focus before synthetic input is accepted reliably.
                                 std::thread::sleep(std::time::Duration::from_millis(150));
                             }
-                            // On Windows, override injection method to Clipboard for apps known to
-                            // corrupt rapid keystroke bursts via TSF (e.g. Win11 Notepad).
-                            #[allow(unused_mut)]
-                            let mut effective_formatting = config.formatting.clone();
-                            #[cfg(windows)]
+                            // Per-app rules (e.g. Notepad → clipboard) override global injection settings.
+                            let effective_formatting = config
+                                .formatting
+                                .with_applied_app_rules(foreground_process.as_deref());
+                            if effective_formatting.injection_method
+                                != config.formatting.injection_method
+                                || effective_formatting.keystroke_delay_ms
+                                    != config.formatting.keystroke_delay_ms
+                                || effective_formatting.clipboard_threshold
+                                    != config.formatting.clipboard_threshold
                             {
                                 if let Some(ref pname) = foreground_process {
-                                    let name_lower = pname.to_lowercase();
-                                    let force_clipboard = config
-                                        .formatting
-                                        .force_clipboard_apps
-                                        .iter()
-                                        .any(|app| name_lower.contains(&app.to_lowercase()));
-                                    if force_clipboard {
-                                        log::info!(
-                                            "Forcing clipboard injection for process: {}",
-                                            pname
-                                        );
-                                        effective_formatting.injection_method =
-                                            crate::config::InjectionMethod::Clipboard;
-                                    }
+                                    log::info!(
+                                        "Applied per-app text injection overrides for process: {}",
+                                        pname
+                                    );
                                 }
                             }
                             if let Ok(injector) = crate::injection::TextInjector::new() {
@@ -6066,4 +6056,3 @@ async fn toggle_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<A
         }
     }
 }
-
