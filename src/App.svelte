@@ -178,7 +178,8 @@
   }
 
   let currentPage = 'home'
-  let isFirstRun = true
+  /** null = config not yet loaded; avoids flashing onboarding for returning users. */
+  let isFirstRun: boolean | null = null
   let dictationEnabled = true
   let sidebarCollapsed = false
   let statusBarConfig: AppConfig | null = null
@@ -424,8 +425,10 @@
 
 {#if isOverlay}
   <Overlay />
+{:else if isFirstRun === null}
+  <!-- Config still loading — blank themed shell prevents onboarding flash for returning users. -->
+  <div class="kalam-sleek" class:dark={darkMode} class:light={!darkMode}></div>
 {:else if isFirstRun}
-  <!-- Same .kalam-sleek tokens as main shell so first-run UI matches Inter, surfaces, and light/dark. -->
   <div class="kalam-sleek onboarding-shell" class:dark={darkMode} class:light={!darkMode}>
     <Onboarding on:complete={handleOnboardingComplete} />
   </div>

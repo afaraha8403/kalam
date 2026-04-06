@@ -34,6 +34,27 @@ $Version = $Arg1
 
 $RootDir = Get-Location
 
+# Rust/Cargo default install location is often missing from the interactive PowerShell PATH; align with package.json scripts.
+function Ensure-CargoInPath {
+    if ($env:OS -eq "Windows_NT") {
+        $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+        if (Test-Path $cargoBin) {
+            $env:PATH = "$cargoBin;$env:PATH"
+        }
+    }
+}
+
+# Tauri needs cargo on PATH; fail fast with a clear message (avoids opaque "program not found" from npx).
+function Assert-CargoAvailable {
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        Write-Host ""
+        Write-Host "cargo was not found on PATH." -ForegroundColor Red
+        Write-Host "Install Rust: https://rustup.rs/  Then open a new terminal and run this task again." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
+}
+
 # ==============================================================================
 # HELPER FUNCTIONS
 # ==============================================================================
@@ -111,7 +132,7 @@ function Confirm-ChangelogUpdated {
     
     if (-not $hasSection) {
         Write-Host ""
-        Write-Host "  ⚠ Warning: CHANGELOG.md does not contain section ## [$Version]" -ForegroundColor Yellow
+        Write-Host ("  [!] Warning: CHANGELOG.md does not contain section ## [{0}]" -f $Version) -ForegroundColor Yellow
         Write-Host ""
         Write-Host "  How to update CHANGELOG.md before releasing:" -ForegroundColor Cyan
         Write-Host "  -----------------------------------------------" -ForegroundColor Cyan
@@ -140,18 +161,19 @@ function Confirm-ChangelogUpdated {
         Write-Host "  from this section to populate the release description." -ForegroundColor Gray
         Write-Host ""
         
-        $response = Read-Host "  Have you updated CHANGELOG.md for v$Version? (y/N)"
+        $response = Read-Host ("  Have you updated CHANGELOG.md for v{0}? (y/N)" -f $Version)
         if ($response -ne "y" -and $response -ne "Y") {
             Write-Host ""
-            Write-Host "  ✗ Release aborted. Update CHANGELOG.md and run again." -ForegroundColor Red
+            Write-Host "  [X] Release aborted. Update CHANGELOG.md and run again." -ForegroundColor Red
             Write-Host ""
             exit 1
         }
     } else {
         Write-Host ""
-        Write-Host "  ✓ Found changelog section [$Version]" -ForegroundColor Green
+        Write-Host ("  [OK] Found changelog section [{0}]" -f $Version) -ForegroundColor Green
         if (-not $hasGroupedFormat) {
-            Write-Host "  ⚠ Warning: Section does not use grouped format (### Features/Fixes/Changes)" -ForegroundColor Yellow
+            # Single-quoted: avoids PS 5.1 misparsing (e.g., commas in "(e.g., ...)" or "###" near "#" comments when encoding is wrong).
+            Write-Host '  [!] Warning: Section does not use grouped format (### Features / Fixes / Changes)' -ForegroundColor Yellow
         }
         Write-Host ""
     }
@@ -207,11 +229,14 @@ switch ($Command) {
     
     "dev" {
         Write-Host "Starting development server..." -ForegroundColor Cyan
-        npm run tauri dev
+        # Use npm "dev" script so PATH, dev-bridge feature, and Vite match package.json (not plain `tauri dev`).
+        npm run dev
     }
 
     "build" {
         Write-Host "Building Tauri app (unsigned)..." -ForegroundColor Cyan
+        Ensure-CargoInPath
+        Assert-CargoAvailable
         # Windows: use NSIS only to avoid MSI prerelease version error (aligns with release.yml)
         if ($env:OS -eq "Windows_NT") {
             npx tauri build --no-sign --bundles nsis
@@ -222,11 +247,13 @@ switch ($Command) {
 
     "build-signed" {
         Write-Host "Building Tauri app (signed; requires TAURI_SIGNING_PRIVATE_KEY)..." -ForegroundColor Cyan
+        Ensure-CargoInPath
+        Assert-CargoAvailable
         # Windows: use NSIS only to avoid MSI prerelease version error (aligns with release.yml)
         if ($env:OS -eq "Windows_NT") {
             npx tauri build --bundles nsis
         } else {
-            npm run tauri build
+            npx tauri build
         }
     }
 
@@ -241,7 +268,9 @@ switch ($Command) {
 
     "test" {
         Write-Host "--- Running Tests ---" -ForegroundColor Cyan
-        
+        Ensure-CargoInPath
+        Assert-CargoAvailable
+
         Write-Host "`n[1/3] Checking Svelte/TypeScript..." -ForegroundColor Gray
         npm run check
         $tsResult = $LASTEXITCODE
@@ -257,15 +286,17 @@ switch ($Command) {
         Set-Location $RootDir
 
         if ($tsResult -eq 0 -and $unitResult -eq 0 -and $rustResult -eq 0) {
-            Write-Host "`n✓ SUCCESS: All checks passed." -ForegroundColor Green
+            Write-Host "`n[OK] SUCCESS: All checks passed." -ForegroundColor Green
         } else {
-            Write-Host "`n✗ FAILURE: Some checks failed." -ForegroundColor Red
+            Write-Host "`n[X] FAILURE: Some checks failed." -ForegroundColor Red
             exit 1
         }
     }
 
     "fmt" {
         Write-Host "Formatting Rust code..." -ForegroundColor Cyan
+        Ensure-CargoInPath
+        Assert-CargoAvailable
         Set-Location src-tauri
         cargo fmt
         Set-Location $RootDir
@@ -273,6 +304,8 @@ switch ($Command) {
 
     "lint" {
         Write-Host "Linting Rust code..." -ForegroundColor Cyan
+        Ensure-CargoInPath
+        Assert-CargoAvailable
         Set-Location src-tauri
         cargo clippy -- -D warnings
         Set-Location $RootDir
@@ -293,11 +326,11 @@ switch ($Command) {
 
     "release" {
         if (-not $Version) {
-            $Version = Read-Host "Enter version (e.g., 1.0.0)"
+            $Version = Read-Host 'Enter version (e.g. 1.0.0)'
         }
         
         if (-not ($Version -match '^\d+\.\d+\.\d+$')) {
-            Write-Host "Error: Invalid version format. Use semantic versioning (e.g., 1.0.0)" -ForegroundColor Red
+            Write-Host 'Error: Invalid version format. Use semantic versioning (e.g. 1.0.0)' -ForegroundColor Red
             exit 1
         }
         
@@ -318,13 +351,13 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { exit 1 }
         
         Write-Host ""
-        Write-Host "✓ Release v$Version initiated!" -ForegroundColor Green
+        Write-Host ("[OK] Release v{0} initiated!" -f $Version) -ForegroundColor Green
         Write-Host "GitHub Actions will now build and draft the release." -ForegroundColor Gray
     }
 
     "release-beta" {
         if (-not $Version) {
-            $Version = Read-Host "Enter prerelease version (e.g., 1.0.0-beta.1 or 1.0.0-rc.1)"
+            $Version = Read-Host 'Enter prerelease version (e.g. 1.0.0-beta.1 or 1.0.0-rc.1)'
         }
         
         if (-not ($Version -match '^\d+\.\d+\.\d+-(alpha|beta|rc)\.\d+$')) {
@@ -350,17 +383,17 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { exit 1 }
         
         Write-Host ""
-        Write-Host "✓ Pre-release v$Version initiated!" -ForegroundColor Green
+        Write-Host ("[OK] Pre-release v{0} initiated!" -f $Version) -ForegroundColor Green
         Write-Host "GitHub Actions will build and draft the release." -ForegroundColor Gray
     }
 
     "release-rc" {
         if (-not $Version) {
-            $Version = Read-Host "Enter RC version (e.g., 1.0.0-rc.1)"
+            $Version = Read-Host 'Enter RC version (e.g. 1.0.0-rc.1)'
         }
         
         if (-not ($Version -match '^\d+\.\d+\.\d+-rc\.\d+$')) {
-            Write-Host "Error: Invalid RC version format. Use X.Y.Z-rc.N (e.g., 1.0.0-rc.1)" -ForegroundColor Red
+            Write-Host 'Error: Invalid RC version format. Use X.Y.Z-rc.N (e.g. 1.0.0-rc.1)' -ForegroundColor Red
             exit 1
         }
         
@@ -381,17 +414,17 @@ switch ($Command) {
         if ($LASTEXITCODE -ne 0) { exit 1 }
         
         Write-Host ""
-        Write-Host "✓ Release candidate v$Version initiated!" -ForegroundColor Green
+        Write-Host ("[OK] Release candidate v{0} initiated!" -f $Version) -ForegroundColor Green
         Write-Host "GitHub Actions will build and draft the release." -ForegroundColor Gray
     }
 
     "set-version" {
         if (-not $Version) {
-            $Version = Read-Host "Enter version (e.g., 1.0.0)"
+            $Version = Read-Host 'Enter version (e.g. 1.0.0)'
         }
         Update-Version $Version
         Write-Host ""
-        Write-Host "✓ Version updated to $Version in all config files." -ForegroundColor Green
+        Write-Host ("[OK] Version updated to {0} in all config files." -f $Version) -ForegroundColor Green
         Write-Host "Note: Changes are NOT committed. Run 'git add' and 'git commit' manually." -ForegroundColor Yellow
     }
 
@@ -413,7 +446,7 @@ switch ($Command) {
         $keyPath = "$tauriDir\kalam.key"
         if (Test-Path $keyPath) {
             Write-Host "  WARNING: Keys already exist at $keyPath" -ForegroundColor Yellow
-            $confirm = Read-Host "  Overwrite existing keys? (y/N)"
+            $confirm = Read-Host '  Overwrite existing keys? (y/N)'
             if ($confirm -ne "y" -and $confirm -ne "Y") {
                 Write-Host "  Aborted." -ForegroundColor Gray
                 exit 0
@@ -425,17 +458,17 @@ switch ($Command) {
         
         if ($result -eq 0) {
             Write-Host ""
-            Write-Host "  ✓ Keys generated successfully!" -ForegroundColor Green
+            Write-Host "  [OK] Keys generated successfully!" -ForegroundColor Green
             Write-Host "  Key files:" -ForegroundColor Cyan
             Write-Host "    Private: $keyPath" -ForegroundColor Gray
             Write-Host "    Public:  $keyPath.pub" -ForegroundColor Gray
             Write-Host ""
             Write-Host "  NEXT STEPS:" -ForegroundColor Yellow
-            Write-Host "  1. Run: ./tasks.ps1 show-pubkey — copy the BASE64 line into tauri.conf.json → plugins.updater.pubkey" -ForegroundColor White
+            Write-Host "  1. Run: ./tasks.ps1 show-pubkey - copy the BASE64 line into tauri.conf.json -> plugins.updater.pubkey" -ForegroundColor White
             Write-Host "  2. Add GitHub Secrets: TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD" -ForegroundColor White
             Write-Host "  3. Run: ./tasks.ps1 verify-updater-signing before tagging a release" -ForegroundColor White
         } else {
-            Write-Host "  ✗ Key generation failed" -ForegroundColor Red
+            Write-Host "  [X] Key generation failed" -ForegroundColor Red
             exit 1
         }
     }
@@ -445,7 +478,7 @@ switch ($Command) {
         
         if (-not (Test-Path $keyPath)) {
             Write-Host ""
-            Write-Host "  ✗ Public key not found at: $keyPath" -ForegroundColor Red
+            Write-Host "  [X] Public key not found at: $keyPath" -ForegroundColor Red
             Write-Host "  Run './tasks.ps1 generate-keys' first to create a keypair." -ForegroundColor Yellow
             Write-Host ""
             exit 1
@@ -457,21 +490,21 @@ switch ($Command) {
         $pubkeyB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($pubkeyNormalized))
         
         Write-Host ""
-        Write-Host "  Your Public Key (minisign .pub — for reference)" -ForegroundColor Green
+        Write-Host "  Your Public Key (minisign .pub - for reference)" -ForegroundColor Green
         Write-Host "  ==============================================" -ForegroundColor Green
         Write-Host ""
         Write-Host "  $pubkeyRaw" -ForegroundColor White
         Write-Host ""
-        Write-Host "  Paste this SINGLE-LINE base64 into tauri.conf.json → plugins → updater → pubkey:" -ForegroundColor Gray
+        Write-Host "  Paste this SINGLE-LINE base64 into tauri.conf.json -> plugins -> updater -> pubkey:" -ForegroundColor Gray
         Write-Host ""
-        Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-        Write-Host "  │ $pubkeyB64" -ForegroundColor White
-        Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
+        Write-Host "  ----------------------------------------------------------------" -ForegroundColor Cyan
+        Write-Host "  $pubkeyB64" -ForegroundColor White
+        Write-Host "  ----------------------------------------------------------------" -ForegroundColor Cyan
         Write-Host ""
         
         try {
             $pubkeyB64 | Set-Clipboard
-            Write-Host "  ✓ Base64 value copied to clipboard (use this in JSON)." -ForegroundColor Green
+            Write-Host "  [OK] Base64 value copied to clipboard (use this in JSON)." -ForegroundColor Green
         } catch {
             Write-Host "  (Could not copy to clipboard automatically)" -ForegroundColor Gray
         }
@@ -482,7 +515,7 @@ switch ($Command) {
         $confPath = Join-Path $RootDir "src-tauri\tauri.conf.json"
         if (-not (Test-Path $confPath)) {
             Write-Host ""
-            Write-Host "  ✗ Not found: $confPath" -ForegroundColor Red
+            Write-Host "  [X] Not found: $confPath" -ForegroundColor Red
             Write-Host ""
             exit 1
         }
@@ -490,7 +523,7 @@ switch ($Command) {
         $embeddedB64 = $conf.plugins.updater.pubkey
         if (-not $embeddedB64) {
             Write-Host ""
-            Write-Host "  ✗ tauri.conf.json missing plugins.updater.pubkey" -ForegroundColor Red
+            Write-Host "  [X] tauri.conf.json missing plugins.updater.pubkey" -ForegroundColor Red
             Write-Host ""
             exit 1
         }
@@ -501,8 +534,8 @@ switch ($Command) {
         $keyPath = "$env:USERPROFILE\.tauri\kalam.key.pub"
         if (-not (Test-Path $keyPath)) {
             Write-Host ""
-            Write-Host "  ✗ Local public key not found: $keyPath" -ForegroundColor Red
-            Write-Host "  Run './tasks.ps1 generate-keys' or copy your CI keypair’s .pub here, then re-run." -ForegroundColor Yellow
+            Write-Host "  [X] Local public key not found: $keyPath" -ForegroundColor Red
+            Write-Host "  Run './tasks.ps1 generate-keys' or copy your CI keypair's .pub here, then re-run." -ForegroundColor Yellow
             Write-Host ""
             exit 1
         }
@@ -511,14 +544,14 @@ switch ($Command) {
 
         if ($embeddedText -ceq $diskText) {
             Write-Host ""
-            Write-Host "  ✓ tauri.conf.json pubkey matches $keyPath" -ForegroundColor Green
+            Write-Host "  [OK] tauri.conf.json pubkey matches $keyPath" -ForegroundColor Green
             Write-Host "  Ensure GitHub secret TAURI_SIGNING_PRIVATE_KEY is the private key for this .pub file." -ForegroundColor Gray
             Write-Host ""
             exit 0
         }
 
         Write-Host ""
-        Write-Host "  ✗ Mismatch: tauri.conf.json plugins.updater.pubkey does not match $keyPath" -ForegroundColor Red
+        Write-Host "  [X] Mismatch: tauri.conf.json plugins.updater.pubkey does not match $keyPath" -ForegroundColor Red
         Write-Host "  Run './tasks.ps1 show-pubkey' and update tauri.conf.json, or replace the local .pub with the keypair you use in CI." -ForegroundColor Yellow
         Write-Host ""
         exit 1

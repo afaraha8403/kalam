@@ -10,6 +10,7 @@ mod db;
 mod dev_bridge;
 mod diagnostics;
 mod focus;
+mod external_foreground;
 mod formatting;
 mod history;
 mod hotkey;
@@ -30,6 +31,7 @@ use chrono::TimeZone;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -545,6 +547,14 @@ pub struct AppState {
     pub auto_activate_previous_mode_id: Arc<StdMutex<Option<String>>>,
     /// Phase 7: true when the current mode was selected by auto-activation (not manual).
     pub auto_activate_active: Arc<AtomicBool>,
+    /// Last non-Kalam foreground (HWND/PID + names). Single source for previews, idle logic, and dictation fallback when starting from Kalam UI.
+    pub external_foreground_cache: Arc<StdMutex<Option<crate::external_foreground::ExternalForegroundCache>>>,
+    /// Physical screen rect for overlay click-through hit test: left, top, right, bottom (right/bottom exclusive). Empty when `right <= left`.
+    pub overlay_pill_hit_rect: Arc<StdMutex<(i32, i32, i32, i32)>>,
+    /// When true, hit-test loop keeps cursor events enabled so dropdowns/context menus outside the pill stay clickable.
+    pub overlay_menu_open: Arc<AtomicBool>,
+    /// After a tier resize, keep accepting cursor events briefly so JS hover/resize does not flicker click-through.
+    pub overlay_hit_test_grace_until: Arc<StdMutex<Option<Instant>>>,
 }
 
 impl AppState {
@@ -607,8 +617,27 @@ impl AppState {
             pending_selected_text: Arc::new(Mutex::new(None)),
             auto_activate_previous_mode_id: Arc::new(StdMutex::new(None)),
             auto_activate_active: Arc::new(AtomicBool::new(false)),
+            external_foreground_cache: Arc::new(StdMutex::new(None)),
+            overlay_pill_hit_rect: Arc::new(StdMutex::new((0, 0, 0, 0))),
+            overlay_menu_open: Arc::new(AtomicBool::new(false)),
+            overlay_hit_test_grace_until: Arc::new(StdMutex::new(None)),
         })
     }
+}
+
+/// Hybrid/Auto sensitive-app path using a known process/title (not a live foreground query during/after overlay focus).
+fn sensitive_app_forces_local_for_process(
+    config: &AppConfig,
+    process_name: &str,
+    window_title: &str,
+) -> bool {
+    let effective = crate::config::privacy::effective_stt_config_for_foreground(
+        config,
+        process_name,
+        window_title,
+    );
+    matches!(effective.mode, STTMode::Local)
+        && matches!(config.stt_config.mode, STTMode::Hybrid | STTMode::Auto)
 }
 
 async fn cancel_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<AtomicBool>) {
@@ -1301,6 +1330,24 @@ pub fn run() {
                 if let Err(e) = overlay.as_ref().window().set_background_color(transparent) {
                     log::debug!("Overlay set_background_color: {}", e);
                 }
+
+                #[cfg(windows)]
+                {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    if let Ok(handle) = overlay.as_ref().window().window_handle() {
+                        if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                            use windows_sys::Win32::UI::WindowsAndMessaging::*;
+                            let hwnd = win32.hwnd.get();
+                            unsafe {
+                                let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE as isize);
+                            }
+                        }
+                    }
+                    // Transparent window still hits-test the full HWND; ignore cursor until the pill hit rect (see spawn_overlay_cursor_hit_test_loop).
+                    let _ = overlay.set_ignore_cursor_events(true);
+                    spawn_overlay_cursor_hit_test_loop(app.handle().clone());
+                }
             }
 
             // Track cursor to keep overlay on the correct monitor
@@ -1330,68 +1377,70 @@ pub fn run() {
                 }
             });
 
-            // When focus enters a sensitive app (Hybrid/Auto + patterns), expand the pill briefly with a lock hint.
-            let sensitive_peek_handle = app.handle().clone();
+            // One idle poll (450ms): refresh external-foreground cache, sensitive-app peek, and Phase 7 auto-activate.
+            // Single `get_foreground_app` per tick; Kalam-as-foreground does not overwrite cache or drive mode rules.
+            let idle_fg_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut last_idle_sensitive: Option<bool> = None;
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_millis(450)).await;
-                    let state = sensitive_peek_handle.state::<AppState>();
-                    let audio = *state.audio_state.lock().await;
+                    let st = idle_fg_handle.state::<AppState>();
+                    // Always refresh so context previews and cache stay current even while recording.
+                    crate::external_foreground::refresh_external_foreground_cache(&*st);
+                    let audio = *st.audio_state.lock().await;
                     if !matches!(audio, crate::audio::AudioState::Idle) {
                         continue;
                     }
-                    let cfg = match state.config.try_lock() {
+                    let cfg_quick = match st.config.try_lock() {
                         Ok(g) => g.get_all(),
                         Err(_) => continue,
                     };
-                    if !cfg.dictation_enabled {
+                    if !cfg_quick.dictation_enabled {
                         continue;
                     }
-                    let now = crate::config::privacy::foreground_matches_sensitive_app(&cfg);
-                    let prev = last_idle_sensitive.unwrap_or(false);
-                    if now && !prev {
-                        emit_overlay_event(&sensitive_peek_handle, OverlayEvent::SensitiveAppPeek);
+                    let resolved_fg =
+                        crate::external_foreground::capture_and_resolve_external_foreground(&*st);
+                    let now_sensitive = match &resolved_fg {
+                        Some((p, t)) => crate::config::privacy::foreground_matches_sensitive_app_for_process(
+                            &cfg_quick,
+                            p,
+                            t,
+                        ),
+                        None => false,
+                    };
+                    let prev_s = last_idle_sensitive.unwrap_or(false);
+                    if now_sensitive && !prev_s {
+                        emit_overlay_event(&idle_fg_handle, OverlayEvent::SensitiveAppPeek);
                     }
-                    last_idle_sensitive = Some(now);
-                }
-            });
+                    last_idle_sensitive = Some(now_sensitive);
 
-            // Phase 7: switch dictation mode when foreground app matches per-mode rules; switch back on leave.
-            let auto_activate_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(450)).await;
-                    let state = auto_activate_handle.state::<AppState>();
-                    let audio = *state.audio_state.lock().await;
-                    if !matches!(audio, crate::audio::AudioState::Idle) {
+                    if !config_has_auto_activate_rules(&cfg_quick) {
                         continue;
                     }
-                    let mut mgr = match state.config.try_lock() {
+                    let mut mgr = match st.config.try_lock() {
                         Ok(g) => g,
                         Err(_) => continue,
                     };
                     let cfg = mgr.get_all();
-                    if !cfg.dictation_enabled || !config_has_auto_activate_rules(&cfg) {
+                    if !cfg.dictation_enabled {
                         drop(mgr);
                         continue;
                     }
-                    let (process_name, window_title) =
-                        match crate::config::privacy::get_foreground_app() {
-                            Some(x) => x,
-                            None => {
-                                drop(mgr);
-                                continue;
-                            }
-                        };
+                    let (process_name, window_title) = match resolved_fg {
+                        Some(x) => x,
+                        None => {
+                            drop(mgr);
+                            continue;
+                        }
+                    };
                     let matched = match_auto_activate_rules(&cfg, &process_name, &window_title);
                     let current_id = cfg.active_mode_id.clone();
-                    let auto_on = state.auto_activate_active.load(Ordering::SeqCst);
+                    let auto_on = st.auto_activate_active.load(Ordering::SeqCst);
 
                     if let Some(matched_id) = matched {
                         if matched_id != current_id {
                             if !auto_on {
-                                if let Ok(mut g) = state.auto_activate_previous_mode_id.lock() {
+                                if let Ok(mut g) = st.auto_activate_previous_mode_id.lock() {
                                     *g = Some(current_id.clone());
                                 }
                             }
@@ -1405,10 +1454,10 @@ pub fn run() {
                             cfg_mut.active_mode_id = matched_id.clone();
                             let updated = cfg_mut.clone();
                             if mgr.save(cfg_mut).is_ok() {
-                                state.auto_activate_active.store(true, Ordering::SeqCst);
+                                st.auto_activate_active.store(true, Ordering::SeqCst);
                                 drop(mgr);
-                                let _ = auto_activate_handle.emit("settings_updated", &updated);
-                                let _ = auto_activate_handle
+                                let _ = idle_fg_handle.emit("settings_updated", &updated);
+                                let _ = idle_fg_handle
                                     .emit("mode-changed", &updated.active_mode_id);
                                 let payload = AutoActivateSwitchedPayload {
                                     mode_name,
@@ -1416,7 +1465,7 @@ pub fn run() {
                                     is_restore: false,
                                 };
                                 let _ =
-                                    auto_activate_handle.emit("auto-activate-switched", &payload);
+                                    idle_fg_handle.emit("auto-activate-switched", &payload);
                             } else {
                                 drop(mgr);
                             }
@@ -1424,7 +1473,7 @@ pub fn run() {
                             drop(mgr);
                         }
                     } else if auto_on {
-                        let prev_id = state
+                        let prev_id = st
                             .auto_activate_previous_mode_id
                             .lock()
                             .ok()
@@ -1445,10 +1494,10 @@ pub fn run() {
                             cfg_mut.active_mode_id = resolved;
                             let updated = cfg_mut.clone();
                             if mgr.save(cfg_mut).is_ok() {
-                                state.auto_activate_active.store(false, Ordering::SeqCst);
+                                st.auto_activate_active.store(false, Ordering::SeqCst);
                                 drop(mgr);
-                                let _ = auto_activate_handle.emit("settings_updated", &updated);
-                                let _ = auto_activate_handle
+                                let _ = idle_fg_handle.emit("settings_updated", &updated);
+                                let _ = idle_fg_handle
                                     .emit("mode-changed", &updated.active_mode_id);
                                 let payload = AutoActivateSwitchedPayload {
                                     mode_name,
@@ -1456,15 +1505,15 @@ pub fn run() {
                                     is_restore: true,
                                 };
                                 let _ =
-                                    auto_activate_handle.emit("auto-activate-switched", &payload);
+                                    idle_fg_handle.emit("auto-activate-switched", &payload);
                             } else {
-                                if let Ok(mut g) = state.auto_activate_previous_mode_id.lock() {
+                                if let Ok(mut g) = st.auto_activate_previous_mode_id.lock() {
                                     *g = Some(prev_id);
                                 }
                                 drop(mgr);
                             }
                         } else {
-                            state.auto_activate_active.store(false, Ordering::SeqCst);
+                            st.auto_activate_active.store(false, Ordering::SeqCst);
                             drop(mgr);
                         }
                     } else {
@@ -1642,6 +1691,7 @@ pub fn run() {
             get_app_data_path,
             open_app_data_folder,
             resize_overlay_to,
+            set_overlay_menu_open,
             get_overlay_initial_state,
             copy_last_transcription,
             toggle_polish_from_overlay,
@@ -3837,15 +3887,16 @@ fn check_model_requirements(model_id: String) -> Result<system_reqs::HardwareChe
 }
 
 const OVERLAY_LABEL: &str = "overlay";
-/// Extra space so pill box-shadow can spill outside the window (not clipped)
-const OVERLAY_SHADOW_MARGIN: i32 = 24;
+/// Small gutter so flex layout does not clip the pill edge; shadows are trimmed (see Overlay.svelte).
+const OVERLAY_SHADOW_MARGIN: i32 = 4;
 /// Phase 6: idle / hover-actions width (fits dormant hover bar in Overlay.svelte)
 const OVERLAY_DORMANT_WIDTH: i32 = 340 + OVERLAY_SHADOW_MARGIN * 2;
-const OVERLAY_DORMANT_HEIGHT: i32 = 44 + OVERLAY_SHADOW_MARGIN * 2;
 const OVERLAY_MINI_WIDTH: i32 = 280 + OVERLAY_SHADOW_MARGIN * 2;
-const OVERLAY_MINI_HEIGHT: i32 = 52 + OVERLAY_SHADOW_MARGIN * 2;
 const OVERLAY_FULL_WIDTH: i32 = 360 + OVERLAY_SHADOW_MARGIN * 2;
 const OVERLAY_FULL_HEIGHT: i32 = 200 + OVERLAY_SHADOW_MARGIN * 2;
+/// Same height as full tier so dormant/mini/full transitions only change width (fewer WebView `set_size` height jumps → less flicker). Also leaves room for the mode menu above compact pills without resizing on menu open.
+const OVERLAY_DORMANT_HEIGHT: i32 = OVERLAY_FULL_HEIGHT;
+const OVERLAY_MINI_HEIGHT: i32 = OVERLAY_FULL_HEIGHT;
 const OVERLAY_BOTTOM_MARGIN: i32 = 24;
 
 fn overlay_logical_size_for_tier(tier: u8) -> (f64, f64) {
@@ -3854,6 +3905,122 @@ fn overlay_logical_size_for_tier(tier: u8) -> (f64, f64) {
         2 => (OVERLAY_FULL_WIDTH as f64, OVERLAY_FULL_HEIGHT as f64),
         _ => (OVERLAY_DORMANT_WIDTH as f64, OVERLAY_DORMANT_HEIGHT as f64),
     }
+}
+
+/// Logical size of the pill (must match [Overlay.svelte](../../src/components/Overlay.svelte) tier classes).
+fn overlay_pill_logical_size(tier: u8) -> (f64, f64) {
+    match tier {
+        1 => ((OVERLAY_MINI_WIDTH - 8) as f64, 44.0),
+        2 => ((OVERLAY_FULL_WIDTH - 8) as f64, (OVERLAY_FULL_HEIGHT - 8) as f64),
+        _ => (48.0, 28.0),
+    }
+}
+
+/// Extra logical padding around the pill for hit testing so hover activates slightly before the cursor touches the pill.
+const OVERLAY_HIT_PADDING_LOGICAL: f64 = 12.0;
+
+fn set_overlay_pill_hit_rect(
+    pill_hit_rect: &Arc<StdMutex<(i32, i32, i32, i32)>>,
+    rect: (i32, i32, i32, i32),
+) {
+    let Ok(mut g) = pill_hit_rect.lock() else {
+        return;
+    };
+    *g = rect;
+}
+
+/// Recompute physical screen rect of the pill (+ padding) for `GetCursorPos` hit testing.
+fn refresh_overlay_pill_hit_rect(
+    app: &tauri::AppHandle,
+    expand_direction: &crate::config::ExpandDirection,
+) {
+    let Some(overlay) = app.get_webview_window(OVERLAY_LABEL) else {
+        return;
+    };
+    // Clone `Arc`s here so we do not hold `app.state()` across `Mutex::lock` (E0597).
+    let (tier, pill_hit_rect) = {
+        let s = app.state::<AppState>();
+        (
+            s.overlay_size_tier.load(Ordering::Relaxed),
+            Arc::clone(&s.overlay_pill_hit_rect),
+        )
+    };
+    let Ok(outer_pos) = overlay.outer_position() else {
+        return;
+    };
+    let scale = overlay.scale_factor().unwrap_or(1.0);
+    let (win_log_w, win_log_h) = overlay_logical_size_for_tier(tier);
+    let (pill_log_w, pill_log_h) = overlay_pill_logical_size(tier);
+
+    let pill_left_log = (win_log_w - pill_log_w) / 2.0;
+    let pill_top_log = match expand_direction {
+        crate::config::ExpandDirection::Up => win_log_h - pill_log_h,
+        crate::config::ExpandDirection::Down => 0.0,
+        crate::config::ExpandDirection::Center => (win_log_h - pill_log_h) / 2.0,
+    };
+
+    let hit_left_log = pill_left_log - OVERLAY_HIT_PADDING_LOGICAL;
+    let hit_top_log = pill_top_log - OVERLAY_HIT_PADDING_LOGICAL;
+    let hit_w_log = pill_log_w + 2.0 * OVERLAY_HIT_PADDING_LOGICAL;
+    let hit_h_log = pill_log_h + 2.0 * OVERLAY_HIT_PADDING_LOGICAL;
+
+    let left = outer_pos.x + (hit_left_log * scale).round() as i32;
+    let top = outer_pos.y + (hit_top_log * scale).round() as i32;
+    let right = left + (hit_w_log * scale).round() as i32;
+    let bottom = top + (hit_h_log * scale).round() as i32;
+
+    set_overlay_pill_hit_rect(&pill_hit_rect, (left, top, right, bottom));
+}
+
+/// Poll cursor vs pill rect and toggle click-through (`set_ignore_cursor_events`) so transparent margins do not steal clicks.
+#[cfg(windows)]
+fn spawn_overlay_cursor_hit_test_loop(app_handle: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut last_ignore = true;
+        if let Some(overlay) = app_handle.get_webview_window(OVERLAY_LABEL) {
+            let _ = overlay.set_ignore_cursor_events(true);
+        }
+        loop {
+            tokio::time::sleep(Duration::from_millis(16)).await;
+            let state = app_handle.state::<AppState>();
+            let menu_open = state.overlay_menu_open.load(Ordering::Relaxed);
+            let grace_active = state
+                .overlay_hit_test_grace_until
+                .lock()
+                .ok()
+                .map(|g| {
+                    g.as_ref()
+                        .is_some_and(|until| Instant::now() < *until)
+                })
+                .unwrap_or(false);
+            let rect = state
+                .overlay_pill_hit_rect
+                .lock()
+                .map(|r| *r)
+                .unwrap_or((0, 0, 0, 0));
+
+            let mut pt = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+            let ok = unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt)
+            };
+            let (l, t, r, b) = rect;
+            let valid = r > l && b > t;
+            let cursor_inside = ok != 0
+                && valid
+                && pt.x >= l
+                && pt.x < r
+                && pt.y >= t
+                && pt.y < b;
+            let should_ignore = !menu_open && !grace_active && !cursor_inside;
+
+            if should_ignore != last_ignore {
+                if let Some(overlay) = app_handle.get_webview_window(OVERLAY_LABEL) {
+                    let _ = overlay.set_ignore_cursor_events(should_ignore);
+                }
+                last_ignore = should_ignore;
+            }
+        }
+    });
 }
 
 /// Build `Dormant` from current config + last history row (sync).
@@ -3924,7 +4091,6 @@ enum OverlayEvent {
         #[serde(default)]
         context_sources: Vec<String>,
     },
-    #[allow(dead_code)] // Reserved for future "transcription succeeded" UI
     Success,
     Error {
         message: String,
@@ -3943,7 +4109,12 @@ enum OverlayEvent {
 fn resize_overlay(app: tauri::AppHandle, tier: u8) -> Result<(), String> {
     let state = app.state::<AppState>();
     let tier = tier.min(2);
-    state.overlay_size_tier.store(tier, Ordering::Relaxed);
+    let prev_tier = state.overlay_size_tier.swap(tier, Ordering::Relaxed);
+    if prev_tier != tier {
+        if let Ok(mut g) = state.overlay_hit_test_grace_until.lock() {
+            *g = Some(Instant::now() + Duration::from_millis(200));
+        }
+    }
 
     if let Some(overlay) = app.get_webview_window(OVERLAY_LABEL) {
         let (width, height) = overlay_logical_size_for_tier(tier);
@@ -3971,7 +4142,15 @@ fn resize_overlay_to(app: tauri::AppHandle, size: String) -> Result<(), String> 
 }
 
 #[tauri::command]
-async fn copy_last_transcription() -> Result<(), String> {
+fn set_overlay_menu_open(state: tauri::State<'_, AppState>, open: bool) -> Result<(), String> {
+    // No `set_size` here — resizing on every menu toggle repaints WebView2 and flickers. Compact tiers use the same
+    // logical height as full (see OVERLAY_*_HEIGHT) so the HWND is already tall enough for the dropdown.
+    state.overlay_menu_open.store(open, Ordering::Relaxed);
+    Ok(())
+}
+
+#[tauri::command]
+async fn copy_last_transcription() -> Result<bool, String> {
     let entries = crate::history::get_history(Some(1), Some(0))
         .await
         .map_err(|e| e.to_string())?;
@@ -3980,8 +4159,10 @@ async fn copy_last_transcription() -> Result<(), String> {
         clipboard
             .set_text(entry.text.as_str())
             .map_err(|e| e.to_string())?;
+        Ok(true)
+    } else {
+        Ok(false)
     }
-    Ok(())
 }
 
 #[tauri::command]
@@ -4003,17 +4184,24 @@ async fn get_context_previews(
     state: tauri::State<'_, AppState>,
 ) -> Result<crate::context::ContextPreviewsForOverlay, String> {
     let cfg = state.config.lock().await.get_all();
-    // Don't leak context when the global toggle is off or a sensitive app is focused.
-    if !cfg.context_awareness_enabled
-        || crate::config::privacy::foreground_matches_sensitive_app(&cfg)
-    {
+    crate::external_foreground::refresh_external_foreground_cache(&*state);
+    let cached_pair = crate::external_foreground::cached_name_title(&*state);
+    // Use resolved external app for sensitive check — live query can be Kalam while the overlay is expanded.
+    let sensitive_by_cache = match &cached_pair {
+        Some((p, t)) => crate::config::privacy::foreground_matches_sensitive_app_for_process(
+            &cfg, p, t,
+        ),
+        None => false,
+    };
+    // Don't leak context when the global toggle is off or the external app matches sensitive patterns.
+    if !cfg.context_awareness_enabled || sensitive_by_cache {
         return Ok(crate::context::ContextPreviewsForOverlay {
             app_label: None,
             clipboard_preview: None,
             selection_preview: None,
         });
     }
-    let mut base = crate::context::context_previews_for_overlay();
+    let mut base = crate::context::context_previews_for_overlay(cached_pair.as_ref());
     let sel = state.pending_selected_text.lock().await;
     if let Some(ref s) = *sel {
         let t = s.trim();
@@ -4038,11 +4226,9 @@ fn emit_overlay_event(app: &tauri::AppHandle, event: OverlayEvent) {
 }
 
 /// Force the overlay's WebView2 renderer to process pending ExecuteScript calls.
-/// WebView2 throttles JS execution in unfocused windows. Sending WM_NULL forces the
-/// window's message pump to iterate, and the WebView2 subclass proc picks up queued work.
-/// As a stronger nudge, we also briefly activate the window (SetForegroundWindow) and
-/// immediately restore the previous foreground — this wakes the Chromium renderer without
-/// a user-visible focus flash.
+/// WebView2 throttles JS execution in unfocused windows. Posting WM_NULL pumps the
+/// message loop without `SetForegroundWindow` — activating the overlay briefly was stealing
+/// focus from the main Kalam window (e.g. Settings fields losing keyboard focus).
 #[cfg(windows)]
 fn nudge_overlay_renderer(app: &tauri::AppHandle) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -4056,19 +4242,7 @@ fn nudge_overlay_renderer(app: &tauri::AppHandle) {
     if let RawWindowHandle::Win32(win32) = handle.as_raw() {
         let hwnd = win32.hwnd.get() as windows_sys::Win32::Foundation::HWND;
         unsafe {
-            use windows_sys::Win32::UI::WindowsAndMessaging::*;
-
-            let prev = GetForegroundWindow();
-
-            // Briefly make the overlay foreground so its renderer exits throttled state.
-            SetForegroundWindow(hwnd);
-
-            // Restore original foreground immediately so the user sees no focus change.
-            if prev != 0 {
-                SetForegroundWindow(prev);
-            }
-
-            // WM_NULL nudges the message loop without side effects.
+            use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
             PostMessageW(hwnd, 0, 0, 0);
         }
     }
@@ -4284,6 +4458,7 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
         // Re-assert always on top every time (e.g. after resize) so overlay stays above taskbar
         let _ = overlay.set_always_on_top(true);
     }
+    refresh_overlay_pill_hit_rect(app, &expand_direction);
     Ok(())
 }
 
@@ -4298,9 +4473,6 @@ fn show_overlay(app: &tauri::AppHandle) -> anyhow::Result<()> {
 
     // Re-apply transparent background before show (helps macOS avoid white flash).
     let _ = win.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
-
-    #[cfg(windows)]
-    let prev_hwnd = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
 
     #[cfg(windows)]
     {
@@ -4319,59 +4491,7 @@ fn show_overlay(app: &tauri::AppHandle) -> anyhow::Result<()> {
 
     overlay.show()?;
 
-    #[cfg(windows)]
-    {
-        if prev_hwnd != 0 {
-            unsafe { windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(prev_hwnd) };
-        }
-    }
     Ok(())
-}
-
-/// On Windows: resolve lowercase filename and full image path for the foreground HWND.
-/// Returns None if the process cannot be queried.
-#[cfg(windows)]
-fn get_foreground_exe_info(hwnd: usize) -> Option<(String, String)> {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
-
-    let mut pid: u32 = 0;
-    unsafe { GetWindowThreadProcessId(hwnd as isize, &mut pid) };
-    if pid == 0 {
-        return None;
-    }
-
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if handle == 0 {
-        return None;
-    }
-
-    let mut buf = [0u16; 1024];
-    let mut size = buf.len() as u32;
-    let ok = unsafe { QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut size) };
-    unsafe { CloseHandle(handle) };
-
-    if ok == 0 {
-        return None;
-    }
-
-    let path = String::from_utf16_lossy(&buf[..size as usize]);
-    let path = path.trim_end_matches('\0').to_string();
-    let short = std::path::Path::new(&path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|s| s.to_lowercase())?;
-    Some((short, path))
-}
-
-/// True when Hybrid/Auto mode forces Local STT due to sensitive app patterns (overlay amber state).
-fn sensitive_app_forces_local(config: &AppConfig) -> bool {
-    let effective = crate::config::privacy::effective_stt_config(config);
-    matches!(effective.mode, STTMode::Local)
-        && matches!(config.stt_config.mode, STTMode::Hybrid | STTMode::Auto)
 }
 
 async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<AtomicBool>) {
@@ -4395,11 +4515,17 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     // Capture highlighted text before the overlay resizes — keeps focus in the target app for Ctrl+C.
     let recording_type_start = *state.recording_type.lock().await;
     *state.pending_selected_text.lock().await = None;
+    // One read for sensitive checks + cache refresh; avoids treating Kalam-as-foreground as "no sensitive app".
+    let fg_resolved = crate::external_foreground::capture_and_resolve_external_foreground(&*state);
 
     // Voice-activated editing: requires LLM on selection — block sensitive apps entirely.
     if recording_type_start == RecordingType::VoiceEdit {
         let cfg = state.config.lock().await.get_all();
-        if sensitive_app_forces_local(&cfg) {
+        if fg_resolved
+            .as_ref()
+            .map(|(p, t)| sensitive_app_forces_local_for_process(&cfg, p, t))
+            .unwrap_or(false)
+        {
             *state.audio_state.lock().await = AudioState::Idle;
             let _ = crate::tray::TrayManager::set_tray_state(&state.app_handle, AudioState::Idle);
             emit_overlay_event(
@@ -4440,10 +4566,14 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
         let do_selection = {
             let cfg = state.config.lock().await.get_all();
             let mode = find_active_mode(&cfg);
+            let blocked_sensitive = fg_resolved
+                .as_ref()
+                .map(|(p, t)| sensitive_app_forces_local_for_process(&cfg, p, t))
+                .unwrap_or(false);
             cfg.context_awareness_enabled
                 && mode.context.enabled
                 && mode.context.read_selection
-                && !sensitive_app_forces_local(&cfg)
+                && !blocked_sensitive
         };
         if do_selection {
             match tauri::async_runtime::spawn_blocking(crate::context::capture_selected_text).await
@@ -4489,6 +4619,122 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
         }
     }
 
+    // Capture injection target BEFORE overlay expand. If foreground is Kalam (main/overlay), use
+    // `external_foreground_cache` so text still goes to the last external app the user was in.
+    #[cfg(windows)]
+    {
+        let hwnd = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+        if hwnd != 0 {
+            let hwnd_usize = hwnd as usize;
+            let (target_hwnd, fill_sync_from_cache) =
+                match crate::external_foreground::get_foreground_exe_info(hwnd_usize) {
+                    Some((ref proc, _)) if crate::config::privacy::is_kalam_process(proc) => {
+                        let id = state
+                            .external_foreground_cache
+                            .lock()
+                            .ok()
+                            .and_then(|g| g.as_ref().and_then(|c| c.injection_id));
+                        match id {
+                            Some(id) => (id, true),
+                            None => (hwnd_usize, false),
+                        }
+                    }
+                    _ => (hwnd_usize, false),
+                };
+            *state.foreground_for_injection.lock().await = Some(target_hwnd);
+            if fill_sync_from_cache {
+                // Clone cache while holding StdMutex, then release before any `.await` (Send safety).
+                let cache_snap = state
+                    .external_foreground_cache
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone());
+                if let Some(ref c) = cache_snap {
+                    *state.foreground_process_name.lock().await = if c.process_name.is_empty() {
+                        None
+                    } else {
+                        Some(c.process_name.clone())
+                    };
+                    *state.foreground_exe_path.lock().await = c.exe_path.clone();
+                }
+            } else {
+                let process_name_state = state.foreground_process_name.clone();
+                let exe_path_state = state.foreground_exe_path.clone();
+                let th = target_hwnd;
+                tauri::async_runtime::spawn(async move {
+                    let name = tauri::async_runtime::spawn_blocking(move || {
+                        crate::external_foreground::get_foreground_exe_info(th)
+                    })
+                    .await
+                    .unwrap_or(None);
+                    if let Ok(mut guard) = process_name_state.try_lock() {
+                        *guard = name.as_ref().map(|(n, _)| n.clone());
+                    }
+                    if let Ok(mut guard) = exe_path_state.try_lock() {
+                        *guard = name.as_ref().map(|(_, p)| p.clone());
+                    }
+                });
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let live_fg = crate::config::privacy::get_foreground_app();
+        let is_kalam = live_fg
+            .as_ref()
+            .is_some_and(|(p, _)| crate::config::privacy::is_kalam_process(p));
+
+        let mut injection_from_cache = false;
+        if is_kalam {
+            let cache_snap = state
+                .external_foreground_cache
+                .lock()
+                .ok()
+                .and_then(|g| g.clone());
+            if let Some(ref c) = cache_snap {
+                if let Some(id) = c.injection_id {
+                    *state.foreground_for_injection.lock().await = Some(id);
+                    if !c.process_name.is_empty() {
+                        *state.foreground_process_name.lock().await =
+                            Some(c.process_name.clone());
+                    }
+                    *state.foreground_exe_path.lock().await = c.exe_path.clone();
+                    injection_from_cache = true;
+                }
+            }
+        }
+
+        if !injection_from_cache {
+            if let Some((process_name, _title)) = live_fg {
+                if !process_name.is_empty() {
+                    *state.foreground_process_name.lock().await = Some(process_name);
+                }
+            }
+            if let Ok(window) = active_win_pos_rs::get_active_window() {
+                #[cfg(target_os = "macos")]
+                {
+                    *state.foreground_for_injection.lock().await = Some(window.process_id as usize);
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    if let Ok(wid) = window.window_id.parse::<u32>() {
+                        *state.foreground_for_injection.lock().await = Some(wid as usize);
+                    }
+                }
+                let pid = window.process_id;
+                use sysinfo::{Pid, ProcessesToUpdate, System};
+                let mut sys = System::new();
+                sys.refresh_processes(ProcessesToUpdate::Some(&[Pid::from_u32(pid as u32)]));
+                if let Some(p) = sys.process(Pid::from_u32(pid as u32)) {
+                    if let Some(exe) = p.exe() {
+                        *state.foreground_exe_path.lock().await =
+                            Some(exe.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+
     // Pre-resize the overlay to expanded BEFORE emitting Listening so the window is already
     // large enough when JS processes the event. Eliminates the IPC roundtrip (JS → Rust resize)
     // that was the main source of perceived delay.
@@ -4503,64 +4749,11 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
     let _ = resize_overlay(state.app_handle.clone(), listen_tier);
     latency_trace_write("T2_after_resize");
 
-    #[cfg(windows)]
-    {
-        let hwnd = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-        if hwnd != 0 {
-            *state.foreground_for_injection.lock().await = Some(hwnd as usize);
-            // Resolve process name + full path in background so it doesn't block pill/sound (like beta.5).
-            let process_name_state = state.foreground_process_name.clone();
-            let exe_path_state = state.foreground_exe_path.clone();
-            let hwnd_usize = hwnd as usize;
-            tauri::async_runtime::spawn(async move {
-                let name = tauri::async_runtime::spawn_blocking(move || {
-                    get_foreground_exe_info(hwnd_usize)
-                })
-                .await
-                .unwrap_or(None);
-                if let Ok(mut guard) = process_name_state.try_lock() {
-                    *guard = name.as_ref().map(|(n, _)| n.clone());
-                }
-                if let Ok(mut guard) = exe_path_state.try_lock() {
-                    *guard = name.as_ref().map(|(_, p)| p.clone());
-                }
-            });
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        if let Some((process_name, _title)) = crate::config::privacy::get_foreground_app() {
-            if !process_name.is_empty() {
-                *state.foreground_process_name.lock().await = Some(process_name);
-            }
-        }
-        if let Ok(window) = active_win_pos_rs::get_active_window() {
-            // Remember where dictation started so we can refocus before inject (toggle mode).
-            #[cfg(target_os = "macos")]
-            {
-                *state.foreground_for_injection.lock().await = Some(window.process_id as usize);
-            }
-            #[cfg(target_os = "linux")]
-            {
-                if let Ok(wid) = window.window_id.parse::<u32>() {
-                    *state.foreground_for_injection.lock().await = Some(wid as usize);
-                }
-            }
-            let pid = window.process_id;
-            use sysinfo::{Pid, ProcessesToUpdate, System};
-            let mut sys = System::new();
-            sys.refresh_processes(ProcessesToUpdate::Some(&[Pid::from_u32(pid as u32)]));
-            if let Some(p) = sys.process(Pid::from_u32(pid as u32)) {
-                if let Some(exe) = p.exe() {
-                    *state.foreground_exe_path.lock().await =
-                        Some(exe.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
     let cfg_for_sensitive = state.config.lock().await.get_all();
-    let sensitive_app = sensitive_app_forces_local(&cfg_for_sensitive);
+    let sensitive_app = fg_resolved
+        .as_ref()
+        .map(|(p, t)| sensitive_app_forces_local_for_process(&cfg_for_sensitive, p, t))
+        .unwrap_or(false);
     state
         .is_sensitive_app_active
         .store(sensitive_app, Ordering::SeqCst);
@@ -5038,19 +5231,15 @@ fn apply_audio_transcription_floor(
     timeout_secs.min(max_secs)
 }
 
-/// Compute transcription timeout from historical latency (today's average) with tiered logic.
-/// Cloud vs local use different minimums and cold-start defaults.
-/// When `recording_duration_ms` is set, raises the ceiling so long clips are not cut off by
-/// stats from short utterances (adaptive min can be far below real-time API needs).
-fn calculate_transcription_timeout(
-    config: &AppConfig,
+/// Compute transcription timeout from historical latency using the **resolved** STT config
+/// (e.g. after sensitive-session forcing Local), so we do not re-query foreground for tiering.
+fn calculate_transcription_timeout_with_stt(
+    stt: &STTConfig,
     recording_duration_ms: Option<u32>,
 ) -> std::time::Duration {
-    use crate::config::privacy::effective_stt_config;
     use crate::config::STTMode;
     use std::time::Duration;
 
-    let stt = effective_stt_config(config);
     let tc = &stt.transcription_timeout;
     let is_cloud = matches!(stt.mode, STTMode::Cloud | STTMode::Hybrid | STTMode::Auto);
 
@@ -5316,9 +5505,13 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
 
         tokio::spawn(async move {
             let merged_stt = merge_stt_config_for_voice(&config.stt_config, &voice_ref);
-            let mut cfg_for_privacy = config.clone();
-            cfg_for_privacy.stt_config = merged_stt;
-            let stt_config = crate::config::privacy::effective_stt_config(&cfg_for_privacy);
+            // Do not call `effective_stt_config` here — it re-queries foreground and can see Kalam mid-pipeline.
+            let mut stt_config = merged_stt;
+            if session_sensitive_for_llm
+                && matches!(config.stt_config.mode, STTMode::Hybrid | STTMode::Auto)
+            {
+                stt_config.mode = STTMode::Local;
+            }
             let vad_config = stt_config.vad_config();
             // Create provider inside the OS thread so reqwest::blocking::Client is never
             // created/dropped on a tokio worker (avoids "Cannot drop a runtime" panic).
@@ -5357,7 +5550,8 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
             let max_wall_timeout = std::time::Duration::from_secs(
                 stt_config.transcription_timeout.timeout_max_seconds.max(1),
             );
-            let base_timeout = calculate_transcription_timeout(&config, recording_duration_ms);
+            let base_timeout =
+                calculate_transcription_timeout_with_stt(&stt_config, recording_duration_ms);
             let mut this_attempt_timeout = base_timeout;
             let expected_secs = base_timeout.as_secs().max(1) as u32;
             log::info!(
@@ -6026,10 +6220,11 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
             *audio_state = AudioState::Idle;
             let _ = crate::tray::TrayManager::set_tray_state(&app_handle, AudioState::Idle);
 
-            // No Success UI: go straight to Dormant after brief delay
+            // Show Success checkmark briefly, then return to Dormant
+            emit_overlay_event(&app_handle, OverlayEvent::Success);
             let app_for_overlay = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(1600)).await;
                 reset_overlay_state(&app_for_overlay);
             });
         });

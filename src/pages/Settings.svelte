@@ -168,9 +168,10 @@
 
   const tabs = [
     { id: 'general', label: 'General', icon: 'ph:sliders-horizontal' },
-    { id: 'dictation', label: 'Audio & Dictation', icon: 'ph:microphone' },
-    { id: 'connections', label: 'Connections', icon: 'ph:plugs-connected' },
-    { id: 'insertion', label: 'Text Insertion', icon: 'ph:text-aa' },
+    { id: 'dictation', label: 'Voice Input', icon: 'ph:microphone' },
+    { id: 'connections', label: 'AI & Models', icon: 'ph:brain' },
+    { id: 'insertion', label: 'Text Output', icon: 'ph:text-aa' },
+    { id: 'account', label: 'Account & Sync', icon: 'ph:user-circle' },
     { id: 'privacy', label: 'Privacy', icon: 'ph:shield' },
     { id: 'advanced', label: 'Advanced', icon: 'ph:wrench' },
     { id: 'about', label: 'About', icon: 'ph:info' },
@@ -203,19 +204,21 @@
   let collapsedSections: Record<string, boolean> = {
     general_hotkeys: false,
     general_startup: true,
-    general_sync: true,
     general_appearance: false,
-    dictation_audio: false,
+    general_overlay: false,
+    general_notifications: false,
+    dictation_microphone: false,
+    dictation_processing: false,
     dictation_languages: false,
     ai_stt: false,
     model_library: false,
     default_llm: false,
-    dictation_formatting: true,
+    account_sync: true,
     privacy_data: false,
-    privacy_notifications: false,
     advanced_logs: false,
     advanced_diagnostics: true,
     advanced_danger: false,
+    insertion_formatting: true,
     insertion_default: false,
     insertion_per_app: false,
   }
@@ -377,6 +380,10 @@
 
   $: if (activeTab === 'dictation' || activeTab === 'insertion') {
     void loadRuntimeCapabilities()
+  }
+
+  $: if (activeTab === 'account') {
+    void refreshSyncStatus()
   }
 
   function toggleSection(section: string) {
@@ -1631,7 +1638,7 @@
         <div class="settings-tab-content">
           <section class="settings-section" class:collapsed={collapsedSections.general_hotkeys}>
             <button type="button" class="section-header" on:click={() => toggleSection('general_hotkeys')}>
-              <h3>Dictation Hotkeys</h3>
+              <h3>Keyboard shortcuts</h3>
               <Icon icon={collapsedSections.general_hotkeys ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
             {#if !collapsedSections.general_hotkeys}
@@ -1660,6 +1667,43 @@
                 </div>
                 <div class="setting-row">
                   <div class="setting-label">
+                    <span class="setting-name">Recording mode</span>
+                    <span class="setting-desc">Which dictation shortcuts are active (you can still assign both keys above)</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="segmented-control">
+                      <button
+                        type="button"
+                        class:active={recordingModeSegment() === 'Hold'}
+                        on:click={() => setRecordingMode('Hold')}
+                      >Hold</button>
+                      <button
+                        type="button"
+                        class:active={recordingModeSegment() === 'Toggle'}
+                        on:click={() => setRecordingMode('Toggle')}
+                      >Toggle</button>
+                      <button
+                        type="button"
+                        class:active={recordingModeSegment() === 'Both'}
+                        on:click={() => setRecordingMode('Both')}
+                      >Both</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Minimum hold time</span>
+                    <span class="setting-desc">How long to hold the dictation shortcut before recording starts</span>
+                  </div>
+                  <div class="setting-control">
+                    <div class="number-input">
+                      <input type="number" bind:value={config.min_hold_ms} min="0" max="2000" step="50" on:change={scheduleSave} />
+                      <span class="unit">ms</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
                     <span class="setting-name">Toggle Language</span>
                     <span class="setting-desc">Switch between recognition languages</span>
                   </div>
@@ -1669,11 +1713,23 @@
                 </div>
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Command Mode</span>
+                    <span class="setting-name">Command mode shortcut</span>
                     <span class="setting-desc">Create notes, tasks, and reminders by voice</span>
                   </div>
                   <div class="setting-control">
                     <HotkeyCapture value={config.command_config?.hotkey ?? ''} platform={appPlatform} onChange={setCommandHotkey} />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Enable command mode</span>
+                    <span class="setting-desc">Allow voice-triggered notes, tasks, and reminders from any dictation mode</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.command_config.enabled} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
                   </div>
                 </div>
                 <div class="setting-row">
@@ -1693,7 +1749,7 @@
 
           <section class="settings-section" class:collapsed={collapsedSections.general_startup}>
             <button type="button" class="section-header" on:click={() => toggleSection('general_startup')}>
-              <h3>Startup &amp; Behavior</h3>
+              <h3>Startup</h3>
               <Icon icon={collapsedSections.general_startup ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
             {#if !collapsedSections.general_startup}
@@ -1720,114 +1776,6 @@
                       <input type="checkbox" bind:checked={config.start_in_focus} on:change={scheduleSave} />
                       <span class="slider"></span>
                     </label>
-                  </div>
-                </div>
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Recording Mode</span>
-                    <span class="setting-desc">Which dictation hotkeys are active (both can still be configured above)</span>
-                  </div>
-                  <div class="setting-control">
-                    <div class="segmented-control">
-                      <button
-                        type="button"
-                        class:active={recordingModeSegment() === 'Hold'}
-                        on:click={() => setRecordingMode('Hold')}
-                      >Hold</button>
-                      <button
-                        type="button"
-                        class:active={recordingModeSegment() === 'Toggle'}
-                        on:click={() => setRecordingMode('Toggle')}
-                      >Toggle</button>
-                      <button
-                        type="button"
-                        class:active={recordingModeSegment() === 'Both'}
-                        on:click={() => setRecordingMode('Both')}
-                      >Both</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            {/if}
-          </section>
-
-          <section class="settings-section" class:collapsed={collapsedSections.general_sync}>
-            <button type="button" class="section-header" on:click={() => toggleSection('general_sync')}>
-              <h3>Multi-PC sync (Pro)</h3>
-              <Icon icon={collapsedSections.general_sync ? 'ph:caret-down' : 'ph:caret-up'} />
-            </button>
-            {#if !collapsedSections.general_sync}
-              <div class="section-content">
-                <p class="setting-desc" style="margin-bottom: 12px;">
-                  Sync notes, tasks, snippets, dictionary, dictation modes, and settings across computers. Requires an
-                  <strong>active Pro or trial</strong> license. Uses the same API host as the recipe library (<code
-                    >{config?.recipe_library_url ?? '—'}</code
-                  >). Dictation history stays on each device.
-                </p>
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Pro license key</span>
-                    <span class="setting-desc">Used for Bearer authentication (validate + sync)</span>
-                  </div>
-                  <div class="setting-control" style="min-width: 220px;">
-                    <input
-                      type="text"
-                      class="form-input"
-                      placeholder="KALAM-XXXX-…"
-                      value={config?.license_key ?? ''}
-                      disabled={!config}
-                      on:input={onLicenseKeyInput}
-                    />
-                  </div>
-                </div>
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Enable sync</span>
-                    <span class="setting-desc">Pull and push in the background when online</span>
-                  </div>
-                  <div class="setting-control">
-                    <label class="toggle-switch">
-                      <input
-                        type="checkbox"
-                        checked={!!config?.sync_enabled}
-                        disabled={!config || syncUi.syncing}
-                        on:change={onSyncToggleChange}
-                      />
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Last synced</span>
-                    <span class="setting-desc">{syncUi.syncing ? 'Syncing…' : syncUi.lastSyncAt ?? config?.sync_last_at ?? '—'}</span>
-                  </div>
-                  <div class="setting-control" style="display: flex; gap: 8px; flex-wrap: wrap;">
-                    <button type="button" class="settings-secondary-btn" disabled={syncUi.syncing} on:click={doSyncNow}
-                      >Sync now</button
-                    >
-                  </div>
-                </div>
-                {#if syncUi.deviceId}
-                  <div class="setting-row">
-                    <div class="setting-label">
-                      <span class="setting-name">Device ID</span>
-                      <span class="setting-desc mono">{syncUi.deviceId}</span>
-                    </div>
-                  </div>
-                {/if}
-                {#if syncUi.error || syncActionError}
-                  <p class="hint" style="color: var(--danger, #c62828);">{syncUi.error ?? syncActionError}</p>
-                {/if}
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Reset server sync data</span>
-                    <span class="setting-desc">Clears the cloud copy for this license; local data unchanged</span>
-                  </div>
-                  <div class="setting-control">
-                    <button type="button" class="settings-secondary-btn danger" on:click={doResetServerSync}
-                      >Reset sync</button
-                    >
                   </div>
                 </div>
               </div>
@@ -1866,9 +1814,20 @@
                     </div>
                   </div>
                 </div>
+              </div>
+            {/if}
+          </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.general_overlay}>
+            <button type="button" class="section-header" on:click={() => toggleSection('general_overlay')}>
+              <h3>Overlay</h3>
+              <Icon icon={collapsedSections.general_overlay ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.general_overlay}
+              <div class="section-content">
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Waveform Style</span>
+                    <span class="setting-name">Waveform style</span>
                     <span class="setting-desc">Visual style of the recording indicator</span>
                   </div>
                   <div class="setting-control">
@@ -1885,7 +1844,7 @@
                 </div>
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Expand Direction</span>
+                    <span class="setting-name">Expand direction</span>
                     <span class="setting-desc">Which direction the overlay pill expands</span>
                   </div>
                   <div class="setting-control">
@@ -1898,7 +1857,7 @@
                 </div>
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Overlay Position</span>
+                    <span class="setting-name">Overlay position</span>
                     <span class="setting-desc">Where to show the recording overlay</span>
                   </div>
                   <div class="setting-control">
@@ -1982,16 +1941,75 @@
               </div>
             {/if}
           </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.general_notifications}>
+            <button type="button" class="section-header" on:click={() => toggleSection('general_notifications')}>
+              <h3>Notifications &amp; sounds</h3>
+              <Icon icon={collapsedSections.general_notifications ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.general_notifications}
+              <div class="section-content">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Sound effects</span>
+                    <span class="setting-desc">Tones when dictation starts and stops, plus the background startup chime</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.notifications.sound_enabled} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Error notifications</span>
+                    <span class="setting-desc">System notifications for update check failures and command-mode hints</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.notifications.show_errors} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Completion notifications</span>
+                    <span class="setting-desc">Brief notice when dictated text is inserted successfully</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.notifications.show_completion} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Update available</span>
+                    <span class="setting-desc">Notify after startup when a new version is found (install from About)</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.notifications.show_updates} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            {/if}
+          </section>
         </div>
 
       {:else if activeTab === 'dictation'}
         <div class="settings-tab-content">
-          <section class="settings-section" class:collapsed={collapsedSections.dictation_audio}>
-            <button type="button" class="section-header" on:click={() => toggleSection('dictation_audio')}>
-              <h3>Audio Input</h3>
-              <Icon icon={collapsedSections.dictation_audio ? 'ph:caret-down' : 'ph:caret-up'} />
+          <section class="settings-section" class:collapsed={collapsedSections.dictation_microphone}>
+            <button type="button" class="section-header" on:click={() => toggleSection('dictation_microphone')}>
+              <h3>Microphone</h3>
+              <Icon icon={collapsedSections.dictation_microphone ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
-            {#if !collapsedSections.dictation_audio}
+            {#if !collapsedSections.dictation_microphone}
               <div class="section-content">
                 <div class="perm-cap-panel" aria-live="polite">
                   <p class="perm-cap-panel-title">Permissions &amp; capabilities</p>
@@ -2101,19 +2119,6 @@
 
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Minimum press duration</span>
-                    <span class="setting-desc">How long you need to hold the dictation hotkey</span>
-                  </div>
-                  <div class="setting-control">
-                    <div class="number-input">
-                      <input type="number" bind:value={config.min_hold_ms} min="0" max="2000" step="50" on:change={scheduleSave} />
-                      <span class="unit">ms</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="setting-row">
-                  <div class="setting-label">
                     <span class="setting-name">Test microphone</span>
                     <span class="setting-desc">Record a short sample, then play it back to check levels</span>
                   </div>
@@ -2165,11 +2170,21 @@
                     </button>
                   </div>
                 {/if}
+              </div>
+            {/if}
+          </section>
 
+          <section class="settings-section" class:collapsed={collapsedSections.dictation_processing}>
+            <button type="button" class="section-header" on:click={() => toggleSection('dictation_processing')}>
+              <h3>Audio processing</h3>
+              <Icon icon={collapsedSections.dictation_processing ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.dictation_processing}
+              <div class="section-content">
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Listening sensitivity</span>
-                    <span class="setting-desc">How long Kalam waits for silence before stopping the recording</span>
+                    <span class="setting-name">Silence detection</span>
+                    <span class="setting-desc">How long Kalam waits for silence before ending the recording</span>
                   </div>
                   <div class="setting-control">
                     <select class="form-select" bind:value={config.stt_config.vad_preset} on:change={scheduleSave}>
@@ -2184,8 +2199,7 @@
                   <div class="setting-label">
                     <span class="setting-name">Audio cleanup</span>
                     <span class="setting-desc"
-                      >Reduces rumble, background noise, and uneven volume before transcription — same as dictation and
-                      mic test. Off uses raw input.</span
+                      >Pre-process audio before transcription (same chain as dictation and mic test). Off uses raw input.</span
                     >
                   </div>
                   <div class="setting-control">
@@ -2315,7 +2329,7 @@
             </button>
             {#if !collapsedSections.dictation_languages}
               <div class="section-content">
-                <p class="hint">Default STT path and API keys are under <strong>AI providers</strong>.</p>
+                <p class="hint">Default speech-to-text mode and API keys are under <strong>AI &amp; Models</strong>.</p>
             <div class="setting-row language-row">
               <div class="setting-label full-width">
                 <span class="setting-name">Recognition Languages</span>
@@ -2358,57 +2372,6 @@
             {/if}
         </section>
 
-        <section class="settings-section" class:collapsed={collapsedSections.dictation_formatting}>
-          <button type="button" class="section-header" on:click={() => toggleSection('dictation_formatting')}>
-            <h3>Formatting &amp; Output</h3>
-            <Icon icon={collapsedSections.dictation_formatting ? 'ph:caret-down' : 'ph:caret-up'} />
-          </button>
-          {#if !collapsedSections.dictation_formatting}
-          <div class="section-content">
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Auto-punctuation</span>
-                <span class="setting-desc">Automatically insert commas and periods</span>
-              </div>
-              <div class="setting-control">
-                <label class="toggle-switch">
-                  <input type="checkbox" bind:checked={config.formatting.auto_punctuation} on:change={scheduleSave} />
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Voice Commands</span>
-                <span class="setting-desc">Say "new line", "delete", etc. to control text</span>
-              </div>
-              <div class="setting-control">
-                <label class="toggle-switch">
-                  <input type="checkbox" bind:checked={config.formatting.voice_commands} on:change={scheduleSave} />
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">
-                <span class="setting-name">Filler Word Removal</span>
-                <span class="setting-desc">Remove "um", "uh", "like", etc.</span>
-              </div>
-              <div class="setting-control">
-                <label class="toggle-switch">
-                  <input type="checkbox" bind:checked={config.formatting.filler_word_removal} on:change={scheduleSave} />
-                  <span class="slider"></span>
-                </label>
-              </div>
-            </div>
-            <p class="hint hint--after-toggles">
-              How transcribed text is sent to the active app (clipboard vs keystrokes, timing, per-app rules) is under
-              <strong>Text Insertion</strong>.
-            </p>
-          </div>
-          {/if}
-        </section>
-
         </div>
 
       {:else if activeTab === 'connections'}
@@ -2421,7 +2384,7 @@
             {#if !collapsedSections.ai_stt}
               <div class="section-content">
                 <p class="hint">
-                  Global default used when a mode’s voice is set to <strong>Inherit</strong>. Per-mode overrides live on the <strong>Dictation</strong> page.
+                  Global default when a mode’s voice model is set to <strong>Inherit</strong>. Per-mode overrides are on the <strong>Dictation</strong> page.
                 </p>
                 <div
                   class="stt-mode-cards stt-mode-row"
@@ -2473,8 +2436,8 @@
                     </div>
 
                     <p class="hint stt-cloud-key-hint">
-                      Add your <strong>{config.stt_config.provider === 'openai' ? 'OpenAI' : 'Groq'}</strong> key in the
-                      <strong>Provider library</strong> below. One key works for both cloud transcription (when this provider is selected) and LLM features when you use the same provider as your default LLM.
+                      Add your <strong>{config.stt_config.provider === 'openai' ? 'OpenAI' : 'Groq'}</strong> key under
+                      <strong>API keys</strong> below. One key covers cloud transcription (when this provider is selected) and LLM features if you use the same provider as your default AI model.
                     </p>
                   </div>
                 {/if}
@@ -2597,7 +2560,7 @@
 
           <section class="settings-section" class:collapsed={collapsedSections.model_library}>
             <button type="button" class="section-header" on:click={() => toggleSection('model_library')}>
-              <h3>Provider library</h3>
+              <h3>API keys</h3>
               <Icon icon={collapsedSections.model_library ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
             {#if !collapsedSections.model_library}
@@ -2685,13 +2648,13 @@
 
           <section class="settings-section" class:collapsed={collapsedSections.default_llm}>
             <button type="button" class="section-header" on:click={() => toggleSection('default_llm')}>
-              <h3>Default language model</h3>
+              <h3>Default AI model</h3>
               <Icon icon={collapsedSections.default_llm ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
             {#if !collapsedSections.default_llm}
               <div class="section-content">
                 <p class="hint">
-                  Fallback LLM for command mode and dictation modes that don't specify their own. Per-mode overrides on the <strong>Dictation</strong> page take priority.
+                  Fallback model for command mode, polish, and modes that don’t set their own LLM. Turn on command mode under <strong>General → Keyboard shortcuts</strong>. Per-mode overrides on the <strong>Dictation</strong> page take priority.
                 </p>
                 <div class="setting-row">
                   <div class="setting-label">
@@ -2703,10 +2666,12 @@
                       class="form-select"
                       value={config.default_llm_provider ?? ''}
                       on:change={(e) => {
+                        const c = config
+                        if (!c) return
                         const v = e.currentTarget.value
-                        config.default_llm_provider = v || null
-                        if (v === 'custom_openai' && !config.custom_openai_endpoint) {
-                          config.custom_openai_endpoint = { base_url: '', api_key: '', model_id: '' }
+                        c.default_llm_provider = v || null
+                        if (v === 'custom_openai' && !c.custom_openai_endpoint) {
+                          c.custom_openai_endpoint = { base_url: '', api_key: '', model_id: '' }
                         }
                         scheduleSave()
                       }}
@@ -2742,9 +2707,10 @@
                       <input type="text" class="form-select" value={config.custom_openai_endpoint.model_id} on:input={onCustomOpenAiModelInput} placeholder="e.g. gpt-4o-mini" />
                     </div>
                   </div>
-                {:else if config.default_llm_provider}
-                  {@const llmProv = modelCatalog.find(p => p.id === config.default_llm_provider)}
-                  {@const defaultModel = llmProv?.models?.find(m => m.capability === 'LLM' && m.is_default)}
+                {:else if config != null && config.default_llm_provider}
+                  {@const llmProviderId = config.default_llm_provider}
+                  {@const llmProv = modelCatalog.find((p) => p.id === llmProviderId)}
+                  {@const defaultModel = llmProv?.models?.find((m) => m.capability === 'LLM' && m.is_default)}
                   <div class="setting-row">
                     <div class="setting-label">
                       <span class="setting-name">Model</span>
@@ -2757,24 +2723,99 @@
                         value={config.default_llm_model ?? ''}
                         placeholder={defaultModel?.id ?? 'Model id'}
                         on:input={(e) => {
-                          config.default_llm_model = e.currentTarget.value || null
+                          const c = config
+                          if (!c) return
+                          c.default_llm_model = e.currentTarget.value || null
                           scheduleSave()
                         }}
                       />
                     </div>
                   </div>
                 {/if}
+              </div>
+            {/if}
+          </section>
+        </div>
 
-                <div class="setting-row" style="margin-top: 0.75rem;">
+      {:else if activeTab === 'account'}
+        <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.account_sync}>
+            <button type="button" class="section-header" on:click={() => toggleSection('account_sync')}>
+              <h3>Multi-PC sync (Pro)</h3>
+              <Icon icon={collapsedSections.account_sync ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.account_sync}
+              <div class="section-content">
+                <p class="setting-desc" style="margin-bottom: 12px;">
+                  Sync notes, tasks, snippets, dictionary, dictation modes, and settings across computers. Requires an
+                  <strong>active Pro or trial</strong> license. Uses the same API host as the recipe library (<code
+                    >{config?.recipe_library_url ?? '—'}</code
+                  >). Dictation history stays on each device.
+                </p>
+                <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Command mode</span>
-                    <span class="setting-desc">Voice-triggered notes, tasks, reminders from any dictation mode</span>
+                    <span class="setting-name">Pro license key</span>
+                    <span class="setting-desc">Used for Bearer authentication (validate + sync)</span>
+                  </div>
+                  <div class="setting-control" style="min-width: 220px;">
+                    <input
+                      type="text"
+                      class="form-input"
+                      placeholder="KALAM-XXXX-…"
+                      value={config?.license_key ?? ''}
+                      disabled={!config}
+                      on:input={onLicenseKeyInput}
+                    />
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Enable sync</span>
+                    <span class="setting-desc">Pull and push in the background when online</span>
                   </div>
                   <div class="setting-control">
                     <label class="toggle-switch">
-                      <input type="checkbox" bind:checked={config.command_config.enabled} on:change={scheduleSave} />
+                      <input
+                        type="checkbox"
+                        checked={!!config?.sync_enabled}
+                        disabled={!config || syncUi.syncing}
+                        on:change={onSyncToggleChange}
+                      />
                       <span class="slider"></span>
                     </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Last synced</span>
+                    <span class="setting-desc">{syncUi.syncing ? 'Syncing…' : syncUi.lastSyncAt ?? config?.sync_last_at ?? '—'}</span>
+                  </div>
+                  <div class="setting-control" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button type="button" class="settings-secondary-btn" disabled={syncUi.syncing} on:click={doSyncNow}
+                      >Sync now</button
+                    >
+                  </div>
+                </div>
+                {#if syncUi.deviceId}
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span class="setting-name">Device ID</span>
+                      <span class="setting-desc mono">{syncUi.deviceId}</span>
+                    </div>
+                  </div>
+                {/if}
+                {#if syncUi.error || syncActionError}
+                  <p class="hint" style="color: var(--danger, #c62828);">{syncUi.error ?? syncActionError}</p>
+                {/if}
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Reset server sync data</span>
+                    <span class="setting-desc">Clears the cloud copy for this license; local data unchanged</span>
+                  </div>
+                  <div class="setting-control">
+                    <button type="button" class="settings-secondary-btn danger" on:click={doResetServerSync}
+                      >Reset sync</button
+                    >
                   </div>
                 </div>
               </div>
@@ -2784,20 +2825,71 @@
 
       {:else if activeTab === 'insertion'}
         <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.insertion_formatting}>
+            <button type="button" class="section-header" on:click={() => toggleSection('insertion_formatting')}>
+              <h3>Transcribed text</h3>
+              <Icon icon={collapsedSections.insertion_formatting ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.insertion_formatting}
+              <div class="section-content">
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Auto-punctuation</span>
+                    <span class="setting-desc">Automatically insert commas and periods</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.formatting.auto_punctuation} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Voice commands</span>
+                    <span class="setting-desc">Say “new line”, “delete”, etc. to control text</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.formatting.voice_commands} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Filler word removal</span>
+                    <span class="setting-desc">Remove “um”, “uh”, “like”, etc.</span>
+                  </div>
+                  <div class="setting-control">
+                    <label class="toggle-switch">
+                      <input type="checkbox" bind:checked={config.formatting.filler_word_removal} on:change={scheduleSave} />
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+                <p class="hint hint--after-toggles">
+                  How text is delivered into the active app (typing vs paste, timing, per-app rules) is configured in
+                  Insertion below.
+                </p>
+              </div>
+            {/if}
+          </section>
+
           <section class="settings-section" class:collapsed={collapsedSections.insertion_default}>
             <button type="button" class="section-header" on:click={() => toggleSection('insertion_default')}>
-              <h3>Text insertion defaults</h3>
+              <h3>Insertion</h3>
               <Icon icon={collapsedSections.insertion_default ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
             {#if !collapsedSections.insertion_default}
               <div class="section-content">
                 <p class="hint">
-                  Choose how Kalam puts your spoken text into the app you’re using.
+                  Choose how Kalam delivers transcribed text into the app in focus.
                 </p>
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">How text is added</span>
-                    <span class="setting-desc">Use whatever works best in the apps you dictate into</span>
+                    <span class="setting-name">Insertion method</span>
+                    <span class="setting-desc">Pick what works best in the apps you dictate into</span>
                   </div>
                   <div class="setting-control">
                     <select class="form-select" bind:value={config.formatting.injection_method} on:change={scheduleSave}>
@@ -2853,15 +2945,15 @@
                 {/if}
                 {#if insertionShowThreshold}
                   <p class="hint">
-                    With <strong>Automatic</strong>, short phrases are typed and longer passages are pasted. The number
+                    With <strong>Automatic</strong>, short phrases are typed and longer passages are pasted. The value
                     below is roughly how long the text can get before Kalam switches to paste.
                   </p>
                   <div class="setting-row">
                     <div class="setting-label">
-                      <span class="setting-name">Length before pasting</span>
+                      <span class="setting-name">Auto-paste threshold</span>
                       <span class="setting-desc">
-                        When using Automatic, paste is used when your text is longer than this many characters. Lower
-                        means paste sooner.
+                        When using Automatic, paste is used when your text exceeds this many characters. Lower means
+                        paste sooner.
                       </span>
                     </div>
                     <div class="setting-control">
@@ -2881,11 +2973,11 @@
                 {#if insertionShowTypingSpeed}
                   <div class="setting-row">
                     <div class="setting-label">
-                      <span class="setting-name">Pause between letters</span>
+                      <span class="setting-name">Keystroke delay</span>
                       <span class="setting-desc">
-                        Extra wait after each character, in milliseconds (0–{INSERTION_KEYSTROKE_PAUSE_MAX_MS}). Leave at
-                        0 for the fastest result. Add a small amount only if the app drops or jumbles text—high values
-                        make long dictation very slow.
+                        Extra wait after each typed character, in milliseconds (0–{INSERTION_KEYSTROKE_PAUSE_MAX_MS}).
+                        Leave at 0 for fastest insertion. Increase slightly only if the target app drops or jumbles
+                        characters—high values make long dictation very slow.
                       </span>
                     </div>
                     <div class="setting-control">
@@ -2905,8 +2997,8 @@
                 {/if}
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Try again</span>
-                    <span class="setting-desc">How many times Kalam retries if the text doesn’t go through</span>
+                    <span class="setting-name">Retry attempts</span>
+                    <span class="setting-desc">How many times Kalam retries if insertion fails</span>
                   </div>
                   <div class="setting-control">
                     <div class="number-input">
@@ -2923,8 +3015,8 @@
                 </div>
                 <div class="setting-row">
                   <div class="setting-label">
-                    <span class="setting-name">Wait between tries</span>
-                    <span class="setting-desc">How long to pause before each retry (milliseconds)</span>
+                    <span class="setting-name">Retry delay</span>
+                    <span class="setting-desc">Pause before each retry (milliseconds)</span>
                   </div>
                   <div class="setting-control">
                     <div class="number-input">
@@ -2945,7 +3037,7 @@
 
           <section class="settings-section" class:collapsed={collapsedSections.insertion_per_app}>
             <button type="button" class="section-header" on:click={() => toggleSection('insertion_per_app')}>
-              <h3>Application-specific rules</h3>
+              <h3>Per-app rules</h3>
               <Icon icon={collapsedSections.insertion_per_app ? 'ph:caret-down' : 'ph:caret-up'} />
             </button>
             {#if !collapsedSections.insertion_per_app}
@@ -2999,7 +3091,7 @@
                         <div class="injection-rule-card-body">
                           <div class="setting-row">
                             <div class="setting-label">
-                              <span class="setting-name">How text is added</span>
+                              <span class="setting-name">Insertion method</span>
                               <span class="setting-desc">For this app only</span>
                             </div>
                             <div class="setting-control">
@@ -3007,7 +3099,7 @@
                                 class="form-select"
                                 bind:value={rule.method}
                                 on:change={scheduleSave}
-                                aria-label={`How text is added for ${injectionRuleDisplayName(rule)}`}
+                                aria-label={`Insertion method for ${injectionRuleDisplayName(rule)}`}
                               >
                                 <option value="Auto">Automatic</option>
                                 <option value="Keystrokes">Type each character</option>
@@ -3024,7 +3116,7 @@
                           {#if injectionRuleShowsSpeed(rule)}
                             <div class="setting-row">
                               <div class="setting-label">
-                                <span class="setting-name">Pause between letters</span>
+                                <span class="setting-name">Keystroke delay</span>
                                 <span class="setting-desc">
                                   Leave blank to use the default. 0–{INSERTION_KEYSTROKE_PAUSE_MAX_MS} ms; raise only if
                                   this app drops or jumbles typed text.
@@ -3040,7 +3132,7 @@
                                     placeholder="Default"
                                     title="Leave blank to use the default pause between letters"
                                     value={rule.keystroke_delay_ms ?? ''}
-                                    aria-label={`Pause between letters in milliseconds for ${injectionRuleDisplayName(rule)}`}
+                                    aria-label={`Keystroke delay in milliseconds for ${injectionRuleDisplayName(rule)}`}
                                     on:input={(e) => {
                                       const raw = e.currentTarget.value
                                       rule.keystroke_delay_ms = raw === '' ? null : Number(raw)
@@ -3055,7 +3147,7 @@
                           {#if injectionRuleShowsThreshold(rule)}
                             <div class="setting-row">
                               <div class="setting-label">
-                                <span class="setting-name">Length before pasting</span>
+                                <span class="setting-name">Auto-paste threshold</span>
                                 <span class="setting-desc">
                                   Leave blank to use the default. Used when this rule is set to Automatic.
                                 </span>
@@ -3211,7 +3303,7 @@
                   <div class="setting-label">
                     <span class="setting-name">Sensitive app detection</span>
                     <span class="setting-desc"
-                      >For Hybrid and Auto STT modes, use local transcription when the focused app matches a pattern below</span
+                      >When speech-to-text is Hybrid or Auto (<strong>AI &amp; Models</strong>), use on-device transcription if the focused app matches a pattern below</span
                     >
                   </div>
                   <div class="setting-control">
@@ -3371,65 +3463,6 @@
                     immediately. Local mode keeps everything on your device.
                     <a href="https://kalam.stream/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy →</a>
                   </p>
-                </div>
-              </div>
-            {/if}
-          </section>
-
-          <section class="settings-section" class:collapsed={collapsedSections.privacy_notifications}>
-            <button type="button" class="section-header" on:click={() => toggleSection('privacy_notifications')}>
-              <h3>Notifications</h3>
-              <Icon icon={collapsedSections.privacy_notifications ? 'ph:caret-down' : 'ph:caret-up'} />
-            </button>
-            {#if !collapsedSections.privacy_notifications}
-              <div class="section-content">
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Play sounds</span>
-                    <span class="setting-desc">Dictation start/end tones and background startup chime</span>
-                  </div>
-                  <div class="setting-control">
-                    <label class="toggle-switch">
-                      <input type="checkbox" bind:checked={config.notifications.sound_enabled} on:change={scheduleSave} />
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Show error notifications</span>
-                    <span class="setting-desc">System notifications for update check failures and command-mode hints</span>
-                  </div>
-                  <div class="setting-control">
-                    <label class="toggle-switch">
-                      <input type="checkbox" bind:checked={config.notifications.show_errors} on:change={scheduleSave} />
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Show completion notifications</span>
-                    <span class="setting-desc">Brief notice when dictated text is injected successfully</span>
-                  </div>
-                  <div class="setting-control">
-                    <label class="toggle-switch">
-                      <input type="checkbox" bind:checked={config.notifications.show_completion} on:change={scheduleSave} />
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-                </div>
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Notify when updates are available</span>
-                    <span class="setting-desc">Automatic check shortly after startup (Settings → About for install)</span>
-                  </div>
-                  <div class="setting-control">
-                    <label class="toggle-switch">
-                      <input type="checkbox" bind:checked={config.notifications.show_updates} on:change={scheduleSave} />
-                      <span class="slider"></span>
-                    </label>
-                  </div>
                 </div>
               </div>
             {/if}

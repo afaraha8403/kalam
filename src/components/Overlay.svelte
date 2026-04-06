@@ -159,9 +159,10 @@
     if (overlayLayoutTier !== 'Dormant') {
       lastTier = overlayLayoutTier
     }
+    // Resize HWND first so `%`-based pill width matches the tier before CSS transitions run (avoids mid-animation jumps).
+    await invoke('resize_overlay_to', { size: 'Dormant' }).catch(console.error)
     overlayLayoutTier = 'Dormant'
     state = makeLocalDormant()
-    await invoke('resize_overlay_to', { size: 'Dormant' }).catch(console.error)
   }
 
   function dismissOverlayMessage() {
@@ -173,14 +174,12 @@
   async function retryAfterError() {
     dismissOverlayMessage()
     try {
-      await invoke('focus_main_window')
+      await invoke('ui_toggle_dictation')
     } catch (e) {
-      console.error('focus_main_window failed:', e)
+      console.error('retryAfterError failed:', e)
     }
   }
 
-  /** Cancel is always visible during processing — no hover gate. */
-  $: showCancelButton = state.kind === 'Processing'
   $: processingElapsed = state.kind === 'Processing' ? (state.elapsed_secs ?? 0) : 0
   $: processingExpected = state.kind === 'Processing' ? (state.expected_secs ?? 120) : 120
   $: processingAttempt = state.kind === 'Processing' ? (state.attempt ?? 1) : 1
@@ -200,40 +199,30 @@
   })()
 
   $: rawLevel = state.kind === 'Recording' ? Number(state.level) || 0 : 0
-  $: isCommand = state.kind === 'Recording' ? Boolean(state.is_command) : false
-  $: isVoiceEdit = state.kind === 'Recording' ? Boolean(state.is_voice_edit) : false
-  $: isProcessingVoiceEdit = state.kind === 'Processing' ? Boolean(state.is_voice_edit) : false
+
+  // Persist session-type flags so they survive the Recording -> Processing transition.
+  // Reset only when going back to idle states (Dormant/Hidden/Listening).
+  let _lastIsCommand = false
+  let _lastIsVoiceEdit = false
+  let _lastVoiceEditHasSel = false
+  $: if (state.kind === 'Recording') {
+    _lastIsCommand = Boolean(state.is_command)
+    _lastIsVoiceEdit = Boolean(state.is_voice_edit)
+    _lastVoiceEditHasSel = Boolean(state.voice_edit_has_selection)
+  } else if (state.kind === 'Dormant' || state.kind === 'Hidden' || state.kind === 'Listening') {
+    _lastIsCommand = false
+    _lastIsVoiceEdit = false
+    _lastVoiceEditHasSel = false
+  }
+  $: isCommand = state.kind === 'Recording' ? Boolean(state.is_command) : _lastIsCommand
+  $: isVoiceEdit = state.kind === 'Recording' ? Boolean(state.is_voice_edit) : _lastIsVoiceEdit
+  $: voiceEditHasSelection = state.kind === 'Recording' ? Boolean(state.voice_edit_has_selection) : _lastVoiceEditHasSel
+  $: isProcessingVoiceEdit = state.kind === 'Processing' ? Boolean(state.is_voice_edit) || _lastIsVoiceEdit : false
 
   $: isSensitiveApp =
     state.kind === 'SensitiveAppPeek' ||
     (state.kind === 'Listening' && Boolean(state.sensitive_app)) ||
     (state.kind === 'Recording' && Boolean(state.sensitive_app))
-
-  /** Context source labels for tooltip (no emojis — plain text). */
-  const SOURCE_LABELS: Record<string, string> = {
-    app: 'App',
-    clipboard: 'Clipboard',
-    selection: 'Selection',
-    system: 'System',
-  }
-
-  function contextSourcesSummary(sources: string[] | undefined): string {
-    if (!sources?.length) return ''
-    return sources.map((s) => SOURCE_LABELS[s] ?? s).join(' · ')
-  }
-
-  $: contextUiActive =
-    !isSensitiveApp &&
-    ((state.kind === 'Recording' && Boolean(state.context_active)) ||
-      (state.kind === 'Processing' && Boolean(state.context_active)))
-  $: contextUiLabel =
-    state.kind === 'Recording' || state.kind === 'Processing'
-      ? (typeof state.context_label === 'string' ? state.context_label : '') || ''
-      : ''
-  $: contextUiSummary =
-    state.kind === 'Recording' || state.kind === 'Processing'
-      ? contextSourcesSummary(state.context_sources)
-      : ''
 
   type OverlayLayoutTier = 'Dormant' | 'Mini' | 'Full'
   let overlayLayoutTier: OverlayLayoutTier = 'Dormant'
@@ -253,6 +242,16 @@
   let contextMenuX = 0
   let contextMenuY = 0
 
+  /** Rust: resize HWND for menu clearance + hit-test; DOM: undo overflow clipping on html/body/#app. */
+  $: {
+    const open = modeMenuOpen || contextMenuOpen
+    invoke('set_overlay_menu_open', { open }).catch(() => {})
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('kalam-ov-menu', open)
+      document.body.classList.toggle('kalam-ov-menu', open)
+      document.getElementById('app')?.classList.toggle('kalam-ov-menu', open)
+    }
+  }
 
   $: idleModeLabel =
     state.kind === 'Dormant' && typeof state.mode_name === 'string' && state.mode_name.trim() !== ''
@@ -264,34 +263,89 @@
       ? `Copy: ${state.last_transcription_preview.slice(0, 42)}${state.last_transcription_preview.length > 42 ? '…' : ''}`
       : 'Copy last transcription'
 
-  $: isExpanded =
-    state.kind !== 'Dormant' && state.kind !== 'Hidden'
-
   let isHovered = false
+  /**
+   * After "collapse to pill" while idle, block hover-to-expand until the pointer actually leaves the pill.
+   * A short time gate is not enough: `resize_overlay_to` IPC can take >500ms, and while the cursor stays over
+   * the pill, `mouseenter`/layout can then run and restore `lastTier` (Full) — so collapse looks broken.
+   */
+  let blockDormantHoverExpandUntilLeave = false
+
+  /** After expand/collapse resizes the window, ignore `mouseleave` retract until the pointer is confirmed outside the pill (resize often fires a bogus leave). */
+  let suppressIdleRetractUntilOutside = false
+  let pillRootEl: HTMLElement | null = null
+  let boundPointerMoveForRetract: ((e: PointerEvent) => void) | null = null
+
+  function disarmIdleRetractGuard() {
+    suppressIdleRetractUntilOutside = false
+    if (boundPointerMoveForRetract != null && typeof document !== 'undefined') {
+      document.removeEventListener('pointermove', boundPointerMoveForRetract, true)
+      boundPointerMoveForRetract = null
+    }
+  }
+
+  function armIdleRetractGuardAfterChromeResize() {
+    suppressIdleRetractUntilOutside = true
+    if (typeof document === 'undefined' || boundPointerMoveForRetract != null) return
+    boundPointerMoveForRetract = (e: PointerEvent) => {
+      if (!suppressIdleRetractUntilOutside) return
+      const el = pillRootEl
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const { clientX: x, clientY: y } = e
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return
+      disarmIdleRetractGuard()
+      void retractDormantChromeToDotIfIdle()
+    }
+    document.addEventListener('pointermove', boundPointerMoveForRetract, true)
+  }
+
+  async function retractDormantChromeToDotIfIdle() {
+    if (state.kind !== 'Dormant' || overlayLayoutTier === 'Dormant') return
+    // Drop cached previews so we never show a previous app's context after retract.
+    contextPreviews = null
+    lastTier = overlayLayoutTier
+    await invoke('resize_overlay_to', { size: 'Dormant' }).catch(() => {})
+    overlayLayoutTier = 'Dormant'
+  }
 
   async function onBlipMouseEnter() {
     isHovered = true
+    if (blockDormantHoverExpandUntilLeave) return
     // If dormant, restore to last tier (Mini or Full)
     if (state.kind === 'Dormant' && overlayLayoutTier === 'Dormant') {
-      overlayLayoutTier = lastTier
-      await invoke('resize_overlay_to', { size: lastTier }).catch(() => {})
+      const tier = lastTier
+      await invoke('resize_overlay_to', { size: tier }).catch(() => {})
+      overlayLayoutTier = tier
+      // Full panel reads context from a prior invoke; re-fetch so it matches current foreground.
+      if (tier === 'Full') await loadContextPreviewsOnly()
     }
   }
 
-  async function onBlipMouseLeave() {
+  async function onBlipMouseLeave(e: MouseEvent) {
     isHovered = false
-    // If still dormant (not recording/processing), retract to dormant
-    if (state.kind === 'Dormant' && overlayLayoutTier !== 'Dormant') {
-      // Save current tier before retracting
-      lastTier = overlayLayoutTier
-      overlayLayoutTier = 'Dormant'
-      await invoke('resize_overlay_to', { size: 'Dormant' }).catch(() => {})
+    const cur = e.currentTarget
+    const rel = e.relatedTarget
+    // Only clear the compact lock when leaving the pill for real (not moving between children inside it).
+    if (
+      !(
+        blockDormantHoverExpandUntilLeave &&
+        cur instanceof HTMLElement &&
+        rel instanceof Node &&
+        cur.contains(rel)
+      )
+    ) {
+      blockDormantHoverExpandUntilLeave = false
     }
+    // Resize/reposition often synthesizes leave while the cursor is still “on” the pill — wait for real outside move (see armIdleRetractGuardAfterChromeResize).
+    if (suppressIdleRetractUntilOutside) return
+    await retractDormantChromeToDotIfIdle()
   }
 
-  /** Close menus when state leaves dormant. */
-  $: if (state.kind !== 'Dormant') {
+  /** Close context menu when state leaves dormant (mode menu stays open during active states). */
+  $: if (state.kind !== 'Dormant' && state.kind !== 'Recording' && state.kind !== 'Processing') {
     modeMenuOpen = false
+    contextMenuOpen = false
   }
 
   let statusTimeout: ReturnType<typeof setTimeout> | null = null
@@ -322,8 +376,8 @@
       if (overlayLayoutTier !== 'Dormant') {
         lastTier = overlayLayoutTier
       }
-      overlayLayoutTier = 'Dormant'
       await invoke('resize_overlay_to', { size: 'Dormant' }).catch(() => {})
+      overlayLayoutTier = 'Dormant'
       return
     }
     if (
@@ -342,18 +396,18 @@
     if (kind === 'Listening') {
       const newTier = overlayActivePreference === 'Full' ? 'Full' : 'Mini'
       lastTier = newTier
-      overlayLayoutTier = newTier
       await invoke('resize_overlay_to', { size: newTier }).catch(() => {})
+      overlayLayoutTier = newTier
       if (newTier === 'Full') await loadContextPreviewsOnly()
       return
     }
     if (kind === 'Recording' || kind === 'Processing') {
       // Use active preference or maintain current tier
       const newTier = overlayLayoutTier === 'Dormant' ? lastTier : overlayLayoutTier
+      await invoke('resize_overlay_to', { size: newTier }).catch(() => {})
       if (overlayLayoutTier === 'Dormant') {
         overlayLayoutTier = newTier
       }
-      await invoke('resize_overlay_to', { size: newTier }).catch(() => {})
       if (newTier === 'Full') await loadContextPreviewsOnly()
     }
   }
@@ -386,38 +440,73 @@
   })()
 
   async function expandToFullChrome() {
+    blockDormantHoverExpandUntilLeave = false
     lastTier = 'Full'
-    overlayLayoutTier = 'Full'
     contextPreviews = null
     await invoke('resize_overlay_to', { size: 'Full' }).catch(() => {})
+    overlayLayoutTier = 'Full'
     await loadContextPreviewsOnly()
+    armIdleRetractGuardAfterChromeResize()
   }
 
-  /** Collapse to dormant idle (not Mini) — returns to the compact pill. */
-  async function collapseToDormant() {
-    // Save current tier before going dormant (for hover restore)
-    if (overlayLayoutTier !== 'Dormant') {
-      lastTier = overlayLayoutTier
+  /** True between primary-button pointerdown and the synthetic click — avoids double collapse + helps when WebView eats `click` for drag. */
+  let collapseChromeFromPointer = false
+
+  function onCollapseChromePointerDown(e: PointerEvent) {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    collapseChromeFromPointer = true
+    void collapseToDormant()
+  }
+
+  function onCollapseChromeClick(e: MouseEvent) {
+    e.stopPropagation()
+    // detail > 0 = real mouse click; keyboard activation uses detail 0 — never drop that path if a pointerdown already ran.
+    if (collapseChromeFromPointer && e.detail > 0) {
+      collapseChromeFromPointer = false
+      return
     }
-    overlayLayoutTier = 'Dormant'
-    contextPreviews = null
-    state = makeLocalDormant()
-    await invoke('resize_overlay_to', { size: 'Dormant' }).catch(() => {})
+    collapseChromeFromPointer = false
+    void collapseToDormant()
   }
 
-  async function collapseToMiniChrome() {
-    lastTier = 'Mini'
-    overlayLayoutTier = 'Mini'
+  /**
+   * Shrink chrome: Recording/Processing full → Mini.
+   * Idle maximized (Full) → Mini strip (compact pill with mode/copy/expand) — not tier Dormant (dot-only), which reads as “gone”.
+   * Dot-only idle is still from pointer leaving the strip (mouseleave), not this control.
+   */
+  async function collapseToDormant() {
     contextPreviews = null
-    await invoke('resize_overlay_to', { size: 'Mini' }).catch(() => {})
+    modeMenuOpen = false
+    contextMenuOpen = false
+    if (state.kind === 'Recording' || state.kind === 'Processing') {
+      lastTier = 'Mini'
+      await invoke('resize_overlay_to', { size: 'Mini' }).catch(() => {})
+      overlayLayoutTier = 'Mini'
+      armIdleRetractGuardAfterChromeResize()
+    } else if (overlayLayoutTier === 'Full') {
+      lastTier = 'Mini'
+      await invoke('resize_overlay_to', { size: 'Mini' }).catch(() => {})
+      overlayLayoutTier = 'Mini'
+      state = makeLocalDormant()
+      blockDormantHoverExpandUntilLeave = true
+      armIdleRetractGuardAfterChromeResize()
+    }
   }
+
+  let copyFeedback = ''
+  let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
   async function copyLastTranscription() {
     try {
-      await invoke('copy_last_transcription')
+      const copied = (await invoke('copy_last_transcription')) as boolean
+      copyFeedback = copied ? 'Copied' : 'Nothing to copy'
     } catch (e) {
       console.error('copy_last_transcription failed:', e)
+      copyFeedback = 'Copy failed'
     }
+    if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = setTimeout(() => { copyFeedback = ''; copyFeedbackTimer = null }, 1200)
     contextMenuOpen = false
     modeMenuOpen = false
   }
@@ -878,7 +967,13 @@
       if (statusTimeout) clearTimeout(statusTimeout)
       if (pendingSuccessTimer) clearTimeout(pendingSuccessTimer)
       if (autoActivateToastTimer) clearTimeout(autoActivateToastTimer)
+      if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
+      disarmIdleRetractGuard()
       keepAliveWorker?.terminate()
+      invoke('set_overlay_menu_open', { open: false }).catch(() => {})
+      document.documentElement.classList.remove('kalam-ov-menu')
+      document.body.classList.remove('kalam-ov-menu')
+      document.getElementById('app')?.classList.remove('kalam-ov-menu')
     }
   })
 </script>
@@ -889,14 +984,21 @@
   class:expand-up={expandDirection === 'Up'}
   class:expand-down={expandDirection === 'Down'}
   class:expand-center={expandDirection === 'Center'}
+  class:has-menu-open={modeMenuOpen || contextMenuOpen}
   role="status"
   aria-label="Kalam dictation status"
 >
   {#if autoActivateToast}
     <div class="toast" role="status" aria-live="polite">{autoActivateToast}</div>
   {/if}
+  {#if copyFeedback}
+    <div class="toast toast-bottom" role="status" aria-live="polite">{copyFeedback}</div>
+  {/if}
   <div
+    bind:this={pillRootEl}
     class="pill"
+    class:dormant-pill={state.kind === 'Dormant'}
+    class:menu-open={modeMenuOpen || contextMenuOpen}
     class:tier-dormant={overlayLayoutTier === 'Dormant'}
     class:tier-mini={overlayLayoutTier === 'Mini'}
     class:tier-full={overlayLayoutTier === 'Full'}
@@ -909,7 +1011,6 @@
     class:always-visible={overlayAlwaysVisible}
     class:is-command={isCommand}
     class:is-voice-edit={isVoiceEdit && !isCommand}
-    data-tauri-drag-region
     on:mouseenter={onBlipMouseEnter}
     on:mouseleave={onBlipMouseLeave}
     on:contextmenu={onRootContextMenu}
@@ -919,22 +1020,26 @@
       {#if overlayLayoutTier === 'Full'}
         <div class="full-panel dormant-full">
           <div class="full-header">
-            <span class="full-mode-title">{idleModeLabel}</span>
+            <div class="full-mode-identity">
+              <span class="full-mode-swatch" style={dormantDotBackground ? `background-color: ${dormantDotBackground}` : undefined} aria-hidden="true" />
+              <span class="full-mode-title" data-tauri-drag-region>{idleModeLabel}</span>
+            </div>
             <button
               type="button"
               class="polish-chip"
               aria-pressed={polishEnabledOverlay}
+              data-tauri-drag-region="false"
               data-overlay-menu-root
               on:click|stopPropagation={() => togglePolishFromOverlay()}
             >
               Clean up {polishEnabledOverlay ? 'on' : 'off'}
             </button>
           </div>
-          <p class="full-sub">Press <kbd class="hotkey-kbd">{hotkeyDisplayStr}</kbd> to dictate</p>
+          <p class="full-sub" data-tauri-drag-region>Press <kbd class="hotkey-kbd">{hotkeyDisplayStr}</kbd> to dictate</p>
           {#if fullContextSummary}
-            <div class="ctx-summary">Context: {fullContextSummary}</div>
+            <div class="ctx-summary">{fullContextSummary}</div>
           {/if}
-          <div class="full-footer" data-overlay-menu-root>
+          <div class="full-footer" data-tauri-drag-region="false" data-overlay-menu-root>
             <div class="mode-wrap">
               <button type="button" class="action-chip" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => (modeMenuOpen = !modeMenuOpen)}
                 >{idleModeLabel} <span class="chevron" aria-hidden="true">{modeMenuOpen ? '▴' : '▾'}</span></button
@@ -950,45 +1055,68 @@
             <button type="button" class="icon-btn" title={copyLastTitle} on:click|stopPropagation={() => copyLastTranscription()}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg>
             </button>
-            <!-- Collapse back to dormant compact pill -->
-            <button type="button" class="icon-btn" title="Collapse to pill" on:click|stopPropagation={() => collapseToDormant()}>
+            <!-- Shrink maximized idle panel → compact strip (Mini), not dot-only (Dormant) -->
+            <button
+              type="button"
+              class="icon-btn"
+              title="Shrink to compact pill"
+              data-tauri-drag-region="false"
+              on:pointerdown|stopPropagation={onCollapseChromePointerDown}
+              on:click|stopPropagation={onCollapseChromeClick}
+            >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>
         </div>
       {:else}
-        <!-- Dormant compact: ultra-minimal dot only, expands on hover -->
+        <!-- Dormant compact: collapsed = single mode-color swatch (draggable); expanded row uses the same swatch next to the mode name — no second status dot. -->
         <div class="dormant-bar" class:expanded={overlayLayoutTier !== 'Dormant'}>
-          <span
-            class="status-dot dormant-dot"
-            aria-hidden="true"
-            style={dormantDotBackground ? `background-color: ${dormantDotBackground}` : undefined}
-          />
-          <div class="dormant-content">
-            <span class="dormant-mode">{idleModeLabel}</span>
-            {#if polishEnabledOverlay}
-              <span class="polish-badge" title="Text clean-up is on">P</span>
-            {/if}
-            <span class="dormant-hotkey">{hotkeyDisplayStr}</span>
-            <div class="dormant-icons" data-overlay-menu-root>
-              <!-- Copy last transcription -->
-              <button type="button" class="icon-btn" title={copyLastTitle} on:click|stopPropagation={() => copyLastTranscription()}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg>
-              </button>
-              <!-- Mode switcher -->
-              <div class="mode-wrap">
-                <button type="button" class="icon-btn" title="Switch mode" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => (modeMenuOpen = !modeMenuOpen)}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          {#if overlayLayoutTier === 'Dormant'}
+            <span
+              class="dormant-mode-swatch dormant-idle-mark"
+              aria-hidden="true"
+              data-tauri-drag-region
+              style={dormantDotBackground ? `background-color: ${dormantDotBackground}` : undefined}
+            />
+          {/if}
+          <!-- Reveal row: left = mode (opens menu) + hotkey; right = copy + expand. Wrapper animates width; menu needs overflow visible when open (see .pill.menu-open). -->
+          <div class="dormant-expand-inner" class:menu-open={modeMenuOpen}>
+            <div class="dormant-left">
+              <div class="mode-wrap dormant-mode-wrap" data-overlay-menu-root>
+                <button
+                  type="button"
+                  class="dormant-mode-trigger"
+                  aria-expanded={modeMenuOpen}
+                  aria-haspopup="menu"
+                  title="Switch mode"
+                  data-tauri-drag-region="false"
+                  on:click|stopPropagation={() => (modeMenuOpen = !modeMenuOpen)}
+                >
+                  <span
+                    class="dormant-mode-swatch"
+                    aria-hidden="true"
+                    style={dormantDotBackground ? `background-color: ${dormantDotBackground}` : undefined}
+                  />
+                  <span class="dormant-mode">{idleModeLabel}</span>
+                  <span class="dormant-mode-chevron" aria-hidden="true">{modeMenuOpen ? '▴' : '▾'}</span>
                 </button>
                 {#if modeMenuOpen}
-                  <div class="mode-dropdown" role="menu">
+                  <div class="mode-dropdown mode-dropdown-dormant" role="menu">
                     {#each modesList as m (m.id)}
                       <button type="button" role="menuitem" on:click|stopPropagation={() => setActiveModeFromOverlay(m.id)}>{m.name}</button>
                     {/each}
                   </div>
                 {/if}
               </div>
-              <!-- Expand to full panel -->
+              {#if polishEnabledOverlay}
+                <span class="polish-badge" title="Text clean-up is on">P</span>
+              {/if}
+              <span class="dormant-hotkey">{hotkeyDisplayStr}</span>
+            </div>
+            <div class="dormant-icons" data-tauri-drag-region="false" data-overlay-menu-root>
+              <button type="button" class="icon-btn" title={copyLastTitle} on:click|stopPropagation={() => copyLastTranscription()}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg>
+              </button>
               <button type="button" class="icon-btn" title="Expand panel" on:click|stopPropagation={() => expandToFullChrome()}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
@@ -999,20 +1127,21 @@
       {#if contextMenuOpen}
         <div
           class="ctx-menu"
+          data-tauri-drag-region="false"
           data-overlay-menu-root
           style="left: {contextMenuX}px; top: {contextMenuY}px;"
           role="menu"
         >
           <button type="button" role="menuitem" on:click|stopPropagation={() => { contextMenuOpen = false; modeMenuOpen = true }}>Switch mode…</button>
           <button type="button" role="menuitem" on:click|stopPropagation={() => copyLastTranscription()}>Copy last</button>
-          <button type="button" role="menuitem" on:click|stopPropagation={() => invoke('ui_toggle_dictation')}>Start recording</button>
+          <button type="button" role="menuitem" on:click|stopPropagation={() => { contextMenuOpen = false; invoke('ui_toggle_dictation') }}>Start recording</button>
           <button type="button" role="menuitem" on:click|stopPropagation={() => expandToFullChrome()}>Expand panel</button>
         </div>
       {/if}
 
     <!-- ═══════════════ LISTENING ═══════════════ -->
     {:else if state.kind === 'Listening'}
-      <div class="content listening" class:sensitive={isSensitiveApp}>
+      <div class="content listening" class:sensitive={isSensitiveApp} data-tauri-drag-region>
         {#if isSensitiveApp}
           <svg class="lock-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M7 11V8a5 5 0 0 1 10 0v3M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1024,7 +1153,7 @@
         {/if}
       </div>
     {:else if state.kind === 'SensitiveAppPeek'}
-      <div class="content listening sensitive">
+      <div class="content listening sensitive" data-tauri-drag-region>
         <svg class="lock-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M7 11V8a5 5 0 0 1 10 0v3M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
@@ -1033,13 +1162,13 @@
 
     <!-- ═══════════════ SHORT PRESS ═══════════════ -->
     {:else if state.kind === 'ShortPress'}
-      <div class="content hint">
+      <div class="content hint" data-tauri-drag-region>
         <span class="label">Hold the key longer to start dictating</span>
       </div>
 
     <!-- ═══════════════ STATUS ═══════════════ -->
     {:else if state.kind === 'Status'}
-      <div class="content status-message">
+      <div class="content status-message" data-tauri-drag-region>
         <span class="label">
           {state.message}
           {#if state.highlight}
@@ -1053,15 +1182,16 @@
       {#if overlayLayoutTier === 'Full'}
         <div class="full-panel rec-full">
           <div class="full-header">
-            <span class="full-mode-title">{isVoiceEdit ? 'Editing' : activeModeName}{polishEnabledOverlay ? ' · Clean up' : ''}</span>
-            <button
-              type="button"
-              class="polish-chip"
-              aria-pressed={polishEnabledOverlay}
-              data-overlay-menu-root
-              on:click|stopPropagation={() => togglePolishFromOverlay()}
-            >
-              Clean up {polishEnabledOverlay ? 'on' : 'off'}
+            <div class="full-mode-identity">
+              <span class="full-mode-swatch" style="background-color: {activeModeAccent}" aria-hidden="true" />
+              <span class="full-mode-title" data-tauri-drag-region>{isVoiceEdit ? (voiceEditHasSelection ? 'Editing selection' : 'Editing') : activeModeName}</span>
+              {#if polishEnabledOverlay}
+                <span class="header-polish-tag">Clean up</span>
+              {/if}
+            </div>
+            <button type="button" class="pill-stop-btn" title="Stop recording" data-tauri-drag-region="false" on:click|stopPropagation={() => invoke('ui_toggle_dictation')}>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect width="10" height="10" rx="2"/></svg>
+              Stop
             </button>
           </div>
           {#if isSensitiveApp}
@@ -1072,7 +1202,7 @@
               <span>Local only — no cloud, no context</span>
             </div>
           {:else if fullContextSummary}
-            <div class="ctx-summary">Context: {fullContextSummary}</div>
+            <div class="ctx-summary">{fullContextSummary}</div>
           {/if}
           <div class="content waveform full-wave">
             {#if waveformStyle === 'SiriWave' || waveformStyle === 'Oscilloscope' || waveformStyle === 'Aurora'}
@@ -1091,7 +1221,7 @@
               </div>
             {/if}
           </div>
-          <div class="full-footer" data-overlay-menu-root>
+          <div class="full-footer" data-tauri-drag-region="false" data-overlay-menu-root>
             <div class="mode-wrap">
               <button type="button" class="action-chip" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => (modeMenuOpen = !modeMenuOpen)}>{idleModeLabel} <span class="chevron" aria-hidden="true">{modeMenuOpen ? '▴' : '▾'}</span></button>
               {#if modeMenuOpen}
@@ -1102,39 +1232,57 @@
                 </div>
               {/if}
             </div>
-            <!-- Stop recording -->
-            <button type="button" class="icon-btn icon-stop" title="Stop recording" on:click|stopPropagation={() => invoke('ui_toggle_dictation')}>
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="2"/></svg>
+            <button type="button" class="icon-btn icon-cancel" title="Cancel transcription" on:click|stopPropagation={cancelTranscription}>
+              <svg width="12" height="12" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M5 5l8 8M13 5l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
             </button>
-            <!-- Collapse to compact pill -->
-            <button type="button" class="icon-btn" title="Collapse to pill" on:click|stopPropagation={() => collapseToDormant()}>
+            <button
+              type="button"
+              class="icon-btn"
+              title="Shrink to compact pill"
+              data-tauri-drag-region="false"
+              on:pointerdown|stopPropagation={onCollapseChromePointerDown}
+              on:click|stopPropagation={onCollapseChromeClick}
+            >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>
         </div>
       {:else}
-        <!-- Mini recording -->
-        <div class="content waveform mini-rec-row">
-          <span class="status-dot rec-dot" aria-hidden="true" />
-          <span class="mode-tag" title={isVoiceEdit ? 'Voice-activated editing' : 'Active dictation mode'}>{isVoiceEdit ? 'Edit' : activeModeName}{polishEnabledOverlay ? ' · P' : ''}</span>
-          {#if waveformStyle === 'SiriWave' || waveformStyle === 'Oscilloscope' || waveformStyle === 'Aurora'}
-            <canvas bind:this={waveCanvas} class="wave-canvas" aria-hidden="true"></canvas>
-          {:else}
-            <div bind:this={cssVizEl} class="viz-css" class:viz-cmd={isCommand} class:viz-voice-edit={isVoiceEdit && !isCommand} class:viz-sensitive={!isCommand && !isVoiceEdit && isSensitiveApp} data-viz={waveformStyle}>
-              {#if waveformStyle === 'EchoRing'}
-                <div class="viz-echo"><div class="ring r3"></div><div class="ring r2"></div><div class="ring r1"></div><div class="core"></div></div>
-              {:else if waveformStyle === 'RoundedBars'}
-                <div class="viz-bars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-              {:else if waveformStyle === 'BreathingAura'}
-                <div class="viz-aura"><div class="aura-orb"></div></div>
-              {:else if waveformStyle === 'NeonPulse'}
-                <div class="viz-neon"><div class="beam"></div></div>
-              {/if}
+        <!-- Mini recording: waveform fills the pill as a background layer, controls float on top -->
+        <div class="mini-rec" data-tauri-drag-region="false">
+          <!-- Waveform layer — fills the entire pill, fades at edges -->
+          <div class="mini-rec-wave-layer">
+            {#if waveformStyle === 'SiriWave' || waveformStyle === 'Oscilloscope' || waveformStyle === 'Aurora'}
+              <canvas bind:this={waveCanvas} class="wave-canvas" aria-hidden="true"></canvas>
+            {:else}
+              <div bind:this={cssVizEl} class="viz-css" class:viz-cmd={isCommand} class:viz-voice-edit={isVoiceEdit && !isCommand} class:viz-sensitive={!isCommand && !isVoiceEdit && isSensitiveApp} data-viz={waveformStyle}>
+                {#if waveformStyle === 'EchoRing'}
+                  <div class="viz-echo"><div class="ring r3"></div><div class="ring r2"></div><div class="ring r1"></div><div class="core"></div></div>
+                {:else if waveformStyle === 'RoundedBars'}
+                  <div class="viz-bars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                {:else if waveformStyle === 'BreathingAura'}
+                  <div class="viz-aura"><div class="aura-orb"></div></div>
+                {:else if waveformStyle === 'NeonPulse'}
+                  <div class="viz-neon"><div class="beam"></div></div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+          <!-- Controls layer — floats above the waveform -->
+          <div class="mini-rec-controls">
+            <div class="mini-rec-left">
+              <span class="mini-rec-dot" style="--rec-accent: {accentColor()}" aria-hidden="true" />
+              <span class="mini-rec-mode">{isVoiceEdit ? (voiceEditHasSelection ? 'Edit ✂' : 'Edit') : activeModeName}</span>
             </div>
-          {/if}
-          <button type="button" class="icon-btn icon-stop ml-auto" title="Stop recording" on:click|stopPropagation={() => invoke('ui_toggle_dictation')}>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="2"/></svg>
-          </button>
+            <div class="mini-rec-right">
+              <button type="button" class="mini-rec-btn mini-rec-cancel" title="Cancel transcription" on:click|stopPropagation={cancelTranscription}>
+                <svg width="10" height="10" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M5 5l8 8M13 5l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              </button>
+              <button type="button" class="mini-rec-btn mini-rec-stop" title="Stop recording" on:click|stopPropagation={() => invoke('ui_toggle_dictation')}>
+                <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect width="10" height="10" rx="2"/></svg>
+              </button>
+            </div>
+          </div>
         </div>
       {/if}
 
@@ -1143,8 +1291,10 @@
       {#if overlayLayoutTier === 'Full'}
         <div class="full-panel proc-full">
           <div class="full-header">
-            <span class="full-mode-title">{isProcessingVoiceEdit ? 'Editing' : activeModeName}</span>
-            <button type="button" class="polish-chip" aria-pressed={polishEnabledOverlay} data-overlay-menu-root on:click|stopPropagation={() => togglePolishFromOverlay()}>Clean up {polishEnabledOverlay ? 'on' : 'off'}</button>
+            <div class="full-mode-identity">
+              <span class="full-mode-swatch" style="background-color: {activeModeAccent}" aria-hidden="true" />
+              <span class="full-mode-title" data-tauri-drag-region>{isProcessingVoiceEdit ? 'Editing' : activeModeName}</span>
+            </div>
           </div>
           {#if isSensitiveApp}
             <div class="local-banner">
@@ -1154,21 +1304,21 @@
               <span>Local only</span>
             </div>
           {:else if fullContextSummary}
-            <div class="ctx-summary">Context: {fullContextSummary}</div>
+            <div class="ctx-summary">{fullContextSummary}</div>
           {/if}
-          <div class="content processing-body full-proc-body">
-            <div class="spinner" aria-hidden="true" />
-            <span class="proc-label" class:is-long={processingPastHalfExpected && processingAttempt === 1} class:is-retry={processingAttempt > 1}>
-              {processingLabel}
-              {#if showElapsedCounter}
-                <span class="elapsed">{processingElapsed}s</span>
-              {/if}
-            </span>
-            <button type="button" class="icon-btn icon-cancel" title="Cancel transcription" on:click|stopPropagation={cancelTranscription}>
-              <svg width="12" height="12" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M5 5l8 8M13 5l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            </button>
+          <div class="proc-center" data-tauri-drag-region="false">
+            <div class="proc-indicator">
+              <div class="spinner" aria-hidden="true" />
+              <span class="proc-label" class:is-long={processingPastHalfExpected && processingAttempt === 1} class:is-retry={processingAttempt > 1}>
+                {processingLabel}
+                {#if showElapsedCounter}
+                  <span class="elapsed">{processingElapsed}s</span>
+                {/if}
+              </span>
+            </div>
+            <button type="button" class="pill-cancel-btn" title="Cancel transcription" on:click|stopPropagation={cancelTranscription}>Cancel</button>
           </div>
-          <div class="full-footer" data-overlay-menu-root>
+          <div class="full-footer" data-tauri-drag-region="false" data-overlay-menu-root>
             <div class="mode-wrap">
               <button type="button" class="action-chip" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => (modeMenuOpen = !modeMenuOpen)}>{idleModeLabel} <span class="chevron" aria-hidden="true">{modeMenuOpen ? '▴' : '▾'}</span></button>
               {#if modeMenuOpen}
@@ -1179,14 +1329,21 @@
                 </div>
               {/if}
             </div>
-            <button type="button" class="icon-btn" title="Collapse to pill" on:click|stopPropagation={() => collapseToDormant()}>
+            <button
+              type="button"
+              class="icon-btn"
+              title="Shrink to compact pill"
+              data-tauri-drag-region="false"
+              on:pointerdown|stopPropagation={onCollapseChromePointerDown}
+              on:click|stopPropagation={onCollapseChromeClick}
+            >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>
         </div>
       {:else}
         <!-- Mini processing -->
-        <div class="content processing-body mini-proc-row">
+        <div class="content processing-body mini-proc-row" data-tauri-drag-region="false">
           <div class="spinner" aria-hidden="true" />
           <span class="proc-label" class:is-long={processingPastHalfExpected && processingAttempt === 1} class:is-retry={processingAttempt > 1}>
             {processingLabel}
@@ -1194,37 +1351,42 @@
               <span class="elapsed">{processingElapsed}s</span>
             {/if}
           </span>
-          <button type="button" class="icon-btn icon-cancel ml-auto" title="Cancel transcription" on:click|stopPropagation={cancelTranscription}>
-            <svg width="12" height="12" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M5 5l8 8M13 5l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          </button>
+          <button type="button" class="pill-cancel-btn mini-cancel ml-auto" title="Cancel transcription" on:click|stopPropagation={cancelTranscription}>Cancel</button>
         </div>
       {/if}
 
     <!-- ═══════════════ CANCELLING ═══════════════ -->
     {:else if state.kind === 'Cancelling'}
-      <div class="content status-message">
-        <span class="label">Cancelling…</span>
+      <div class="content cancelling-state" data-tauri-drag-region>
+        <div class="spinner spinner-small" aria-hidden="true" />
+        <span class="label cancelling-label">Cancelling…</span>
       </div>
 
     <!-- ═══════════════ SUCCESS ═══════════════ -->
     {:else if state.kind === 'Success'}
-      <div class="content success-state">
-        <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M4 10.5L8 14.5L16 6.5" stroke="var(--ov-success)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span class="label success-label">Done</span>
+      <div class="content success-state" data-tauri-drag-region>
+        <div class="success-icon-wrap">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M4 10.5L8 14.5L16 6.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <span class="label success-label">Transcribed</span>
       </div>
 
     <!-- ═══════════════ ERROR ═══════════════ -->
     {:else if state.kind === 'Error'}
       <div class="content error-state" role="alert">
-        <svg width="14" height="14" viewBox="0 0 18 18" fill="none" class="error-icon" aria-hidden="true">
-          <path d="M5 5L13 13M13 5L5 13" stroke="var(--ov-error)" stroke-width="2.5" stroke-linecap="round"/>
-        </svg>
-        <span class="label error-text">{friendlyError(state.message || 'Something went wrong')}</span>
-        <div class="error-actions">
-          <button type="button" class="action-chip action-retry" on:click={retryAfterError}>Retry</button>
-          <button type="button" class="action-chip" on:click={dismissOverlayMessage}>Dismiss</button>
+        <div class="error-row">
+          <div class="error-icon-wrap">
+            <svg width="11" height="11" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <path d="M5 5L13 13M13 5L5 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <span class="label error-text">{friendlyError(state.message || 'Something went wrong')}</span>
+        </div>
+        <div class="error-actions" data-tauri-drag-region="false">
+          <button type="button" class="pill-retry-btn" on:click={retryAfterError}>Retry</button>
+          <button type="button" class="pill-dismiss-btn" on:click={dismissOverlayMessage}>Dismiss</button>
         </div>
       </div>
     {/if}
@@ -1235,13 +1397,14 @@
 <style>
   /* ── Design tokens ── */
   :root {
-    --ov-surface: oklch(13% 0.01 250);
-    --ov-surface-raised: oklch(17% 0.012 250);
-    --ov-border: oklch(25% 0.015 250);
-    --ov-border-subtle: oklch(20% 0.01 250);
-    --ov-text: oklch(90% 0.008 250);
-    --ov-text-secondary: oklch(65% 0.01 250);
-    --ov-text-muted: oklch(50% 0.008 250);
+    /* Cool-violet neutrals: slightly higher chroma + hue 260 for a cohesive surface personality */
+    --ov-surface: oklch(12% 0.018 260);
+    --ov-surface-raised: oklch(16% 0.02 260);
+    --ov-border: oklch(24% 0.018 260);
+    --ov-border-subtle: oklch(19% 0.015 260);
+    --ov-text: oklch(92% 0.006 260);
+    --ov-text-secondary: oklch(68% 0.012 260);
+    --ov-text-muted: oklch(48% 0.01 260);
     --ov-accent: oklch(68% 0.1 240);
     --ov-command: oklch(68% 0.13 15);
     --ov-voice-edit: oklch(65% 0.1 290);
@@ -1251,6 +1414,15 @@
     --ov-error-soft: oklch(65% 0.08 25);
     --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
     --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    /* Primary UI motion: smooth deceleration without feeling sluggish */
+    --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+    --ov-dur-shell: 300ms;
+    --ov-dur-reveal: 300ms;
+    --ov-dur-micro: 140ms;
+    --ov-dur-dropdown: 170ms;
+    --ov-dur-panel-in: 290ms;
+    --ov-dur-content: 200ms;
+    --ov-dur-feedback: 320ms;
   }
 
   :global(html),
@@ -1264,6 +1436,13 @@
     margin: 0 !important;
     padding: 0 !important;
     overflow: hidden !important;
+  }
+
+  /* Mode/context menus paint outside the pill; allow overflow while a menu is open */
+  :global(html.kalam-ov-menu),
+  :global(body.kalam-ov-menu),
+  :global(#app.kalam-ov-menu) {
+    overflow: visible !important;
   }
 
   /* ── Root container ── */
@@ -1286,10 +1465,15 @@
   .ov-root.expand-down { align-items: flex-start; }
   .ov-root.expand-center { align-items: center; }
 
+  .ov-root.has-menu-open {
+    overflow: visible;
+  }
+
   /* ── Toast ── */
   .toast {
     position: absolute;
-    top: 8px;
+    /* Tight overlay window margin: keep toasts inside the chrome */
+    top: 4px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 100;
@@ -1303,7 +1487,13 @@
     border: 1px solid var(--ov-border-subtle);
     pointer-events: none;
     text-align: center;
-    animation: fade-in 150ms var(--ease-out-quart) both;
+    animation: toast-enter 220ms var(--ease-smooth) both;
+  }
+
+  /* Copy feedback sits below the pill so it never stacks on the auto-activate toast */
+  .toast.toast-bottom {
+    top: auto;
+    bottom: 4px;
   }
 
   /* ── The pill ── */
@@ -1315,12 +1505,31 @@
     background: var(--ov-surface);
     border: 1px solid var(--ov-border-subtle);
     box-sizing: border-box;
+    /* Tier / shape changes: one curve + matched durations so the shell reads as one motion.
+       (No faster sub-duration on radius/padding — that read as axis timing skew next to max-width.) */
     transition:
-      opacity 200ms var(--ease-out-quart),
-      box-shadow 300ms var(--ease-out-quart);
+      max-width var(--ov-dur-shell) var(--ease-smooth),
+      min-height var(--ov-dur-shell) var(--ease-smooth),
+      height var(--ov-dur-shell) var(--ease-smooth),
+      border-radius var(--ov-dur-shell) var(--ease-smooth),
+      padding var(--ov-dur-shell) var(--ease-smooth),
+      opacity 200ms var(--ease-smooth),
+      box-shadow 260ms var(--ease-smooth),
+      border-color 260ms var(--ease-smooth);
     overflow: hidden;
     position: relative;
     flex-shrink: 0;
+  }
+
+  /* Let mode / context menus paint outside the pill (otherwise overflow:hidden clips them). */
+  .pill.menu-open {
+    overflow: visible;
+  }
+
+  /* Idle pill only (collapsed dot, mini strip, or maximized panel): black shell */
+  .pill.dormant-pill {
+    background: #000;
+    border-color: oklch(26% 0.02 260);
   }
 
   /* ── Dormant tier ── */
@@ -1335,12 +1544,26 @@
     flex-direction: column;
     padding: 0;
     cursor: default;
-    transition: max-width 250ms var(--ease-out-quart), opacity 200ms var(--ease-out-quart);
     overflow: hidden;
+    /* Slightly longer opacity easing so idle → hover reads soft, not stepped */
+    transition:
+      max-width var(--ov-dur-shell) var(--ease-smooth),
+      min-height var(--ov-dur-shell) var(--ease-smooth),
+      height var(--ov-dur-shell) var(--ease-smooth),
+      border-radius var(--ov-dur-shell) var(--ease-smooth),
+      padding var(--ov-dur-shell) var(--ease-smooth),
+      opacity 220ms var(--ease-smooth),
+      box-shadow 260ms var(--ease-smooth),
+      border-color 260ms var(--ease-smooth);
   }
 
   .pill.tier-dormant.always-visible { opacity: 0.9; }
   .pill.tier-dormant:hover { opacity: 1; }
+
+  /* `.tier-dormant` sets overflow:hidden after `.menu-open` — re-allow dropdowns to escape the pill */
+  .pill.tier-dormant.menu-open {
+    overflow: visible;
+  }
 
   /* Expanded dormant (on hover) - restores to last tier size */
   .pill.tier-dormant:has(.dormant-bar.expanded) {
@@ -1373,6 +1596,36 @@
   }
 
   /* ── State accents ── */
+  .pill.recording {
+    border-color: color-mix(in oklch, var(--ov-accent) 35%, transparent);
+    /* Smaller blur so glow fits the reduced overlay window margin */
+    box-shadow: 0 0 6px color-mix(in oklch, var(--ov-accent) 15%, transparent);
+    animation: recording-glow 2.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    --glow-color: var(--ov-accent);
+  }
+  .pill.recording.is-command {
+    border-color: color-mix(in oklch, var(--ov-command) 40%, transparent);
+    box-shadow: 0 0 6px color-mix(in oklch, var(--ov-command) 15%, transparent);
+    --glow-color: var(--ov-command);
+  }
+  .pill.recording.is-voice-edit {
+    border-color: color-mix(in oklch, var(--ov-voice-edit) 40%, transparent);
+    box-shadow: 0 0 6px color-mix(in oklch, var(--ov-voice-edit) 15%, transparent);
+    --glow-color: var(--ov-voice-edit);
+  }
+  .pill.processing {
+    border-color: color-mix(in oklch, var(--ov-accent) 25%, transparent);
+  }
+  .pill.processing-long {
+    border-color: color-mix(in oklch, var(--ov-sensitive) 35%, transparent);
+  }
+  .pill.success {
+    border-color: color-mix(in oklch, var(--ov-success) 40%, transparent);
+    /* Brief tactile “done” cue without fighting layout (transform-origin keeps scale centered) */
+    transform-origin: center center;
+    animation: success-pulse 440ms var(--ease-smooth);
+    box-shadow: 0 0 8px color-mix(in oklch, var(--ov-success) 20%, transparent);
+  }
   .pill.sensitive-app {
     border-color: color-mix(in oklch, var(--ov-sensitive) 40%, transparent);
   }
@@ -1388,28 +1641,126 @@
     width: 100%;
     padding: 4px;
     box-sizing: border-box;
-    transition: gap 200ms var(--ease-out-quart), padding 200ms var(--ease-out-quart);
+    /* Match shell easing so bar spacing opens in sync with the pill width */
+    transition:
+      gap var(--ov-dur-shell) var(--ease-smooth),
+      padding var(--ov-dur-shell) var(--ease-smooth);
+  }
+
+  .dormant-bar:not(.expanded) {
+    justify-content: center;
+  }
+
+  .dormant-bar:not(.expanded) .dormant-expand-inner {
+    flex: 0 0 0;
+    width: 0;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .dormant-idle-mark {
+    flex-shrink: 0;
   }
 
   .dormant-bar.expanded {
     gap: 8px;
+    justify-content: flex-start;
     padding: 4px 6px 4px 12px;
   }
 
-  /* Hidden content when dormant */
-  .dormant-content {
+  .dormant-bar.expanded .dormant-expand-inner {
+    pointer-events: auto;
+  }
+
+  /* Animated reveal: left cluster + right icon cluster share one width transition.
+     Short opacity delay stays in lockstep with .pill / .dormant-bar shell motion. */
+  .dormant-expand-inner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    opacity: 0;
+    max-width: 0;
+    overflow: hidden;
+    transition:
+      opacity 220ms var(--ease-smooth) 45ms,
+      max-width var(--ov-dur-reveal) var(--ease-smooth);
+  }
+
+  .dormant-expand-inner.menu-open {
+    overflow: visible;
+  }
+
+  .dormant-bar.expanded .dormant-expand-inner {
+    opacity: 1;
+    max-width: 280px;
+  }
+
+  .dormant-left {
     display: flex;
     align-items: center;
     gap: 8px;
-    opacity: 0;
-    width: 0;
-    overflow: hidden;
-    transition: opacity 150ms var(--ease-out-quart), width 200ms var(--ease-out-quart);
+    flex: 1;
+    min-width: 0;
   }
 
-  .dormant-bar.expanded .dormant-content {
-    opacity: 1;
-    width: auto;
+  .dormant-mode-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .dormant-mode-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 2px 6px 2px 4px;
+    margin: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ov-text);
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+    flex-shrink: 1;
+    min-width: 0;
+    transition: background var(--ov-dur-micro) var(--ease-smooth);
+  }
+
+  .dormant-mode-trigger:hover {
+    background: color-mix(in oklch, var(--ov-text) 8%, transparent);
+  }
+  .dormant-mode-trigger:active {
+    background: color-mix(in oklch, var(--ov-text) 12%, transparent);
+  }
+
+  .dormant-mode-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--ov-text) 12%, transparent);
+    transition: transform 180ms var(--ease-smooth), box-shadow 180ms var(--ease-smooth);
+  }
+
+  /* Dormant idle mark (collapsed state) — invite hover with subtle pulse */
+  .dormant-idle-mark {
+    cursor: pointer;
+    animation: dormant-beacon 3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    transition: transform 220ms var(--ease-smooth), box-shadow 260ms var(--ease-smooth);
+  }
+  .pill.tier-dormant:hover .dormant-idle-mark {
+    animation: none;
+    transform: scale(1.3);
+    box-shadow:
+      0 0 0 2px color-mix(in oklch, var(--ov-text) 8%, transparent),
+      0 0 6px color-mix(in oklch, var(--ov-accent) 25%, transparent);
   }
 
   .dormant-mode {
@@ -1419,7 +1770,14 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 120px;
+    min-width: 0;
+  }
+
+  .dormant-mode-chevron {
+    font-size: 0.65em;
+    opacity: 0.55;
+    flex-shrink: 0;
+    line-height: 1;
   }
 
   .dormant-hotkey {
@@ -1430,13 +1788,15 @@
     flex-shrink: 0;
   }
 
-  /* Icon row pinned to the right of the dormant bar */
   .dormant-icons {
     display: flex;
     align-items: center;
     gap: 2px;
-    margin-left: auto;
     flex-shrink: 0;
+  }
+
+  .mode-dropdown.mode-dropdown-dormant {
+    z-index: 60;
   }
 
   .polish-badge {
@@ -1459,28 +1819,31 @@
     align-items: center;
     justify-content: center;
     border-radius: 6px;
-    border: 1px solid var(--ov-border);
-    background: var(--ov-surface-raised);
+    border: none;
+    background: transparent;
     color: var(--ov-text-muted);
     cursor: pointer;
     flex-shrink: 0;
-    transition: color 100ms, border-color 100ms, background 100ms;
+    transition:
+      color var(--ov-dur-micro) var(--ease-smooth),
+      background var(--ov-dur-micro) var(--ease-smooth),
+      transform 160ms var(--ease-smooth);
   }
   .icon-btn:hover {
     color: var(--ov-text);
-    background: color-mix(in oklch, var(--ov-text) 8%, var(--ov-surface));
+    background: color-mix(in oklch, var(--ov-text) 8%, transparent);
+    transform: scale(1.08);
+  }
+  .icon-btn:active {
+    transform: scale(0.95);
   }
   .icon-btn:focus-visible {
     outline: 2px solid var(--ov-accent);
     outline-offset: 1px;
   }
-  .icon-stop:hover {
-    color: var(--ov-error);
-    border-color: color-mix(in oklch, var(--ov-error) 40%, transparent);
-  }
   .icon-cancel:hover {
     color: var(--ov-error);
-    border-color: color-mix(in oklch, var(--ov-error) 40%, transparent);
+    background: color-mix(in oklch, var(--ov-error) 12%, transparent);
   }
   .ml-auto { margin-left: auto; }
 
@@ -1492,30 +1855,12 @@
     flex-shrink: 0;
   }
 
-  .dormant-dot {
-    background: var(--ov-accent);
-    flex-shrink: 0;
-    margin: 0 auto;
-    transition: margin 200ms var(--ease-out-quart);
-  }
-
-  .dormant-bar.expanded .dormant-dot {
-    margin: 0;
-  }
-  .pill.is-command .dormant-dot { background: var(--ov-command); }
-  .pill.sensitive-app .dormant-dot { background: var(--ov-sensitive); }
-
   .listening-dot {
     background: var(--ov-accent);
-    animation: gentle-pulse 1.8s ease-in-out infinite;
+    animation: breathe 2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   }
 
-  .rec-dot {
-    background: var(--ov-success);
-  }
-  .pill.is-command .rec-dot { background: var(--ov-command); }
-  .pill.is-voice-edit .rec-dot { background: var(--ov-voice-edit); }
-  .pill.sensitive-app .rec-dot { background: var(--ov-sensitive); }
+
 
   /* ── Action chips ── */
   .action-chip {
@@ -1528,20 +1873,24 @@
     color: var(--ov-text-secondary);
     cursor: pointer;
     white-space: nowrap;
-    transition: background 100ms, color 100ms;
+    transition:
+      background var(--ov-dur-micro) var(--ease-smooth),
+      color var(--ov-dur-micro) var(--ease-smooth),
+      transform 160ms var(--ease-smooth),
+      border-color var(--ov-dur-micro) var(--ease-smooth);
   }
   .action-chip:hover {
     background: color-mix(in oklch, var(--ov-text) 8%, var(--ov-surface));
     color: var(--ov-text);
+    border-color: var(--ov-border);
+    transform: translateY(-1px);
+  }
+  .action-chip:active {
+    transform: translateY(0);
   }
   .action-chip:focus-visible {
     outline: 2px solid var(--ov-accent);
     outline-offset: 1px;
-  }
-
-  .action-retry {
-    border-color: color-mix(in oklch, var(--ov-error) 35%, transparent);
-    color: var(--ov-error);
   }
 
   .chevron {
@@ -1569,6 +1918,18 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
+    animation: dropdown-enter var(--ov-dur-dropdown) var(--ease-smooth) both;
+    transform-origin: bottom left;
+  }
+
+  /* Compact pill at top of HWND: default `bottom:100%` would clip above the window */
+  .ov-root.expand-down .pill.tier-mini .mode-dropdown,
+  .ov-root.expand-down .pill.tier-dormant .mode-dropdown {
+    top: 100%;
+    bottom: auto;
+    margin-top: 6px;
+    margin-bottom: 0;
+    transform-origin: top left;
   }
 
   .mode-dropdown button {
@@ -1601,6 +1962,8 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
+    animation: dropdown-enter var(--ov-dur-dropdown) var(--ease-smooth) both;
+    transform-origin: top left;
   }
   .ctx-menu button {
     text-align: left;
@@ -1620,10 +1983,11 @@
   .full-panel {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
     width: 100%;
     min-height: 0;
     flex: 1;
+    animation: panel-enter var(--ov-dur-panel-in) var(--ease-smooth) both;
   }
 
   .full-header {
@@ -1631,6 +1995,25 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    margin-bottom: 4px;
+    flex-shrink: 0;
+  }
+
+  /* Mode identity row: swatch + title (+ optional tag) */
+  .full-mode-identity {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .full-mode-swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1.5px color-mix(in oklch, var(--ov-text) 10%, transparent);
   }
 
   .full-mode-title {
@@ -1642,11 +2025,23 @@
     text-overflow: ellipsis;
   }
 
+  .header-polish-tag {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--ov-accent);
+    background: color-mix(in oklch, var(--ov-accent) 12%, transparent);
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    line-height: 1.3;
+  }
+
   .full-sub {
     font-size: 12px;
     color: var(--ov-text-muted);
     margin: 0;
     text-align: center;
+    flex-shrink: 0;
   }
 
   .hotkey-kbd {
@@ -1663,27 +2058,39 @@
     font-weight: 450;
     padding: 3px 8px;
     border-radius: 5px;
-    border: 1px solid var(--ov-border);
-    background: var(--ov-surface-raised);
-    color: var(--ov-text-secondary);
+    border: none;
+    background: color-mix(in oklch, var(--ov-text) 6%, transparent);
+    color: var(--ov-text-muted);
     cursor: pointer;
     flex-shrink: 0;
+    transition: background var(--ov-dur-micro) var(--ease-smooth), color var(--ov-dur-micro) var(--ease-smooth);
+  }
+  .polish-chip:hover {
+    background: color-mix(in oklch, var(--ov-text) 10%, transparent);
+    color: var(--ov-text-secondary);
   }
   .polish-chip[aria-pressed="true"] {
-    border-color: color-mix(in oklch, var(--ov-accent) 35%, transparent);
+    background: color-mix(in oklch, var(--ov-accent) 15%, transparent);
     color: var(--ov-accent);
   }
 
-  /* Context summary — source names only, not content */
+  /* Context summary — source names only, not content; wrap so long titles stay readable */
   .ctx-summary {
     font-size: 11px;
+    line-height: 1.35;
     color: var(--ov-text-muted);
     padding: 4px 6px;
     border-radius: 6px;
     background: color-mix(in oklch, var(--ov-surface) 50%, black);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: 0;
+    max-width: 100%;
+    width: fit-content;
+    align-self: center;
+    box-sizing: border-box;
+    white-space: normal;
+    /* Prefer breaks between words; allow mid-token breaks for very long titles/paths */
+    overflow-wrap: anywhere;
+    text-align: center;
   }
 
   .local-banner {
@@ -1699,15 +2106,105 @@
     font-weight: 500;
   }
 
-  .full-wave {
-    flex: 1;
-    min-height: 50px;
-    max-height: 65px;
+  /* ── Stop / Cancel / Retry / Dismiss buttons ── */
+  .pill-stop-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px 4px 8px;
+    border-radius: 6px;
+    border: none;
+    background: color-mix(in oklch, var(--ov-error) 14%, transparent);
+    color: var(--ov-error);
+    font-size: 11px;
+    font-weight: 550;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background var(--ov-dur-micro) var(--ease-smooth), transform 160ms var(--ease-smooth);
+  }
+  .pill-stop-btn:hover {
+    background: color-mix(in oklch, var(--ov-error) 22%, transparent);
+  }
+  .pill-stop-btn:active { transform: scale(0.96); }
+
+  .pill-cancel-btn {
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in oklch, var(--ov-text) 12%, transparent);
+    background: transparent;
+    color: var(--ov-text-muted);
+    font-size: 11px;
+    font-weight: 450;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition:
+      color var(--ov-dur-micro) var(--ease-smooth),
+      border-color var(--ov-dur-micro) var(--ease-smooth),
+      background var(--ov-dur-micro) var(--ease-smooth),
+      transform 160ms var(--ease-smooth);
+  }
+  .pill-cancel-btn:hover {
+    color: var(--ov-error);
+    border-color: color-mix(in oklch, var(--ov-error) 30%, transparent);
+    background: color-mix(in oklch, var(--ov-error) 6%, transparent);
+  }
+  .pill-cancel-btn:active { transform: scale(0.96); }
+  .pill-cancel-btn.mini-cancel {
+    padding: 3px 8px;
+    font-size: 10px;
   }
 
-  .full-proc-body {
+  .pill-retry-btn {
+    padding: 5px 14px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in oklch, var(--ov-error) 40%, transparent);
+    background: color-mix(in oklch, var(--ov-error) 12%, transparent);
+    color: var(--ov-error);
+    font-size: 12px;
+    font-weight: 550;
+    cursor: pointer;
+    transition: background var(--ov-dur-micro) var(--ease-smooth), transform 160ms var(--ease-smooth);
+  }
+  .pill-retry-btn:hover {
+    background: color-mix(in oklch, var(--ov-error) 20%, transparent);
+  }
+  .pill-retry-btn:active { transform: scale(0.96); }
+
+  .pill-dismiss-btn {
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in oklch, var(--ov-text) 10%, transparent);
+    background: transparent;
+    color: var(--ov-text-muted);
+    font-size: 12px;
+    font-weight: 450;
+    cursor: pointer;
+    transition:
+      color var(--ov-dur-micro) var(--ease-smooth),
+      background var(--ov-dur-micro) var(--ease-smooth),
+      transform 160ms var(--ease-smooth);
+  }
+  .pill-dismiss-btn:hover {
+    color: var(--ov-text);
+    background: color-mix(in oklch, var(--ov-text) 6%, transparent);
+  }
+  .pill-dismiss-btn:active { transform: scale(0.96); }
+
+  /* Processing center area */
+  .proc-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
     flex: 1;
-    min-height: 44px;
+    justify-content: center;
+    padding: 8px 0;
+    animation: content-enter var(--ov-dur-content) var(--ease-smooth) both;
+  }
+  .proc-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .full-footer {
@@ -1717,11 +2214,12 @@
     justify-content: center;
     gap: 6px;
     margin-top: auto;
-    padding-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--ov-border-subtle);
+    flex-shrink: 0;
   }
 
   /* ── Mini rows ── */
-  .mini-rec-row,
   .mini-proc-row {
     display: flex;
     flex-direction: row;
@@ -1733,12 +2231,108 @@
     box-sizing: border-box;
   }
 
-  .mode-tag {
-    font-size: 11px;
-    font-weight: 550;
-    color: var(--ov-text-secondary);
-    white-space: nowrap;
+  /* ── Mini recording — layered: waveform behind, controls on top ── */
+  .mini-rec {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    border-radius: inherit;
+    animation: content-enter var(--ov-dur-content) var(--ease-smooth) both;
+  }
+
+  /* Waveform fills the entire pill area as a background */
+  .mini-rec-wave-layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* Soft fade at edges so the waveform bleeds into the pill shape */
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 18%, black 82%, transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0%, black 18%, black 82%, transparent 100%);
+    opacity: 0.7;
+  }
+
+  /* Controls float above the waveform */
+  .mini-rec-controls {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    height: 100%;
+    padding: 0 6px 0 12px;
+    box-sizing: border-box;
+  }
+
+  .mini-rec-left {
+    display: flex;
+    align-items: center;
+    gap: 7px;
     flex-shrink: 0;
+  }
+
+  .mini-rec-dot {
+    --rec-accent: var(--ov-accent);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--rec-accent);
+    box-shadow: 0 0 5px color-mix(in oklch, var(--rec-accent) 50%, transparent);
+    animation: rec-pulse 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+
+  .mini-rec-mode {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ov-text);
+    white-space: nowrap;
+    text-shadow: 0 0 8px var(--ov-surface), 0 0 12px var(--ov-surface);
+  }
+
+  .mini-rec-right {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .mini-rec-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition:
+      background var(--ov-dur-micro) var(--ease-smooth),
+      color var(--ov-dur-micro) var(--ease-smooth),
+      transform 160ms var(--ease-smooth);
+    /* Subtle backdrop so buttons read clearly over the waveform */
+    background: color-mix(in oklch, var(--ov-surface) 60%, transparent);
+    color: var(--ov-text-muted);
+  }
+  .mini-rec-btn:hover {
+    background: color-mix(in oklch, var(--ov-surface) 85%, transparent);
+    color: var(--ov-text);
+    transform: scale(1.08);
+  }
+  .mini-rec-btn:active {
+    transform: scale(0.94);
+  }
+  .mini-rec-cancel:hover {
+    color: var(--ov-text-muted);
+  }
+  .mini-rec-stop:hover {
+    color: var(--ov-error);
+    background: color-mix(in oklch, var(--ov-error) 12%, color-mix(in oklch, var(--ov-surface) 70%, transparent));
   }
 
   /* ── Content wrapper ── */
@@ -1747,7 +2341,7 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    animation: fade-in 150ms var(--ease-out-quart) both;
+    animation: content-enter var(--ov-dur-content) var(--ease-smooth) both;
     width: auto;
     height: auto;
     max-width: 100%;
@@ -1795,20 +2389,70 @@
 
   /* ── Success ── */
   .success-state {
-    animation: fade-in 200ms var(--ease-out-quart) both;
+    animation: success-enter var(--ov-dur-feedback) var(--ease-smooth) both;
+    gap: 10px;
+  }
+  .success-icon-wrap {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: color-mix(in oklch, var(--ov-success) 15%, transparent);
+    color: var(--ov-success);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    animation: success-icon-pop 340ms var(--ease-smooth) 70ms both;
   }
   .success-label {
     color: var(--ov-success) !important;
     font-weight: 550;
+    font-size: 13px;
+  }
+
+  /* ── Cancelling ── */
+  .cancelling-state {
+    gap: 8px;
+  }
+  .cancelling-label {
+    color: var(--ov-text-muted);
+    font-size: 12px;
+    font-weight: 450;
+  }
+  .spinner-small {
+    width: 12px;
+    height: 12px;
+    border-width: 1.5px;
   }
 
   /* ── Error ── */
   .error-state {
-    flex-wrap: wrap;
+    flex-direction: column;
     align-items: center;
-    gap: 6px 10px;
+    gap: 10px;
     max-width: min(280px, 92vw);
-    padding: 4px 10px;
+    padding: 8px 14px;
+    text-align: center;
+    animation: error-enter var(--ov-dur-feedback) var(--ease-smooth) both;
+  }
+  .error-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-align: left;
+  }
+  .error-icon-wrap {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: color-mix(in oklch, var(--ov-error) 14%, transparent);
+    color: var(--ov-error);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
   .error-text {
     white-space: normal !important;
@@ -1817,14 +2461,13 @@
     flex: 1 1 auto;
     min-width: 0;
     font-size: 12px !important;
-  }
-  .error-icon {
-    flex-shrink: 0;
+    text-align: left;
   }
   .error-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    gap: 8px;
     flex-shrink: 0;
   }
 
@@ -1838,12 +2481,12 @@
   }
 
   .spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--ov-border);
+    width: 15px;
+    height: 15px;
+    border: 2px solid color-mix(in oklch, var(--ov-accent) 20%, transparent);
     border-top-color: var(--ov-accent);
     border-radius: 50%;
-    animation: spin 800ms linear infinite;
+    animation: spin 750ms linear infinite;
     flex-shrink: 0;
   }
 
@@ -1878,8 +2521,14 @@
     height: 100%;
     padding: 0;
     box-sizing: border-box;
-    -webkit-mask-image: radial-gradient(50% 50% at 50% 50%, black 60%, transparent 100%);
-    mask-image: radial-gradient(50% 50% at 50% 50%, black 60%, transparent 100%);
+  }
+
+  .full-wave {
+    flex: 1;
+    min-height: 50px;
+    max-height: 65px;
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0%, black 8%, black 92%, transparent 100%);
   }
 
   .wave-canvas {
@@ -1945,21 +2594,108 @@
     to { opacity: 1; }
   }
 
-  @keyframes gentle-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.45; }
+  @keyframes toast-enter {
+    from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+    to { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.35); opacity: 0.5; }
+  }
+
+  @keyframes success-pulse {
+    0% { transform: scale(1); }
+    35% { transform: scale(1.03); }
+    70% { transform: scale(0.995); }
+    100% { transform: scale(1); }
   }
 
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
+  /* Full panel content entrance — staggered fade-in */
+  @keyframes panel-enter {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Dormant swatch subtle beacon — draws attention without being distracting */
+  @keyframes dormant-beacon {
+    0%, 100% { opacity: 0.8; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.15); }
+  }
+
+  /* Recording pill border glow — subtle breathing */
+  @keyframes recording-glow {
+    0%, 100% { box-shadow: 0 0 5px color-mix(in oklch, var(--glow-color) 12%, transparent); }
+    50% { box-shadow: 0 0 8px color-mix(in oklch, var(--glow-color) 22%, transparent); }
+  }
+
+  /* Recording dot — alive, breathing pulse */
+  @keyframes rec-pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.25); opacity: 0.7; }
+  }
+
+  /* Content entrance — fade + slight upward drift */
+  @keyframes content-enter {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Success entrance — scale up from slightly small */
+  @keyframes success-enter {
+    from { opacity: 0; transform: scale(0.96); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* Success icon — small overshoot reads crisp without a bouncy settle */
+  @keyframes success-icon-pop {
+    0% { transform: scale(0); opacity: 0; }
+    70% { transform: scale(1.06); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* Dropdown entrance — scale up from origin */
+  @keyframes dropdown-enter {
+    from { opacity: 0; transform: scale(0.98) translateY(2px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  /* Error entrance — subtle horizontal shake */
+  @keyframes error-enter {
+    0% { opacity: 0; transform: translateX(-3px); }
+    22% { transform: translateX(2px); }
+    48% { transform: translateX(-1px); }
+    74% { transform: translateX(0.5px); }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+
   /* ── Reduced motion ── */
   @media (prefers-reduced-motion: reduce) {
-    .listening-dot { animation: none; opacity: 0.8; }
+    .listening-dot { animation: none; opacity: 0.8; transform: none; }
+    .pill.success { animation: none; }
+    .pill.recording { animation: none; }
+    .pill { transition-duration: 0ms; }
     .spinner { animation-duration: 2s; }
     .toast { animation: none; }
     .content { animation: none; }
     .success-state { animation: none; }
+    .error-state { animation: none; }
+    .full-panel { animation: none; }
+    .mode-dropdown { animation: none; }
+    .ctx-menu { animation: none; }
+    .dormant-expand-inner { transition: none; }
+    .dormant-bar { transition: none; }
+    .dormant-idle-mark { animation: none; }
+    .mini-rec-dot { animation: none; }
+    .mini-rec-btn { transition: none; }
+    .icon-btn { transition: none; }
+    .action-chip { transition: none; }
+    .success-icon-wrap { animation: none; }
+    .pill-stop-btn, .pill-cancel-btn, .pill-retry-btn, .pill-dismiss-btn { transition: none; }
+    .proc-center { animation: none; }
   }
 </style>

@@ -49,14 +49,19 @@ pub struct ContextPreviewsForOverlay {
     pub selection_preview: Option<String>,
 }
 
-/// Best-effort foreground app + clipboard for the full overlay panel.
-pub fn context_previews_for_overlay() -> ContextPreviewsForOverlay {
-    let app_label = crate::config::privacy::get_foreground_app().map(|(proc, title)| {
+/// Best-effort external foreground label + clipboard for the full overlay panel.
+/// Pass `external_fg` from `external_foreground::cached_name_title` after a cache refresh, not a live query.
+pub fn context_previews_for_overlay(external_fg: Option<&(String, String)>) -> ContextPreviewsForOverlay {
+    let app_label = external_fg.map(|(proc, title)| {
+        // Match overlay hint formatting: basename without .exe for readable labels.
+        let base = proc
+            .trim_end_matches(".exe")
+            .trim_end_matches(".EXE");
         let t = title.trim();
         if !t.is_empty() {
-            format!("{} — {}", proc, t)
+            format!("{} — {}", base, t)
         } else {
-            proc
+            base.to_string()
         }
     });
     let clipboard_preview = platform::clipboard_text_truncated_for_overlay(100);

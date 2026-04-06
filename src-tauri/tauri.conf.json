@@ -31,8 +31,8 @@
       {
         "label": "overlay",
         "title": "Kalam Overlay",
-        "width": 408,
-        "height": 248,
+        "width": 368,
+        "height": 208,
         "resizable": false,
         "transparent": true,
         "decorations": false,
