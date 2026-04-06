@@ -41,7 +41,8 @@
 
   /** Which panel sections are expanded (progressive disclosure). */
   let panelSections: Record<string, boolean> = {
-    models: false,
+    voice: false,
+    ai: false,
     context: false,
     rules: false,
   }
@@ -50,6 +51,100 @@
   let appPickerRuleIndex: number | null = null
   let runningAppsForPicker: AppListEntry[] = []
   let loadingRunningApps = false
+
+  /** Curated Iconify ids + search tokens (name, synonyms) for the picker. */
+  const ICON_CATALOG: { id: string; search: string }[] = [
+    { id: 'ph:chat-circle', search: 'chat message talk conversation bubble' },
+    { id: 'ph:envelope-simple', search: 'email mail letter inbox' },
+    { id: 'ph:article', search: 'article document text writing blog' },
+    { id: 'ph:code-block', search: 'code programming developer' },
+    { id: 'ph:magic-wand', search: 'magic ai sparkle transform' },
+    { id: 'ph:translate', search: 'translate language international' },
+    { id: 'ph:list-dashes', search: 'list bullet todo tasks' },
+    { id: 'ph:check-square', search: 'check task done checkbox' },
+    { id: 'ph:terminal', search: 'terminal console shell command' },
+    { id: 'ph:magnifying-glass', search: 'search find magnify' },
+    { id: 'ph:speaker-hifi', search: 'speaker audio voice sound' },
+    { id: 'ph:brain', search: 'brain think idea smart' },
+    { id: 'ph:note', search: 'note memo sticky' },
+    { id: 'ph:bug', search: 'bug debug issue' },
+    { id: 'ph:lightbulb', search: 'lightbulb idea tip' },
+    { id: 'ph:rocket', search: 'rocket launch fast ship' },
+    { id: 'ph:microphone', search: 'microphone record dictation voice' },
+    { id: 'ph:phone', search: 'phone call mobile' },
+    { id: 'ph:video-camera', search: 'video camera meeting zoom' },
+    { id: 'ph:calendar', search: 'calendar schedule date' },
+    { id: 'ph:clock', search: 'clock time reminder' },
+    { id: 'ph:folder', search: 'folder files project' },
+    { id: 'ph:book-open', search: 'book read documentation' },
+    { id: 'ph:graduation-cap', search: 'school learn teach education' },
+    { id: 'ph:briefcase', search: 'briefcase work business job' },
+    { id: 'ph:heart', search: 'heart favorite love' },
+    { id: 'ph:star', search: 'star favorite important' },
+    { id: 'ph:fire', search: 'fire hot urgent' },
+    { id: 'ph:shield-check', search: 'shield security privacy safe' },
+    { id: 'ph:lock', search: 'lock private secure' },
+    { id: 'ph:globe', search: 'globe web internet world' },
+    { id: 'ph:users', search: 'users team people group' },
+    { id: 'ph:user', search: 'user person profile' },
+    { id: 'ph:paper-plane-tilt', search: 'send paper plane message slack' },
+    { id: 'ph:chats-circle', search: 'chats multiple threads' },
+    { id: 'ph:pen-nib', search: 'pen write edit signature' },
+    { id: 'ph:pencil-simple', search: 'pencil draw sketch edit' },
+    { id: 'ph:quotes', search: 'quotes citation reference' },
+    { id: 'ph:hash', search: 'hash tag channel slack' },
+    { id: 'ph:brackets-curly', search: 'brackets json code data' },
+    { id: 'ph:tree-structure', search: 'tree structure outline hierarchy' },
+    { id: 'ph:clipboard-text', search: 'clipboard paste copy text' },
+    { id: 'ph:file-text', search: 'file document page' },
+    { id: 'ph:scissors', search: 'scissors cut trim edit' },
+    { id: 'ph:wrench', search: 'wrench tools settings fix' },
+    { id: 'ph:gear', search: 'gear settings configuration' },
+    { id: 'ph:coffee', search: 'coffee break casual' },
+    { id: 'ph:moon-stars', search: 'moon night dark mode' },
+    { id: 'ph:sun', search: 'sun day bright' },
+  ]
+
+  let iconPickerOpen = false
+  let iconSearchQuery = ''
+
+  /** Approximate hex for native color input when accent is not #rrggbb. */
+  function accentHexForPicker(accent: string | undefined | null): string {
+    const t = accent?.trim() ?? ''
+    if (/^#[0-9a-fA-F]{6}$/.test(t)) return t
+    if (/^#[0-9a-fA-F]{3}$/.test(t)) {
+      const r = t[1]
+      const g = t[2]
+      const b = t[3]
+      return `#${r}${r}${g}${g}${b}${b}`.toLowerCase()
+    }
+    return '#5a9ec4'
+  }
+
+  $: filteredIconCatalog = (() => {
+    const q = iconSearchQuery.trim().toLowerCase()
+    if (!q) return ICON_CATALOG
+    return ICON_CATALOG.filter(
+      (row) => row.id.toLowerCase().includes(q) || row.search.includes(q)
+    )
+  })()
+
+  function toggleIconPicker() {
+    iconPickerOpen = !iconPickerOpen
+    if (iconPickerOpen) iconSearchQuery = ''
+  }
+
+  function closeIconPicker() {
+    iconPickerOpen = false
+  }
+
+  function selectModeIcon(iconId: string) {
+    if (editorMode) {
+      editorMode.icon = iconId
+      void saveEditorFields()
+    }
+    closeIconPicker()
+  }
 
   const POLISH_FLAG_ROWS: { key: keyof PolishConfig; label: string }[] = [
     { key: 'fix_grammar', label: 'Grammar' },
@@ -149,6 +244,18 @@
   $: editorMode =
     config?.modes?.find((m) => m.id === editorModeId) ?? null
 
+  $: availableSttModels = (() => {
+    if (!editorMode?.voice_model.provider) return []
+    const p = modelCatalog.find(x => x.id === editorMode.voice_model.provider)
+    return p?.models?.filter(x => x.capability === 'STT') || []
+  })()
+
+  $: availableLlmModels = (() => {
+    if (!editorMode?.language_model.provider) return []
+    const p = modelCatalog.find(x => x.id === editorMode.language_model.provider)
+    return p?.models?.filter(x => x.capability === 'LLM') || []
+  })()
+
   function portal(node: HTMLElement) {
     const target = document.querySelector('.app-shell') || document.body
     target.appendChild(node)
@@ -167,12 +274,16 @@
     editorModeId = modeId
     autoRuleTestHint = {}
     appPickerRuleIndex = null
-    panelSections = { models: false, context: false, rules: false }
+    iconPickerOpen = false
+    iconSearchQuery = ''
+    panelSections = { voice: false, ai: false, context: false, rules: false }
     isPanelOpen = true
   }
 
   function closePanel() {
     isPanelOpen = false
+    iconPickerOpen = false
+    iconSearchQuery = ''
     setTimeout(() => {
       autoRuleTestHint = {}
       appPickerRuleIndex = null
@@ -344,6 +455,8 @@
     editorMode.auto_activate_rules = [...editorMode.auto_activate_rules, next]
     if (config) config = config
     void saveEditorFields()
+    const newIdx = editorMode.auto_activate_rules.length - 1
+    void openRunningAppPicker(newIdx)
   }
 
   function removeAutoActivateRule(index: number) {
@@ -676,20 +789,24 @@
             <span>Name</span>
             <input type="text" class="dp-in" bind:value={editorMode.name} on:blur={saveEditorFields} />
           </label>
-          <label class="dp-f dp-f-icon">
+          <div class="dp-f dp-f-icon">
             <span>Icon</span>
-            <input
-              type="text"
-              class="dp-in"
-              value={editorMode.icon ?? ''}
-              placeholder="ph:envelope"
-              on:input={(e) => {
-                const v = inputStringValue(e)
-                editorMode.icon = v.trim() ? v : null
-              }}
-              on:blur={saveEditorFields}
-            />
-          </label>
+            <div class="icon-picker-anchor">
+              <button
+                type="button"
+                class="icon-picker-trigger"
+                on:click={toggleIconPicker}
+                aria-expanded={iconPickerOpen}
+                aria-haspopup="dialog"
+              >
+                <span class="icon-picker-trigger-preview">
+                  <Icon icon={editorMode.icon || 'ph:circle-dashed'} />
+                </span>
+                <span class="icon-picker-trigger-label">Choose icon</span>
+                <span class="icon-picker-trigger-caret"><Icon icon="ph:caret-down" /></span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -697,7 +814,7 @@
       <div class="dp-sec">
         <span class="dp-sec-label">Accent color</span>
         <p class="dp-hint">Shown next to the mode in the list, status bar, and overlay. Any valid CSS color.</p>
-        <div class="accent-presets">
+        <div class="accent-presets" role="group" aria-label="Accent color">
           {#each MODE_ACCENT_PRESETS as p (p.value)}
             <button
               type="button"
@@ -711,17 +828,25 @@
               }}
             />
           {/each}
+          <label
+            class="accent-swatch accent-swatch-custom"
+            title="Pick any color"
+            aria-label="Pick any color"
+            style="background: {effectiveModeAccent(editorMode)}"
+          >
+            <input
+              type="color"
+              class="accent-color-native"
+              value={accentHexForPicker(editorMode.accent_color)}
+              on:input={(e) => {
+                if (editorMode) {
+                  editorMode.accent_color = e.currentTarget.value
+                  void saveEditorFields()
+                }
+              }}
+            />
+          </label>
         </div>
-        <label class="dp-f dp-f-accent-input">
-          <span>Custom</span>
-          <input
-            type="text"
-            class="dp-in"
-            bind:value={editorMode.accent_color}
-            placeholder="oklch(68% 0.1 240) or #5a9ec4"
-            on:blur={saveEditorFields}
-          />
-        </label>
       </div>
 
       <!-- AI Instructions -->
@@ -738,25 +863,28 @@
 
       <!-- Polish toggle -->
       <div class="dp-sec dp-sec-row">
-        <span>Polish</span>
+        <div class="dp-toggle-info">
+          <span class="dp-toggle-label">Polish</span>
+          <span class="dp-toggle-desc">Automatically removes 'ums', 'ahs', and fixes basic grammar before applying your instructions.</span>
+        </div>
         <input type="checkbox" class="toggle-switch" bind:checked={editorMode.polish} on:change={saveEditorFields} />
       </div>
 
-      <!-- Models (collapsible) -->
-      <button type="button" class="dp-disclosure" on:click={() => togglePanelSection('models')}>
-        <span>Models</span>
+      <!-- Voice Recognition (collapsible) -->
+      <button type="button" class="dp-disclosure" on:click={() => togglePanelSection('voice')}>
+        <span>Voice Recognition (Listening)</span>
         <span class="dp-disclosure-summary">
-          {editorMode.voice_model.provider || 'Default'} / {editorMode.language_model.provider || 'None'}
+          {editorMode.voice_model.provider || 'Default'}
         </span>
-        <span class="dp-disclosure-caret" class:open={panelSections.models}>
+        <span class="dp-disclosure-caret" class:open={panelSections.voice}>
           <Icon icon="ph:caret-down" />
         </span>
       </button>
-      {#if panelSections.models}
-        <div class="dp-sec dp-sec-nested" transition:slide={{ duration: 150 }}>
+      {#if panelSections.voice}
+        <div class="dp-disclosure-body" transition:slide={{ duration: 150 }}>
           <div class="dp-grid2">
             <label class="dp-f">
-              <span>Voice (STT)</span>
+              <span>Provider</span>
               <select class="dp-sel" bind:value={editorMode.voice_model.provider} on:change={saveEditorFields}>
                 {#each voiceProviderOptions as vp}
                   <option value={vp.id}>{vp.label}</option>
@@ -767,19 +895,43 @@
               </select>
             </label>
             <label class="dp-f">
-              <span>STT model</span>
-              <input
-                type="text"
-                class="dp-in"
-                bind:value={editorMode.voice_model.model_id}
-                placeholder={catalogDefaultSttModel(editorMode.voice_model.provider) || 'Default'}
-                on:blur={saveEditorFields}
-              />
+              <span>Model</span>
+              {#if availableSttModels.length > 0}
+                <select class="dp-sel" bind:value={editorMode.voice_model.model_id} on:change={saveEditorFields}>
+                  <option value="">Default ({catalogDefaultSttModel(editorMode.voice_model.provider)})</option>
+                  {#each availableSttModels as m}
+                    <option value={m.id}>{m.name || m.id}</option>
+                  {/each}
+                </select>
+              {:else}
+                <input
+                  type="text"
+                  class="dp-in"
+                  bind:value={editorMode.voice_model.model_id}
+                  placeholder={catalogDefaultSttModel(editorMode.voice_model.provider) || 'Default'}
+                  on:blur={saveEditorFields}
+                />
+              {/if}
             </label>
           </div>
+        </div>
+      {/if}
+
+      <!-- AI Assistant (collapsible) -->
+      <button type="button" class="dp-disclosure" on:click={() => togglePanelSection('ai')}>
+        <span>AI Assistant (Thinking)</span>
+        <span class="dp-disclosure-summary">
+          {editorMode.language_model.provider || 'None'}
+        </span>
+        <span class="dp-disclosure-caret" class:open={panelSections.ai}>
+          <Icon icon="ph:caret-down" />
+        </span>
+      </button>
+      {#if panelSections.ai}
+        <div class="dp-disclosure-body" transition:slide={{ duration: 150 }}>
           <div class="dp-grid2">
             <label class="dp-f">
-              <span>Language (LLM)</span>
+              <span>Provider</span>
               <select class="dp-sel" bind:value={editorMode.language_model.provider} on:change={saveEditorFields}>
                 {#each llmProviderOptions as lp}
                   <option value={lp.id}>{lp.label}</option>
@@ -790,14 +942,23 @@
               </select>
             </label>
             <label class="dp-f">
-              <span>LLM model</span>
-              <input
-                type="text"
-                class="dp-in"
-                bind:value={editorMode.language_model.model_id}
-                placeholder={catalogDefaultLlmModel(editorMode.language_model.provider) || 'Default'}
-                on:blur={saveEditorFields}
-              />
+              <span>Model</span>
+              {#if availableLlmModels.length > 0}
+                <select class="dp-sel" bind:value={editorMode.language_model.model_id} on:change={saveEditorFields}>
+                  <option value="">Default ({catalogDefaultLlmModel(editorMode.language_model.provider)})</option>
+                  {#each availableLlmModels as m}
+                    <option value={m.id}>{m.name || m.id}</option>
+                  {/each}
+                </select>
+              {:else}
+                <input
+                  type="text"
+                  class="dp-in"
+                  bind:value={editorMode.language_model.model_id}
+                  placeholder={catalogDefaultLlmModel(editorMode.language_model.provider) || 'Default'}
+                  on:blur={saveEditorFields}
+                />
+              {/if}
             </label>
           </div>
         </div>
@@ -814,27 +975,44 @@
         </span>
       </button>
       {#if panelSections.context}
-        <div class="dp-sec dp-sec-nested" transition:slide={{ duration: 150 }}>
-          <label class="dp-toggle-row">
-            <span>Enabled</span>
+        <div class="dp-disclosure-body" transition:slide={{ duration: 150 }}>
+          <label class="dp-toggle-row dp-nested-toggle">
+            <div class="dp-toggle-info">
+              <span class="dp-toggle-label">Enable context</span>
+              <span class="dp-toggle-desc">Allow the AI to read information from your computer to improve accuracy.</span>
+            </div>
             <input type="checkbox" class="toggle-switch" bind:checked={editorMode.context.enabled} on:change={saveEditorFields} />
           </label>
-          <label class="dp-toggle-row">
-            <span>Active app content</span>
-            <input type="checkbox" class="toggle-switch" bind:checked={editorMode.context.read_app} disabled={!editorMode.context.enabled} on:change={saveEditorFields} />
-          </label>
-          <label class="dp-toggle-row">
-            <span>Clipboard</span>
-            <input type="checkbox" class="toggle-switch" bind:checked={editorMode.context.read_clipboard} disabled={!editorMode.context.enabled} on:change={saveEditorFields} />
-          </label>
-          <label class="dp-toggle-row">
-            <span>Selected text</span>
-            <input type="checkbox" class="toggle-switch" bind:checked={editorMode.context.read_selection} disabled={!editorMode.context.enabled} on:change={saveEditorFields} />
-          </label>
-          <label class="dp-toggle-row">
-            <span>System info</span>
-            <input type="checkbox" class="toggle-switch" bind:checked={editorMode.context.include_system_info} disabled={!editorMode.context.enabled} on:change={saveEditorFields} />
-          </label>
+          <div class="dp-context-sources" class:disabled={!editorMode.context.enabled}>
+            <label class="dp-toggle-row dp-nested-toggle">
+              <div class="dp-toggle-info">
+                <span class="dp-toggle-label">Active app content</span>
+                <span class="dp-toggle-desc">Reads the window you are currently typing in (e.g., the email you are replying to).</span>
+              </div>
+              <input type="checkbox" class="toggle-switch" bind:checked={editorMode.context.read_app} disabled={!editorMode.context.enabled} on:change={saveEditorFields} />
+            </label>
+            <label class="dp-toggle-row dp-nested-toggle">
+              <div class="dp-toggle-info">
+                <span class="dp-toggle-label">Clipboard</span>
+                <span class="dp-toggle-desc">Reads the last thing you copied.</span>
+              </div>
+              <input type="checkbox" class="toggle-switch" bind:checked={editorMode.context.read_clipboard} disabled={!editorMode.context.enabled} on:change={saveEditorFields} />
+            </label>
+            <label class="dp-toggle-row dp-nested-toggle">
+              <div class="dp-toggle-info">
+                <span class="dp-toggle-label">Selected text</span>
+                <span class="dp-toggle-desc">Reads the text you currently have highlighted.</span>
+              </div>
+              <input type="checkbox" class="toggle-switch" bind:checked={editorMode.context.read_selection} disabled={!editorMode.context.enabled} on:change={saveEditorFields} />
+            </label>
+            <label class="dp-toggle-row dp-nested-toggle">
+              <div class="dp-toggle-info">
+                <span class="dp-toggle-label">System info</span>
+                <span class="dp-toggle-desc">Includes basic details like your operating system and the current time.</span>
+              </div>
+              <input type="checkbox" class="toggle-switch" bind:checked={editorMode.context.include_system_info} disabled={!editorMode.context.enabled} on:change={saveEditorFields} />
+            </label>
+          </div>
         </div>
       {/if}
 
@@ -851,10 +1029,19 @@
         </span>
       </button>
       {#if panelSections.rules}
-        <div class="dp-sec dp-sec-nested" transition:slide={{ duration: 150 }}>
+        <div class="dp-disclosure-body" transition:slide={{ duration: 150 }}>
           {#each editorMode.auto_activate_rules as rule, ruleIdx (ruleIdx)}
             <div class="dp-rule">
               <div class="dp-rule-top">
+                <div class="dp-rule-summary">
+                  <span class="rule-app-name">{rule.app_pattern.replace(/^\(\?i\)/, '') || 'New rule'}</span>
+                  <span class="rule-app-type">{rule.pattern_type}</span>
+                </div>
+                <button type="button" class="dp-close sm" on:click={() => removeAutoActivateRule(ruleIdx)} aria-label="Remove">
+                  <Icon icon="ph:x" />
+                </button>
+              </div>
+              <div class="dp-rule-advanced">
                 <select class="dp-sel sm" bind:value={rule.pattern_type} on:change={saveEditorFields}>
                   <option value="ProcessName">Process</option>
                   <option value="WindowTitle">Window</option>
@@ -867,13 +1054,10 @@
                   placeholder="(?i)outlook|notepad"
                   on:blur={saveEditorFields}
                 />
-                <button type="button" class="dp-close sm" on:click={() => removeAutoActivateRule(ruleIdx)} aria-label="Remove">
-                  <Icon icon="ph:x" />
-                </button>
               </div>
               <div class="dp-rule-btns">
+                <button type="button" class="btn-link sm" on:click={() => void openRunningAppPicker(ruleIdx)}>Pick running app</button>
                 <button type="button" class="btn-link sm" on:click={() => void testAutoRuleAt(ruleIdx)}>Test</button>
-                <button type="button" class="btn-link sm" on:click={() => void openRunningAppPicker(ruleIdx)}>Pick app</button>
               </div>
               {#if autoRuleTestHint[ruleIdx]}
                 <p class="dp-rule-result">{autoRuleTestHint[ruleIdx]}</p>
@@ -897,9 +1081,11 @@
               {/if}
             </div>
           {/each}
-          <button type="button" class="btn-link" on:click={addAutoActivateRule} disabled={!isTauriRuntime()}>
-            <Icon icon="ph:plus" /> Add rule
-          </button>
+          <div class="dp-rules-actions">
+            <button type="button" class="btn-link" on:click={addAutoActivateRule} disabled={!isTauriRuntime()}>
+              <Icon icon="ph:plus" /> Add rule
+            </button>
+          </div>
         </div>
       {/if}
     </div>
@@ -923,7 +1109,63 @@
       </div>
     </div>
   </aside>
+
+  {#if iconPickerOpen}
+    <div class="icon-picker-root" transition:fade={{ duration: 120 }} use:portal>
+      <button
+        type="button"
+        class="icon-picker-scrim"
+        aria-label="Close icon picker"
+        on:click={closeIconPicker}
+      />
+      <div
+        class="icon-picker-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Choose an icon"
+      >
+        <div class="icon-picker-head">
+          <h4 class="icon-picker-title">Choose icon</h4>
+          <button type="button" class="icon-picker-close" on:click={closeIconPicker} aria-label="Close">
+            <Icon icon="ph:x" />
+          </button>
+        </div>
+        <input
+          type="search"
+          class="icon-picker-search"
+          placeholder="Search by name…"
+          bind:value={iconSearchQuery}
+        />
+        <div class="icon-picker-grid">
+          {#each filteredIconCatalog as row (row.id)}
+            <button
+              type="button"
+              class="icon-picker-cell"
+              class:selected={editorMode.icon === row.id}
+              title={row.id}
+              aria-label={row.search}
+              on:click={() => selectModeIcon(row.id)}
+            >
+              <Icon icon={row.id} />
+            </button>
+          {/each}
+          {#if filteredIconCatalog.length === 0}
+            <p class="icon-picker-empty">No icons match “{iconSearchQuery}”.</p>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
 {/if}
+
+<svelte:window
+  on:keydown={(e) => {
+    if (iconPickerOpen && e.key === 'Escape') {
+      e.preventDefault()
+      closeIconPicker()
+    }
+  }}
+/>
 
 <style>
   .sr-only {
@@ -1472,8 +1714,9 @@
     color: var(--text, #1d1d1f);
   }
 
-  :global(.dp-sec-nested) {
-    padding-top: 0;
+  /** Space between accordion header row and fields inside — avoids labels hugging the divider. */
+  :global(.dp-disclosure-body) {
+    padding: 14px 20px 18px;
     border-bottom: 1px solid var(--border-light, rgba(0, 0, 0, 0.04));
   }
 
@@ -1497,8 +1740,9 @@
   :global(.accent-presets) {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 0;
   }
 
   :global(.accent-swatch) {
@@ -1522,8 +1766,29 @@
     outline-offset: 2px;
   }
 
-  :global(.dp-f-accent-input) {
-    margin-top: 0;
+  /* Last swatch opens native color picker; dashed ring reads as “custom” vs preset solids. */
+  :global(.accent-swatch-custom) {
+    position: relative;
+    overflow: hidden;
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--bg-elevated, #fff) 65%, transparent);
+    border: 2px dashed color-mix(in srgb, var(--border) 70%, transparent);
+  }
+
+  :global(.accent-swatch-custom:hover) {
+    transform: scale(1.08);
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--bg-elevated, #fff) 65%, transparent),
+      0 2px 8px rgba(0, 0, 0, 0.12);
+  }
+
+  :global(.accent-color-native) {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: none;
+    opacity: 0;
+    cursor: pointer;
   }
 
   /* Disclosure buttons */
@@ -1539,7 +1804,7 @@
     cursor: pointer;
     font: inherit;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--text, #1d1d1f);
     text-align: left;
     transition: background 0.12s ease;
@@ -1573,9 +1838,9 @@
 
   /* Fields */
   :global(.dp-inline-fields) {
-    display: grid;
-    grid-template-columns: 1fr 120px;
-    gap: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
   }
 
   :global(.dp-f) {
@@ -1640,9 +1905,269 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 4px 0;
+    padding: 8px 0;
     font-size: 13px;
     color: var(--text, #1d1d1f);
+  }
+
+  :global(.dp-toggle-row.dp-nested-toggle) {
+    padding: 6px 0;
+  }
+
+  :global(.dp-toggle-info) {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    padding-right: 16px;
+  }
+
+  :global(.dp-toggle-label) {
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  :global(.dp-toggle-desc) {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.3;
+  }
+
+  /* Lighter than accordion titles — avoids competing with “Voice recognition”, “Context”, etc. */
+  :global(.dp-nested-toggle .dp-toggle-label) {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-secondary, var(--text-muted));
+  }
+
+  :global(.dp-nested-toggle .dp-toggle-desc) {
+    font-size: 10px;
+    line-height: 1.35;
+  }
+
+  :global(.dp-context-sources) {
+    margin-top: 10px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--border-light);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  :global(.dp-context-sources.disabled) {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  :global(.dp-rules-actions) {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border-light);
+  }
+
+  :global(.icon-picker-anchor) {
+    position: relative;
+  }
+
+  :global(.icon-picker-trigger) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm, 8px);
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+    background: var(--bg, #fff);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.12s ease, background 0.12s ease;
+  }
+
+  :global(.icon-picker-trigger:hover) {
+    background: var(--bg-hover);
+    border-color: var(--border-light);
+    color: var(--text);
+  }
+
+  :global(.icon-picker-trigger:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  :global(.icon-picker-trigger-preview) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--primary-alpha, rgba(0, 0, 0, 0.06));
+    color: var(--text);
+    flex-shrink: 0;
+  }
+
+  :global(.icon-picker-trigger-preview) :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
+
+  :global(.icon-picker-trigger-label) {
+    flex: 1;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  :global(.icon-picker-trigger-caret) {
+    display: flex;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  :global(.icon-picker-trigger-caret) :global(svg) {
+    width: 14px;
+    height: 14px;
+  }
+
+  .icon-picker-root {
+    position: fixed;
+    inset: 0;
+    z-index: 10050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    pointer-events: none;
+  }
+
+  .icon-picker-scrim {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .icon-picker-sheet {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 340px;
+    max-height: min(72vh, 520px);
+    display: flex;
+    flex-direction: column;
+    border-radius: 14px;
+    border: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+    background: var(--bg-elevated, #fff);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+    pointer-events: auto;
+    overflow: hidden;
+  }
+
+  .icon-picker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border-light, rgba(0, 0, 0, 0.06));
+    flex-shrink: 0;
+  }
+
+  .icon-picker-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text);
+  }
+
+  .icon-picker-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .icon-picker-close:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .icon-picker-search {
+    margin: 12px 16px 8px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .icon-picker-search:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .icon-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    padding: 8px 16px 16px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 120px;
+  }
+
+  .icon-picker-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1;
+    border-radius: 10px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+
+  .icon-picker-cell:hover {
+    border-color: var(--border);
+    color: var(--text);
+  }
+
+  .icon-picker-cell.selected {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+  }
+
+  .icon-picker-cell :global(svg) {
+    width: 22px;
+    height: 22px;
+  }
+
+  .icon-picker-empty {
+    grid-column: 1 / -1;
+    margin: 0;
+    padding: 20px 8px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
   }
 
   /* Auto-activate rules */
@@ -1659,11 +2184,41 @@
   :global(.dp-rule-top) {
     display: flex;
     gap: 6px;
-    align-items: center;
+    align-items: flex-start;
+    justify-content: space-between;
   }
 
-  :global(.dp-rule-top .dp-sel) { flex: 0 0 auto; min-width: 90px; }
-  :global(.dp-rule-top .dp-in) { flex: 1; min-width: 0; }
+  :global(.dp-rule-summary) {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  :global(.rule-app-name) {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+    word-break: break-all;
+  }
+
+  :global(.rule-app-type) {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  :global(.dp-rule-advanced) {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border-light);
+  }
+
+  :global(.dp-rule-advanced .dp-sel) { flex: 0 0 auto; min-width: 80px; }
+  :global(.dp-rule-advanced .dp-in) { flex: 1; min-width: 0; }
 
   :global(.dp-rule-btns) {
     display: flex;

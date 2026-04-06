@@ -325,6 +325,28 @@
   let catalogKeyDraft: Record<string, string> = {}
   let catalogKeyTestStatus: Record<string, 'idle' | 'testing' | 'ok' | 'err'> = {}
   let catalogKeyTestError: Record<string, string> = {}
+  let selectedProviderToAdd = ''
+  let editingProviderKey: string | null = null
+
+  /** Non-local catalog rows for provider key UI (avoids repeated filters in markup). */
+  $: remoteCatalogProviders = modelCatalog.filter((p) => p.id !== 'local')
+  $: connectedCatalogProviders = remoteCatalogProviders.filter((p) => !!(config?.provider_keys?.[p.id]?.trim()))
+  $: addableCatalogProviders = remoteCatalogProviders.filter((p) => !config?.provider_keys?.[p.id]?.trim())
+
+  /** Changing the “Add a provider” pick closes the key form until Continue is pressed again. */
+  function onAddProviderSelectChange() {
+    editingProviderKey = null
+  }
+
+  /** Short capability line for AI provider rows (STT vs LLM). */
+  function providerCapabilityLabel(prov: CatalogProvider): string {
+    const stt = prov.capabilities.includes('STT')
+    const llm = prov.capabilities.includes('LLM')
+    if (stt && llm) return 'Transcription + LLM'
+    if (llm) return 'LLM only'
+    if (stt) return 'Transcription only'
+    return ''
+  }
 
   /** `get_platform`: windows | macos | linux — for hotkey Meta label (Win / Cmd / Super). */
   let appPlatform = ''
@@ -2376,6 +2398,268 @@
 
       {:else if activeTab === 'connections'}
         <div class="settings-tab-content">
+          <section class="settings-section" class:collapsed={collapsedSections.model_library}>
+            <button type="button" class="section-header" on:click={() => toggleSection('model_library')}>
+              <h3>Providers & API Keys</h3>
+              <Icon icon={collapsedSections.model_library ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.model_library}
+              <div class="section-content">
+                {#if connectedCatalogProviders.length === 0}
+                  <p class="hint">No providers connected yet. Use the dropdown below to add one.</p>
+                {:else}
+                  {#each connectedCatalogProviders as prov}
+                    {@const draft = catalogKeyDraft[prov.id] ?? ''}
+                    {@const isEditing = editingProviderKey === prov.id}
+                    <div class="setting-row prov-row" class:prov-row--editing={isEditing}>
+                      <div class="setting-label">
+                        <span class="setting-name prov-name">
+                          <Icon icon={prov.icon} class="prov-icon" />
+                          {prov.name}
+                        </span>
+                        <span class="setting-desc">{providerCapabilityLabel(prov)}</span>
+                        {#if !isEditing}
+                          <span class="setting-desc prov-masked-key"><code>{maskProviderKey(config.provider_keys?.[prov.id] ?? '')}</code></span>
+                        {/if}
+                      </div>
+                      <div class="setting-control prov-controls">
+                        {#if !isEditing}
+                          <button type="button" class="settings-secondary-btn" on:click={() => (editingProviderKey = prov.id)}>Replace key</button>
+                          <button type="button" class="settings-secondary-btn danger" on:click={() => removeCatalogProviderKey(prov.id)}>Remove</button>
+                        {:else}
+                          <button type="button" class="settings-secondary-btn" on:click={() => (editingProviderKey = null)}>Cancel</button>
+                        {/if}
+                      </div>
+                    </div>
+                    {#if isEditing}
+                      <div class="prov-key-editor">
+                        <div class="api-key-row">
+                          <input
+                            type="password"
+                            class="api-key-input"
+                            placeholder="Paste new API key"
+                            value={draft}
+                            on:input={(e) => onCatalogKeyInput(e, prov.id)}
+                            aria-label={`New API key for ${prov.name}`}
+                          />
+                          <button
+                            type="button"
+                            class="settings-secondary-btn"
+                            disabled={!draft.trim()}
+                            on:click={() => testCatalogProviderKey(prov.id)}
+                          >
+                            {catalogKeyTestStatus[prov.id] === 'testing' ? 'Testing…' : 'Test'}
+                          </button>
+                          <button
+                            type="button"
+                            class="settings-secondary-btn"
+                            disabled={!draft.trim()}
+                            on:click={() => {
+                              persistCatalogProviderKey(prov.id)
+                              editingProviderKey = null
+                            }}
+                          >
+                            Save
+                          </button>
+                        </div>
+                        {#if catalogKeyTestStatus[prov.id] === 'ok'}
+                          <p class="hint success">Key looks valid.</p>
+                        {:else if catalogKeyTestStatus[prov.id] === 'err'}
+                          <p class="hint error">{catalogKeyTestError[prov.id] ?? 'Check failed'}</p>
+                        {/if}
+                        {#if prov.get_api_key_url}
+                          <p class="api-key-hint">
+                            <a href={prov.get_api_key_url} target="_blank" rel="noopener noreferrer">Get API key ↗</a>
+                          </p>
+                        {/if}
+                      </div>
+                    {/if}
+                  {/each}
+                {/if}
+
+                <div class="setting-row prov-add-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Add provider</span>
+                    <span class="setting-desc">Connect a new AI service</span>
+                  </div>
+                  <div class="setting-control prov-add-control">
+                    <select
+                      class="form-select"
+                      bind:value={selectedProviderToAdd}
+                      on:change={onAddProviderSelectChange}
+                    >
+                      <option value="" disabled>Select…</option>
+                      {#each addableCatalogProviders as prov}
+                        <option value={prov.id}>{prov.name}</option>
+                      {/each}
+                    </select>
+                    <button
+                      type="button"
+                      class="settings-secondary-btn"
+                      disabled={!selectedProviderToAdd}
+                      on:click={() => {
+                        editingProviderKey = selectedProviderToAdd
+                      }}
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                {#if selectedProviderToAdd && editingProviderKey === selectedProviderToAdd && !(config.provider_keys?.[selectedProviderToAdd]?.trim())}
+                  {@const prov = modelCatalog.find((p) => p.id === selectedProviderToAdd)}
+                  {#if prov}
+                    {@const draft = catalogKeyDraft[prov.id] ?? ''}
+                    <div class="prov-key-editor prov-key-editor--new">
+                      <p class="prov-new-head">
+                        <Icon icon={prov.icon} class="prov-icon" />
+                        <strong>{prov.name}</strong>
+                        <span class="setting-desc">{providerCapabilityLabel(prov)}</span>
+                      </p>
+                      <div class="api-key-row">
+                        <input
+                          type="password"
+                          class="api-key-input"
+                          placeholder="Paste API key"
+                          value={draft}
+                          on:input={(e) => onCatalogKeyInput(e, prov.id)}
+                          aria-label={`API key for ${prov.name}`}
+                        />
+                        <button
+                          type="button"
+                          class="settings-secondary-btn"
+                          disabled={!draft.trim()}
+                          on:click={() => testCatalogProviderKey(prov.id)}
+                        >
+                          {catalogKeyTestStatus[prov.id] === 'testing' ? 'Testing…' : 'Test'}
+                        </button>
+                        <button
+                          type="button"
+                          class="settings-secondary-btn"
+                          disabled={!draft.trim()}
+                          on:click={() => {
+                            persistCatalogProviderKey(prov.id)
+                            editingProviderKey = null
+                            selectedProviderToAdd = ''
+                          }}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          class="settings-secondary-btn"
+                          on:click={() => {
+                            editingProviderKey = null
+                            selectedProviderToAdd = ''
+                          }}>Cancel</button>
+                      </div>
+                      {#if catalogKeyTestStatus[prov.id] === 'ok'}
+                        <p class="hint success">Key looks valid.</p>
+                      {:else if catalogKeyTestStatus[prov.id] === 'err'}
+                        <p class="hint error">{catalogKeyTestError[prov.id] ?? 'Check failed'}</p>
+                      {/if}
+                      {#if prov.get_api_key_url}
+                        <p class="api-key-hint">
+                          <a href={prov.get_api_key_url} target="_blank" rel="noopener noreferrer">Get API key ↗</a>
+                        </p>
+                      {/if}
+                    </div>
+                  {/if}
+                {/if}
+              </div>
+            {/if}
+          </section>
+
+          <section class="settings-section" class:collapsed={collapsedSections.default_llm}>
+            <button type="button" class="section-header" on:click={() => toggleSection('default_llm')}>
+              <h3>Default AI model</h3>
+              <Icon icon={collapsedSections.default_llm ? 'ph:caret-down' : 'ph:caret-up'} />
+            </button>
+            {#if !collapsedSections.default_llm}
+              <div class="section-content">
+                <p class="hint">
+                  Fallback model for command mode, polish, and modes that don’t set their own LLM. Turn on command mode under <strong>General → Keyboard shortcuts</strong>. Per-mode overrides on the <strong>Dictation</strong> page take priority.
+                </p>
+                <div class="setting-row">
+                  <div class="setting-label">
+                    <span class="setting-name">Provider</span>
+                    <span class="setting-desc">Used for commands, polish, and AI formatting</span>
+                  </div>
+                  <div class="setting-control">
+                    <select
+                      class="form-select"
+                      value={config.default_llm_provider ?? ''}
+                      on:change={(e) => {
+                        const c = config
+                        if (!c) return
+                        const v = e.currentTarget.value
+                        c.default_llm_provider = v || null
+                        if (v === 'custom_openai' && !c.custom_openai_endpoint) {
+                          c.custom_openai_endpoint = { base_url: '', api_key: '', model_id: '' }
+                        }
+                        scheduleSave()
+                      }}
+                    >
+                      <option value="">None (basic parsing for commands)</option>
+                      {#each modelCatalog.filter(p => p.id !== 'local' && p.capabilities.includes('LLM')) as prov}
+                        <option value={prov.id}>{prov.name}{config.provider_keys?.[prov.id]?.trim() ? '' : ' — add key'}</option>
+                      {/each}
+                      <option value="custom_openai">Custom (OpenAI-compatible URL)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {#if config.default_llm_provider === 'custom_openai' && config.custom_openai_endpoint}
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span class="setting-name">Base URL</span>
+                      <span class="setting-desc">OpenAI-compatible root, e.g. https://api.example.com/v1</span>
+                    </div>
+                    <div class="setting-control full-width">
+                      <input type="url" class="form-select" value={config.custom_openai_endpoint.base_url} on:input={onCustomOpenAiBaseUrlInput} />
+                    </div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><span class="setting-name">API key</span></div>
+                    <div class="setting-control full-width">
+                      <input type="password" value={config.custom_openai_endpoint.api_key} on:input={onCustomOpenAiKeyInput} placeholder="API key for this endpoint" />
+                    </div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><span class="setting-name">Model id</span></div>
+                    <div class="setting-control full-width">
+                      <input type="text" class="form-select" value={config.custom_openai_endpoint.model_id} on:input={onCustomOpenAiModelInput} placeholder="e.g. gpt-4o-mini" />
+                    </div>
+                  </div>
+                {:else if config != null && config.default_llm_provider}
+                  {@const llmProviderId = config.default_llm_provider}
+                  {@const llmProv = modelCatalog.find((p) => p.id === llmProviderId)}
+                  {@const defaultModel = llmProv?.models?.find((m) => m.capability === 'LLM' && m.is_default)}
+                  <div class="setting-row">
+                    <div class="setting-label">
+                      <span class="setting-name">Model</span>
+                      <span class="setting-desc">{defaultModel ? `Default: ${defaultModel.name}` : 'Enter a model id'}</span>
+                    </div>
+                    <div class="setting-control full-width">
+                      <input
+                        type="text"
+                        class="form-select"
+                        value={config.default_llm_model ?? ''}
+                        placeholder={defaultModel?.id ?? 'Model id'}
+                        on:input={(e) => {
+                          const c = config
+                          if (!c) return
+                          c.default_llm_model = e.currentTarget.value || null
+                          scheduleSave()
+                        }}
+                      />
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </section>
+
           <section class="settings-section" class:collapsed={collapsedSections.ai_stt}>
             <button type="button" class="section-header" on:click={() => toggleSection('ai_stt')}>
               <h3>Speech-to-text</h3>
@@ -2437,7 +2721,7 @@
 
                     <p class="hint stt-cloud-key-hint">
                       Add your <strong>{config.stt_config.provider === 'openai' ? 'OpenAI' : 'Groq'}</strong> key under
-                      <strong>API keys</strong> below. One key covers cloud transcription (when this provider is selected) and LLM features if you use the same provider as your default AI model.
+                      <strong>Providers & API Keys</strong> above. One key covers cloud transcription (when this provider is selected) and LLM features if you use the same provider as your default AI model.
                     </p>
                   </div>
                 {/if}
@@ -2554,184 +2838,6 @@
               </div>
               </div>
             {/if}
-              </div>
-            {/if}
-          </section>
-
-          <section class="settings-section" class:collapsed={collapsedSections.model_library}>
-            <button type="button" class="section-header" on:click={() => toggleSection('model_library')}>
-              <h3>API keys</h3>
-              <Icon icon={collapsedSections.model_library ? 'ph:caret-down' : 'ph:caret-up'} />
-            </button>
-            {#if !collapsedSections.model_library}
-              <div class="section-content">
-                <p class="hint">
-                  Curated providers: paste an API key once per provider. Groq and OpenAI keys apply to <strong>both</strong> voice and LLM when you choose that provider for each.
-                </p>
-                <div class="provider-library-grid">
-                  {#each modelCatalog.filter((p) => p.id !== 'local') as prov}
-                    {@const connected = !!(config.provider_keys?.[prov.id]?.trim())}
-                    {@const draft = catalogKeyDraft[prov.id] ?? ''}
-                    <div class="provider-library-card">
-                      <div class="provider-library-card-head">
-                        <Icon icon={prov.icon} class="provider-library-icon" />
-                        <div>
-                          <strong>{prov.name}</strong>
-                          <div class="provider-cap-badges">
-                            {#each prov.capabilities as cap}
-                              <span class="cap-badge">{cap}</span>
-                            {/each}
-                          </div>
-                        </div>
-                        <span class="badge" class:configured={connected} class:muted={!connected}>
-                          {connected ? 'Connected' : 'Not connected'}
-                        </span>
-                      </div>
-                      {#if prov.models?.length}
-                        <p class="provider-models-hint">
-                          {#each prov.models as m}
-                            <span class="model-pill" class:default={m.is_default}>{m.name}</span>
-                          {/each}
-                        </p>
-                      {/if}
-                      {#if connected && !draft}
-                        <p class="hint key-masked">Key: <code>{maskProviderKey(config.provider_keys?.[prov.id] ?? '')}</code></p>
-                      {/if}
-                      <div class="api-key-row">
-                        <input
-                          type="password"
-                          class="api-key-input"
-                          placeholder={connected ? 'New key to replace…' : 'Paste API key…'}
-                          value={draft}
-                          on:input={(e) => onCatalogKeyInput(e, prov.id)}
-                          aria-label={`API key for ${prov.name}`}
-                        />
-                        <button
-                          type="button"
-                          class="settings-secondary-btn"
-                          disabled={!draft.trim() && !connected}
-                          on:click={() => testCatalogProviderKey(prov.id)}
-                        >
-                          {catalogKeyTestStatus[prov.id] === 'testing' ? '…' : 'Test'}
-                        </button>
-                        <button
-                          type="button"
-                          class="settings-secondary-btn"
-                          disabled={!draft.trim()}
-                          on:click={() => persistCatalogProviderKey(prov.id)}
-                        >
-                          Save key
-                        </button>
-                        {#if connected}
-                          <button type="button" class="settings-secondary-btn danger" on:click={() => removeCatalogProviderKey(prov.id)}>Remove</button>
-                        {/if}
-                      </div>
-                      {#if catalogKeyTestStatus[prov.id] === 'ok'}
-                        <p class="hint success">Key looks valid.</p>
-                      {:else if catalogKeyTestStatus[prov.id] === 'err'}
-                        <p class="hint error">{catalogKeyTestError[prov.id] ?? 'Check failed'}</p>
-                      {/if}
-                      {#if prov.get_api_key_url}
-                        <p class="api-key-hint">
-                          <a href={prov.get_api_key_url} target="_blank" rel="noopener noreferrer">Get API key ↗</a>
-                        </p>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-                <div class="setting-row" style="margin-top: 1rem;">
-                  <button type="button" class="settings-secondary-btn" on:click={rerunOnboardingWizard}>Re-run setup wizard</button>
-                </div>
-              </div>
-            {/if}
-          </section>
-
-          <section class="settings-section" class:collapsed={collapsedSections.default_llm}>
-            <button type="button" class="section-header" on:click={() => toggleSection('default_llm')}>
-              <h3>Default AI model</h3>
-              <Icon icon={collapsedSections.default_llm ? 'ph:caret-down' : 'ph:caret-up'} />
-            </button>
-            {#if !collapsedSections.default_llm}
-              <div class="section-content">
-                <p class="hint">
-                  Fallback model for command mode, polish, and modes that don’t set their own LLM. Turn on command mode under <strong>General → Keyboard shortcuts</strong>. Per-mode overrides on the <strong>Dictation</strong> page take priority.
-                </p>
-                <div class="setting-row">
-                  <div class="setting-label">
-                    <span class="setting-name">Provider</span>
-                    <span class="setting-desc">Used for commands, polish, and AI formatting</span>
-                  </div>
-                  <div class="setting-control">
-                    <select
-                      class="form-select"
-                      value={config.default_llm_provider ?? ''}
-                      on:change={(e) => {
-                        const c = config
-                        if (!c) return
-                        const v = e.currentTarget.value
-                        c.default_llm_provider = v || null
-                        if (v === 'custom_openai' && !c.custom_openai_endpoint) {
-                          c.custom_openai_endpoint = { base_url: '', api_key: '', model_id: '' }
-                        }
-                        scheduleSave()
-                      }}
-                    >
-                      <option value="">None (basic parsing for commands)</option>
-                      {#each modelCatalog.filter(p => p.id !== 'local' && p.capabilities.includes('LLM')) as prov}
-                        <option value={prov.id}>{prov.name}{config.provider_keys?.[prov.id]?.trim() ? '' : ' — add key'}</option>
-                      {/each}
-                      <option value="custom_openai">Custom (OpenAI-compatible URL)</option>
-                    </select>
-                  </div>
-                </div>
-
-                {#if config.default_llm_provider === 'custom_openai' && config.custom_openai_endpoint}
-                  <div class="setting-row">
-                    <div class="setting-label">
-                      <span class="setting-name">Base URL</span>
-                      <span class="setting-desc">OpenAI-compatible root, e.g. https://api.example.com/v1</span>
-                    </div>
-                    <div class="setting-control full-width">
-                      <input type="url" class="form-select" value={config.custom_openai_endpoint.base_url} on:input={onCustomOpenAiBaseUrlInput} />
-                    </div>
-                  </div>
-                  <div class="setting-row">
-                    <div class="setting-label"><span class="setting-name">API key</span></div>
-                    <div class="setting-control full-width">
-                      <input type="password" value={config.custom_openai_endpoint.api_key} on:input={onCustomOpenAiKeyInput} placeholder="API key for this endpoint" />
-                    </div>
-                  </div>
-                  <div class="setting-row">
-                    <div class="setting-label"><span class="setting-name">Model id</span></div>
-                    <div class="setting-control full-width">
-                      <input type="text" class="form-select" value={config.custom_openai_endpoint.model_id} on:input={onCustomOpenAiModelInput} placeholder="e.g. gpt-4o-mini" />
-                    </div>
-                  </div>
-                {:else if config != null && config.default_llm_provider}
-                  {@const llmProviderId = config.default_llm_provider}
-                  {@const llmProv = modelCatalog.find((p) => p.id === llmProviderId)}
-                  {@const defaultModel = llmProv?.models?.find((m) => m.capability === 'LLM' && m.is_default)}
-                  <div class="setting-row">
-                    <div class="setting-label">
-                      <span class="setting-name">Model</span>
-                      <span class="setting-desc">{defaultModel ? `Default: ${defaultModel.name}` : 'Enter a model id'}</span>
-                    </div>
-                    <div class="setting-control full-width">
-                      <input
-                        type="text"
-                        class="form-select"
-                        value={config.default_llm_model ?? ''}
-                        placeholder={defaultModel?.id ?? 'Model id'}
-                        on:input={(e) => {
-                          const c = config
-                          if (!c) return
-                          c.default_llm_model = e.currentTarget.value || null
-                          scheduleSave()
-                        }}
-                      />
-                    </div>
-                  </div>
-                {/if}
               </div>
             {/if}
           </section>
@@ -5524,55 +5630,67 @@
     }
   }
 
-  .provider-library-grid {
-    display: grid;
-    gap: var(--space-md);
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* Providers section — extends .setting-row pattern */
+  .prov-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
 
-  .provider-library-card {
-    padding: var(--space-md);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: var(--bg);
-  }
-
-  .provider-library-card-head {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-sm);
-    margin-bottom: var(--space-sm);
-  }
-
-  .provider-library-card-head :global(.provider-library-icon) {
-    font-size: 1.5rem;
+  .prov-name :global(.prov-icon) {
+    font-size: 18px;
     color: var(--accent);
     flex-shrink: 0;
   }
 
-  .provider-cap-badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 4px;
-  }
-
-  .cap-badge {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 2px 6px;
-    border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--text-secondary);
-  }
-
-  .provider-models-hint {
+  .prov-masked-key code {
     font-size: 12px;
-    color: var(--text-secondary);
-    margin: 0 0 var(--space-sm);
-    display: flex;
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+  }
+
+  .prov-controls {
     flex-wrap: wrap;
-    gap: 4px;
+  }
+
+  .prov-key-editor {
+    padding: 0 0 var(--space-md);
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .prov-key-editor--new {
+    padding-top: var(--space-sm);
+  }
+
+  .prov-new-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 var(--space-sm);
+    font-size: 14px;
+    color: var(--text);
+  }
+
+  .prov-new-head :global(.prov-icon) {
+    font-size: 18px;
+    color: var(--accent);
+  }
+
+  .prov-new-head .setting-desc {
+    margin-left: 4px;
+  }
+
+  .prov-add-row {
+    border-bottom: none;
+  }
+
+  .prov-add-control {
+    flex-wrap: wrap;
+  }
+
+  .prov-add-control .form-select {
+    min-width: 160px;
   }
 
   .model-pill {
@@ -5583,10 +5701,6 @@
 
   .model-pill.default {
     border-color: var(--accent);
-  }
-
-  .key-masked code {
-    font-size: 12px;
   }
 
   .hint.success {
