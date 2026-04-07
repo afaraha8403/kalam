@@ -309,7 +309,7 @@
     overlayLayoutTier = 'Dormant'
   }
 
-  async function onBlipMouseEnter() {
+  async function onBlipMouseEnter(e: MouseEvent) {
     isHovered = true
     if (blockDormantHoverExpandUntilLeave) return
     // If dormant, restore to last tier (Mini or Full)
@@ -323,7 +323,6 @@
   }
 
   async function onBlipMouseLeave(e: MouseEvent) {
-    isHovered = false
     const cur = e.currentTarget
     const rel = e.relatedTarget
     // Only clear the compact lock when leaving the pill for real (not moving between children inside it).
@@ -337,8 +336,9 @@
     ) {
       blockDormantHoverExpandUntilLeave = false
     }
-    // Resize/reposition often synthesizes leave while the cursor is still “on” the pill — wait for real outside move (see armIdleRetractGuardAfterChromeResize).
+    // WHY: Resize/reposition fires synthetic mouseleave while the cursor is still “on” "on" the pill. If we set isHovered=false immediately, CSS starts collapsing (300ms transition). If the guard is active, return early WITHOUT changing isHovered, so CSS stays expanded. This prevents the "mushed" mid-transition appearance when collapse interrupts expand.
     if (suppressIdleRetractUntilOutside) return
+    isHovered = false
     await retractDormantChromeToDotIfIdle()
   }
 
@@ -987,6 +987,7 @@
   class:has-menu-open={modeMenuOpen || contextMenuOpen}
   role="status"
   aria-label="Kalam dictation status"
+  on:mouseenter={onBlipMouseEnter}
 >
   {#if autoActivateToast}
     <div class="toast" role="status" aria-live="polite">{autoActivateToast}</div>
@@ -1011,7 +1012,6 @@
     class:always-visible={overlayAlwaysVisible}
     class:is-command={isCommand}
     class:is-voice-edit={isVoiceEdit && !isCommand}
-    on:mouseenter={onBlipMouseEnter}
     on:mouseleave={onBlipMouseLeave}
     on:contextmenu={onRootContextMenu}
   >
@@ -1663,6 +1663,10 @@
 
   .dormant-idle-mark {
     flex-shrink: 0;
+    /* WHY: The swatch is the only visible element when dormant. If it captures pointer events,
+    hovering directly onto it (especially from top/bottom) may not trigger mouseenter on the
+    parent .pill. pointer-events: none lets events pass through so .pill hover works reliably. */
+    pointer-events: none;
   }
 
   .dormant-bar.expanded {

@@ -89,6 +89,7 @@ uiautomation = "0.24"
 windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_LibraryLoader",
     "Win32_System_SystemInformation",
@@ -97,6 +98,7 @@ windows-sys = { version = "0.52", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
 core-foundation = "0.9"
 core-foundation-sys = "0.8"
 plist = "1.7"

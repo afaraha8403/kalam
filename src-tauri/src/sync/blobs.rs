@@ -1,7 +1,7 @@
 //! Subset of `AppConfig` that Phase 9 syncs (no device-specific or non-synced fields).
 
 use crate::config::{
-    AppConfig, FormattingConfig, PolishConfig, PrivacyConfig, RecordingMode, STTConfig,
+    AppConfig, FormattingConfig, PrivacyConfig, RecordingMode, STTConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -9,9 +9,6 @@ use serde::{Deserialize, Serialize};
 pub struct SyncSettingsBlob {
     pub updated_at: String,
     pub active_mode_id: String,
-    pub polish_enabled: bool,
-    pub polish_config: PolishConfig,
-    pub context_awareness_enabled: bool,
     pub formatting: FormattingConfig,
     pub recording_mode: Option<RecordingMode>,
     pub hotkey: Option<String>,
@@ -43,9 +40,6 @@ impl SyncSettingsBlob {
         Self {
             updated_at: updated_at.to_string(),
             active_mode_id: cfg.active_mode_id.clone(),
-            polish_enabled: cfg.polish_enabled,
-            polish_config: cfg.polish_config.clone(),
-            context_awareness_enabled: cfg.context_awareness_enabled,
             formatting: cfg.formatting.clone(),
             recording_mode: cfg.recording_mode.clone(),
             hotkey: cfg.hotkey.clone(),
@@ -67,9 +61,6 @@ impl SyncSettingsBlob {
 
     pub fn apply_to(&self, cfg: &mut AppConfig) {
         cfg.active_mode_id = self.active_mode_id.clone();
-        cfg.polish_enabled = self.polish_enabled;
-        cfg.polish_config = self.polish_config.clone();
-        cfg.context_awareness_enabled = self.context_awareness_enabled;
         cfg.formatting = self.formatting.clone();
         cfg.recording_mode = self.recording_mode.clone();
         cfg.hotkey = self.hotkey.clone();

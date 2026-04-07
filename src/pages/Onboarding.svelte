@@ -210,7 +210,11 @@
     config.notifications_opt_in = notificationsOptIn
     const mic = audioDeviceSelection.trim()
     config.audio_device = mic === '' ? null : mic
-    config.polish_enabled = polishDemoEnabled
+    // Set polish on the default mode based on onboarding choice
+    const defaultMode = config.modes.find((m) => m.id === 'default')
+    if (defaultMode) {
+      defaultMode.polish = polishDemoEnabled
+    }
 
     if (setupPath === 'one_key') {
       config.command_config.enabled = true
@@ -277,8 +281,9 @@
       if (config.languages?.length) languages = [...config.languages]
       if (config.user_email) userEmail = config.user_email
       if (config.notifications_opt_in != null) notificationsOptIn = config.notifications_opt_in
-      if (config.polish_enabled != null) polishDemoEnabled = config.polish_enabled
       const modes = config.modes as DictationMode[]
+      const defaultMode = modes.find((m) => m.id === 'default')
+      if (defaultMode) polishDemoEnabled = defaultMode.polish
       const aid = config.active_mode_id ?? 'default'
       activeModeDisplayName = modes.find((m) => m.id === aid)?.name ?? aid
       const ad = config.audio_device

@@ -30,28 +30,6 @@ pub struct ModeContextConfig {
     pub include_system_info: bool,
 }
 
-/// Granular polish behavior (Pro may gate these later; all honored when polish runs).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PolishConfig {
-    pub fix_grammar: bool,
-    pub remove_filler: bool,
-    pub fix_punctuation: bool,
-    pub smart_formatting: bool,
-    pub self_correction: bool,
-}
-
-impl Default for PolishConfig {
-    fn default() -> Self {
-        Self {
-            fix_grammar: true,
-            remove_filler: true,
-            fix_punctuation: true,
-            smart_formatting: true,
-            self_correction: true,
-        }
-    }
-}
-
 /// Default accent when `accent_color` is empty (CSS color, usually OKLCH).
 pub fn default_accent_for_mode_id(id: &str) -> String {
     match id {
@@ -96,7 +74,7 @@ pub struct DictationMode {
     pub voice_model: ModeModelRef,
     #[serde(default)]
     pub language_model: ModeModelRef,
-    /// When true and global `polish_enabled` is true, polish instructions are included in the LLM call.
+    /// When true, polish instructions are included in the LLM call.
     #[serde(default)]
     pub polish: bool,
     #[serde(default)]
@@ -227,14 +205,6 @@ pub struct AppConfig {
     pub modes: Vec<DictationMode>,
     #[serde(default = "default_active_mode_id")]
     pub active_mode_id: String,
-    /// Global master switch: when false, polish instructions are never added.
-    #[serde(default)]
-    pub polish_enabled: bool,
-    #[serde(default)]
-    pub polish_config: PolishConfig,
-    /// Phase 4: master switch for context gathering (stored; not used for capture in Phase 1).
-    #[serde(default)]
-    pub context_awareness_enabled: bool,
     /// Hotkey to cycle `active_mode_id` through `modes`.
     #[serde(default = "default_mode_cycle_hotkey")]
     pub mode_cycle_hotkey: Option<String>,
@@ -452,9 +422,6 @@ impl Default for AppConfig {
                 build_default_modes(&ts)
             },
             active_mode_id: default_active_mode_id(),
-            polish_enabled: false,
-            polish_config: PolishConfig::default(),
-            context_awareness_enabled: false,
             mode_cycle_hotkey: default_mode_cycle_hotkey(),
             voice_edit_hotkey: None,
             recipe_library_url: default_recipe_library_url(),

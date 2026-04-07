@@ -1,0 +1,61 @@
+---
+description: Production stability guardrails — surgical changes, migration safety, cross-platform awareness, and code documentation
+alwaysApply: true
+---
+
+# Production Stability
+
+This app is live and in users' hands. Every change carries real risk.
+
+## Surgical changes only
+
+- Change the minimum code needed to achieve the goal. Do not refactor, rename, or "improve" nearby code.
+- If a fix works, do not rewrite it into a "cleaner" version unless explicitly asked.
+- Every changed line must trace directly to the request. If it doesn't, remove it.
+
+## Migration safety
+
+Any change that alters persisted data, config schema, file paths, IPC command signatures, or Rust struct shapes **must** include:
+
+1. A written migration plan (inline comment or `.doc/` note) covering: what changes, how existing user data is handled, and rollback steps.
+2. Backward-compatible defaults so the app does not crash on old data.
+3. Explicit user approval before proceeding with the implementation.
+
+Examples of migration-sensitive areas:
+- `src-tauri/src/config/settings.rs` — user settings struct
+- Tauri command signatures (frontend ↔ Rust IPC contract)
+- License validation flow (shared with **kalam-website**)
+- Local file/blob storage paths (`src-tauri/src/sync/`)
+
+## Cross-platform awareness
+
+Kalam ships on **Windows** and **macOS**. Before changing any OS-level code:
+
+- Verify the approach works on both platforms (or is correctly gated behind `cfg(target_os)`).
+- Platform-specific modules: `overlay_win.rs` (Windows), `overlay_macos.rs` (macOS).
+- File paths, shell commands, and native APIs differ — never assume one OS.
+
+## Sister project impact
+
+Changes to license validation, plan gating, telemetry, or any `/api/` call may require a matching change in **kalam-website**. Flag this explicitly when proposing such changes. See `.cursor/rules/sister-project.mdc` for the full contract.
+
+## Document what works and why
+
+- When a non-obvious approach is chosen (workaround, platform quirk, Tauri limitation), add a concise comment explaining **why** this approach was taken and what breaks if it's changed.
+- Prefer inline comments next to the relevant code over separate docs.
+- Format: `// WHY: <reason>` for single-line, or a short block comment for multi-line explanations.
+
+```rust
+// WHY: Windows requires this flag to prevent background throttling of the
+// audio capture thread. Removing it causes mic input to drop after ~30s.
+```
+
+## Approval before altering established methods
+
+If a working, established pattern exists (IPC flow, config loading, overlay rendering, audio pipeline), **do not change it** without:
+
+1. Stating what you want to change and why.
+2. Explaining the risk to existing users.
+3. Receiving explicit approval from the user.
+
+This applies even if the new approach is "better." Stability > elegance.

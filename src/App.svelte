@@ -138,16 +138,9 @@
         }
       ],
       active_mode_id: 'default',
-      polish_enabled: false,
-      polish_config: {
-        fix_grammar: true,
-        remove_filler: true,
-        fix_punctuation: true,
-        smart_formatting: true,
-        self_correction: true
-      },
-      context_awareness_enabled: false,
-      mode_cycle_hotkey: 'Ctrl+Shift+M'
+      mode_cycle_hotkey: 'Ctrl+Shift+M',
+      voice_edit_hotkey: null,
+      recipe_library_url: 'https://kalam.stream'
     }
   }
 

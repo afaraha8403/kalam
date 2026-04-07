@@ -21,6 +21,10 @@ mod models;
 mod notifications;
 #[cfg(windows)]
 mod overlay_message_log_win;
+#[cfg(target_os = "macos")]
+mod overlay_macos;
+#[cfg(windows)]
+mod overlay_win;
 mod recipe_library;
 pub mod stt;
 mod sync;
@@ -270,31 +274,15 @@ fn resolve_llm_for_dictation_mode(config: &AppConfig, mode: &DictationMode) -> O
 }
 
 fn build_dictation_system_prompt(
-    config: &AppConfig,
+    _config: &AppConfig,
     mode: &DictationMode,
     context_section: Option<&str>,
 ) -> String {
     let mut sections: Vec<String> = vec![];
-    if config.polish_enabled && mode.polish {
-        let pc = &config.polish_config;
-        let mut p = String::from("Polish the transcript for written readability. ");
-        if pc.fix_grammar {
-            p.push_str("Fix grammar and spelling. ");
-        }
-        if pc.remove_filler {
-            p.push_str("Remove filler words (um, uh, like) and false starts; keep the speaker's intended meaning. ");
-        }
-        if pc.fix_punctuation {
-            p.push_str("Add proper punctuation and capitalization. ");
-        }
-        if pc.smart_formatting {
-            p.push_str("Expand spoken URLs and emails to normal form when obvious. Improve paragraph or list structure when helpful. ");
-        }
-        if pc.self_correction {
-            p.push_str("If the speaker corrects themselves mid-sentence, keep only the final intended wording. ");
-        }
-        p.push_str("Do not invent facts.");
-        sections.push(p);
+    if mode.polish {
+        sections.push(
+            "Polish the transcript for written readability. Fix grammar and spelling. Remove filler words (um, uh, like) and false starts; keep the speaker's intended meaning. Add proper punctuation and capitalization. Expand spoken URLs and emails to normal form when obvious. Improve paragraph or list structure when helpful. If the speaker corrects themselves mid-sentence, keep only the final intended wording. Do not invent facts.".to_string(),
+        );
     }
     let instr = mode.ai_instructions.trim();
     if !instr.is_empty() {
@@ -329,9 +317,6 @@ fn compute_overlay_context_hint(
     config: &AppConfig,
     process_name: Option<String>,
 ) -> (bool, Option<String>, Vec<String>) {
-    if !config.context_awareness_enabled {
-        return (false, None, vec![]);
-    }
     let mode = find_active_mode(config);
     if !mode.context.enabled {
         return (false, None, vec![]);
@@ -555,6 +540,14 @@ pub struct AppState {
     pub overlay_menu_open: Arc<AtomicBool>,
     /// After a tier resize, keep accepting cursor events briefly so JS hover/resize does not flicker click-through.
     pub overlay_hit_test_grace_until: Arc<StdMutex<Option<Instant>>>,
+    /// Suppress the 200ms cursor-tracking `update_overlay_position` loop until this instant.
+    /// Set by `resize_overlay_tight_fit` so the position loop doesn't fight with tight-fit anchoring.
+    pub overlay_position_suppress_until: Arc<StdMutex<Option<Instant>>>,
+    /// WHY: The cursor loop only needs to reposition the overlay when the anchor point changes
+    /// (user moved to a different monitor or changed settings). Between anchor changes, tight_fit
+    /// handles positioning with deltas. Storing the last anchor lets us skip redundant set_position
+    /// calls that would fight with tight_fit.
+    pub overlay_last_anchor: Arc<StdMutex<(i32, i32)>>,
 }
 
 impl AppState {
@@ -621,6 +614,8 @@ impl AppState {
             overlay_pill_hit_rect: Arc::new(StdMutex::new((0, 0, 0, 0))),
             overlay_menu_open: Arc::new(AtomicBool::new(false)),
             overlay_hit_test_grace_until: Arc::new(StdMutex::new(None)),
+            overlay_position_suppress_until: Arc::new(StdMutex::new(None)),
+            overlay_last_anchor: Arc::new(StdMutex::new((0, 0))),
         })
     }
 }
@@ -1342,11 +1337,23 @@ pub fn run() {
                                 let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
                                 SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE as isize);
                             }
+                            // Safety net: right-click on the HWND client area otherwise opens the system window menu.
+                            crate::overlay_win::install_overlay_suppress_system_context_menu(hwnd);
                         }
                     }
                     // Transparent window still hits-test the full HWND; ignore cursor until the pill hit rect (see spawn_overlay_cursor_hit_test_loop).
                     let _ = overlay.set_ignore_cursor_events(true);
                     spawn_overlay_cursor_hit_test_loop(app.handle().clone());
+                }
+
+                #[cfg(target_os = "macos")]
+                {
+                    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                    if let Ok(handle) = overlay.as_ref().window().window_handle() {
+                        if let RawWindowHandle::AppKit(appkit) = handle.as_raw() {
+                            crate::overlay_macos::configure_overlay_ns_window(appkit.ns_view.as_ptr());
+                        }
+                    }
                 }
             }
 
@@ -1355,7 +1362,18 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                    let _ = update_overlay_position(&cursor_tracking_handle);
+                    // WHY: tight-fit and hover transitions reposition the window themselves;
+                    // the tracking loop must not fight them or the pill visibly jumps.
+                    let suppressed = cursor_tracking_handle
+                        .state::<AppState>()
+                        .overlay_position_suppress_until
+                        .lock()
+                        .ok()
+                        .map(|g| g.as_ref().is_some_and(|until| Instant::now() < *until))
+                        .unwrap_or(false);
+                    if !suppressed {
+                        let _ = update_overlay_position(&cursor_tracking_handle);
+                    }
                 }
             });
 
@@ -1691,10 +1709,10 @@ pub fn run() {
             get_app_data_path,
             open_app_data_folder,
             resize_overlay_to,
+            resize_overlay_tight_fit,
             set_overlay_menu_open,
             get_overlay_initial_state,
             copy_last_transcription,
-            toggle_polish_from_overlay,
             get_context_previews,
             cancel_transcription,
             ui_toggle_dictation,
@@ -3945,11 +3963,38 @@ fn refresh_overlay_pill_hit_rect(
             Arc::clone(&s.overlay_pill_hit_rect),
         )
     };
+    let scale = overlay.scale_factor().unwrap_or(1.0);
+    let Ok(inner) = overlay.inner_size() else {
+        return;
+    };
+    let win_log_w = inner.width as f64 / scale;
+    let win_log_h = inner.height as f64 / scale;
+    let (max_w, max_h) = overlay_logical_size_for_tier(tier);
+    // WHY: `resize_overlay_tight_fit` shrinks the HWND to measured pill + margin. We still used
+    // hardcoded `overlay_pill_logical_size(tier)` here, so the hit rect often missed the real pill.
+    // The cursor then sat "outside" the rect while WebView showed hover → Windows ignored events,
+    // Svelte fired leave → collapse → enter → violent resize flicker. When inner size is below the
+    // tier canvas, treat the whole client area as the hit target (no empty transparent margins).
+    let at_tier_canvas =
+        (win_log_w - max_w).abs() <= 2.5 && (win_log_h - max_h).abs() <= 2.5;
+    if !at_tier_canvas {
+        if let Ok(ip) = overlay.inner_position() {
+            // WHY: Add the same hit-test padding used for the canvas path. Without padding,
+            // the cursor is "outside" at the exact window edge (strict < check), causing
+            // cursor-left-pill to fire while the user's mouse is still visually on the pill.
+            let pad = (OVERLAY_HIT_PADDING_LOGICAL * scale).round() as i32;
+            let left = ip.x - pad;
+            let top = ip.y - pad;
+            let right = left + inner.width as i32 + 2 * pad;
+            let bottom = top + inner.height as i32 + 2 * pad;
+            set_overlay_pill_hit_rect(&pill_hit_rect, (left, top, right, bottom));
+            return;
+        }
+    }
+
     let Ok(outer_pos) = overlay.outer_position() else {
         return;
     };
-    let scale = overlay.scale_factor().unwrap_or(1.0);
-    let (win_log_w, win_log_h) = overlay_logical_size_for_tier(tier);
     let (pill_log_w, pill_log_h) = overlay_pill_logical_size(tier);
 
     let pill_left_log = (win_log_w - pill_log_w) / 2.0;
@@ -4011,11 +4056,29 @@ fn spawn_overlay_cursor_hit_test_loop(app_handle: tauri::AppHandle) {
                 && pt.x < r
                 && pt.y >= t
                 && pt.y < b;
-            let should_ignore = !menu_open && !grace_active && !cursor_inside;
+            // WHY: Also suppress cursor-left-pill during the position suppression window (500ms
+            // after tier change). The hit-test grace (200ms) is too short — tight_fit + CSS
+            // transitions take ~330ms, so the hit rect is still shifting when grace expires.
+            // During that window, the cursor can be "outside" the transitioning rect, causing
+            // a false cursor-left-pill that immediately collapses the pill.
+            let position_suppressed = state
+                .overlay_position_suppress_until
+                .lock()
+                .ok()
+                .map(|g| g.as_ref().is_some_and(|until| Instant::now() < *until))
+                .unwrap_or(false);
+            let should_ignore = !menu_open && !grace_active && !position_suppressed && !cursor_inside;
 
             if should_ignore != last_ignore {
                 if let Some(overlay) = app_handle.get_webview_window(OVERLAY_LABEL) {
                     let _ = overlay.set_ignore_cursor_events(should_ignore);
+                    // WHY: When the cursor exits the pill hit rect, the WebView becomes
+                    // click-through and stops receiving DOM mouse events. The Svelte
+                    // mouseleave handler never fires, so the pill stays expanded. Emit a
+                    // synthetic "cursor-left-pill" event so the frontend can collapse.
+                    if should_ignore && !last_ignore {
+                        let _ = overlay.emit("cursor-left-pill", ());
+                    }
                 }
                 last_ignore = should_ignore;
             }
@@ -4107,6 +4170,10 @@ enum OverlayEvent {
 
 /// Phase 6: resize overlay window. `tier` 0 = dormant, 1 = mini, 2 = full.
 fn resize_overlay(app: tauri::AppHandle, tier: u8) -> Result<(), String> {
+    resize_overlay_inner(app, tier, false)
+}
+
+fn resize_overlay_inner(app: tauri::AppHandle, tier: u8, force_canvas: bool) -> Result<(), String> {
     let state = app.state::<AppState>();
     let tier = tier.min(2);
     let prev_tier = state.overlay_size_tier.swap(tier, Ordering::Relaxed);
@@ -4117,28 +4184,179 @@ fn resize_overlay(app: tauri::AppHandle, tier: u8) -> Result<(), String> {
     }
 
     if let Some(overlay) = app.get_webview_window(OVERLAY_LABEL) {
-        let (width, height) = overlay_logical_size_for_tier(tier);
+        let (canvas_w, canvas_h) = overlay_logical_size_for_tier(tier);
 
-        // Resize first, then update position: when a window resizes, its top-left stays fixed
-        // and it grows down/right. The pill is centered via flexbox, so it would appear to move.
-        // By resizing then repositioning, we compensate so the pill stays visually fixed.
-        let size = tauri::LogicalSize::new(width, height);
+        // WHY: When force_canvas is false (normal tier transitions), set the window directly to
+        // the PREDICTED tight-fit size (pill + margin) instead of the full tier canvas. The canvas
+        // (e.g. 288x208) is much larger than the pill (e.g. 288x52 for tier 1). Setting the canvas
+        // first causes a visible 330ms jump: the window leaps to the canvas position, then
+        // tight_fit shrinks it back. By going straight to the tight-fit size, the pill content
+        // fits, the anchor edge stays stable, and tight_fit only makes minor corrections.
+        // When force_canvas is true (menu open), use the full canvas so dropdowns aren't clipped.
+        let (target_w, target_h) = if force_canvas {
+            (canvas_w, canvas_h)
+        } else {
+            let (pill_w, pill_h) = overlay_pill_logical_size(tier);
+            (pill_w + 8.0, pill_h + 8.0)
+        };
+
+        // WHY: Only reposition when the tier actually changes. Same-tier calls (e.g. tier 0→0
+        // during init) should not move the window — tight_fit already placed it correctly.
+        if prev_tier != tier {
+            let Ok(outer_pos) = overlay.outer_position() else {
+                return Ok(());
+            };
+            let scale = overlay.scale_factor().unwrap_or(1.0);
+            let inner = overlay.inner_size().map_err(|e| e.to_string())?;
+            let old_w_log = inner.width as f64 / scale;
+            let old_h_log = inner.height as f64 / scale;
+
+            let delta_x_log = (old_w_log - target_w) / 2.0;
+            use crate::config::ExpandDirection;
+            let expand_direction = state
+                .config
+                .try_lock()
+                .map(|c| c.get_all().overlay_expand_direction.clone())
+                .unwrap_or_default();
+            let delta_y_log = match expand_direction {
+                ExpandDirection::Up => old_h_log - target_h,
+                ExpandDirection::Down => 0.0,
+                ExpandDirection::Center => (old_h_log - target_h) / 2.0,
+            };
+
+            let new_pos = tauri::PhysicalPosition::new(
+                (f64::from(outer_pos.x) + delta_x_log * scale).round() as i32,
+                (f64::from(outer_pos.y) + delta_y_log * scale).round() as i32,
+            );
+            let _ = overlay.set_position(tauri::Position::Physical(new_pos));
+        } else if force_canvas {
+            // WHY: Same-tier call with force_canvas (menu opening) — need to expand the window
+            // to the full canvas without repositioning (tight_fit already placed it correctly,
+            // and the canvas expansion grows from top-left which is fine for menus).
+            // For ExpandDirection::Up, we need to move the window up to keep the bottom edge
+            // fixed when expanding from tight-fit to canvas.
+            let scale = overlay.scale_factor().unwrap_or(1.0);
+            let inner = overlay.inner_size().map_err(|e| e.to_string())?;
+            let old_w_log = inner.width as f64 / scale;
+            let old_h_log = inner.height as f64 / scale;
+            let delta_x_log = (old_w_log - canvas_w) / 2.0;
+            use crate::config::ExpandDirection;
+            let expand_direction = state
+                .config
+                .try_lock()
+                .map(|c| c.get_all().overlay_expand_direction.clone())
+                .unwrap_or_default();
+            let delta_y_log = match expand_direction {
+                ExpandDirection::Up => old_h_log - canvas_h,
+                ExpandDirection::Down => 0.0,
+                ExpandDirection::Center => (old_h_log - canvas_h) / 2.0,
+            };
+            if delta_x_log.abs() > 0.5 || delta_y_log.abs() > 0.5 {
+                let Ok(outer_pos) = overlay.outer_position() else {
+                    return Ok(());
+                };
+                let new_pos = tauri::PhysicalPosition::new(
+                    (f64::from(outer_pos.x) + delta_x_log * scale).round() as i32,
+                    (f64::from(outer_pos.y) + delta_y_log * scale).round() as i32,
+                );
+                let _ = overlay.set_position(tauri::Position::Physical(new_pos));
+            }
+        }
+
+        let size = tauri::LogicalSize::new(target_w, target_h);
         let _ = overlay.set_size(tauri::Size::Logical(size));
-        let _ = update_overlay_position(&app);
         let _ = overlay.set_always_on_top(true);
+    }
+    // WHY: After resize, suppress the 200ms cursor-tracking loop so it doesn't fight with
+    // tight-fit's upcoming shrink + reposition.
+    if let Ok(mut g) = state.overlay_position_suppress_until.lock() {
+        *g = Some(Instant::now() + Duration::from_millis(500));
     }
     Ok(())
 }
 
 #[tauri::command]
-fn resize_overlay_to(app: tauri::AppHandle, size: String) -> Result<(), String> {
+fn resize_overlay_to(app: tauri::AppHandle, size: String, force_canvas: Option<bool>) -> Result<(), String> {
     let tier: u8 = match size.as_str() {
         "Dormant" => 0,
         "Mini" => 1,
         "Full" => 2,
         _ => return Err(format!("Unknown overlay size: {}", size)),
     };
-    resize_overlay(app, tier)
+    resize_overlay_inner(app, tier, force_canvas.unwrap_or(false))
+}
+
+/// Shrink the overlay HWND to the pill's measured size (logical px from the webview). Reduces empty transparent client area.
+#[tauri::command]
+fn resize_overlay_tight_fit(app: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    const MIN_CONTENT: f64 = 24.0;
+    let Some(overlay) = app.get_webview_window(OVERLAY_LABEL) else {
+        return Err("Overlay window not found".to_string());
+    };
+    let state = app.state::<AppState>();
+    if state.overlay_menu_open.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    let tier = state.overlay_size_tier.load(Ordering::Relaxed);
+    let (max_w, max_h) = overlay_logical_size_for_tier(tier);
+    let margin = OVERLAY_SHADOW_MARGIN as f64;
+    let max_cw = (max_w - 2.0 * margin).max(MIN_CONTENT);
+    let max_ch = (max_h - 2.0 * margin).max(MIN_CONTENT);
+    let cw = width.clamp(MIN_CONTENT, max_cw);
+    let ch = height.clamp(MIN_CONTENT, max_ch);
+    let new_w = cw + 2.0 * margin;
+    let new_h = ch + 2.0 * margin;
+
+    let expand_direction = state
+        .config
+        .try_lock()
+        .map(|c| c.get_all().overlay_expand_direction.clone())
+        .unwrap_or_default();
+
+    let Ok(outer_pos) = overlay.outer_position() else {
+        return Err("Could not get overlay position".to_string());
+    };
+    let scale = overlay.scale_factor().unwrap_or(1.0);
+    let inner = overlay.inner_size().map_err(|e| e.to_string())?;
+    let old_w_log = inner.width as f64 / scale;
+    let old_h_log = inner.height as f64 / scale;
+
+    // WHY: X is always center-anchored (pill is horizontally centered in the HWND).
+    let delta_x_log = (old_w_log - new_w) / 2.0;
+    // WHY: Y delta depends on expand direction so the anchor edge stays fixed.
+    // Up → bottom edge stays put (full delta applied to top).
+    // Down → top edge stays put (no Y shift needed).
+    // Center → split evenly.
+    use crate::config::ExpandDirection;
+    let delta_y_log = match expand_direction {
+        ExpandDirection::Up => old_h_log - new_h,
+        ExpandDirection::Down => 0.0,
+        ExpandDirection::Center => (old_h_log - new_h) / 2.0,
+    };
+
+    // WHY: set_position BEFORE set_size so the anchor edge doesn't visually bounce.
+    let new_pos = tauri::PhysicalPosition::new(
+        (f64::from(outer_pos.x) + delta_x_log * scale).round() as i32,
+        (f64::from(outer_pos.y) + delta_y_log * scale).round() as i32,
+    );
+    let _ = overlay.set_position(tauri::Position::Physical(new_pos));
+    let size = tauri::LogicalSize::new(new_w, new_h);
+    let _ = overlay.set_size(tauri::Size::Logical(size));
+    let _ = overlay.set_always_on_top(true);
+
+    // WHY: Aligns with Overlay.svelte pill measure delay so we do not flip click-through while the WebView settles.
+    if let Ok(mut g) = state.overlay_hit_test_grace_until.lock() {
+        *g = Some(Instant::now() + Duration::from_millis(380));
+    }
+    // WHY: The 200ms cursor-tracking loop calls `update_overlay_position` which would reposition
+    // the window based on the new (smaller) inner_size, fighting with the delta-based position we
+    // just computed. Suppress the loop briefly so the pill stays visually stable.
+    if let Ok(mut g) = state.overlay_position_suppress_until.lock() {
+        *g = Some(Instant::now() + Duration::from_millis(500));
+    }
+
+    refresh_overlay_pill_hit_rect(&app, &expand_direction);
+    Ok(())
 }
 
 #[tauri::command]
@@ -4166,20 +4384,6 @@ async fn copy_last_transcription() -> Result<bool, String> {
 }
 
 #[tauri::command]
-async fn toggle_polish_from_overlay(state: tauri::State<'_, AppState>) -> Result<bool, String> {
-    let new_val = {
-        let mut mgr = state.config.lock().await;
-        let mut all = mgr.get_all();
-        all.polish_enabled = !all.polish_enabled;
-        mgr.save(all.clone()).map_err(|e| e.to_string())?;
-        all.polish_enabled
-    };
-    let updated = state.config.lock().await.get_all();
-    let _ = state.app_handle.emit("settings_updated", &updated);
-    Ok(new_val)
-}
-
-#[tauri::command]
 async fn get_context_previews(
     state: tauri::State<'_, AppState>,
 ) -> Result<crate::context::ContextPreviewsForOverlay, String> {
@@ -4193,8 +4397,8 @@ async fn get_context_previews(
         ),
         None => false,
     };
-    // Don't leak context when the global toggle is off or the external app matches sensitive patterns.
-    if !cfg.context_awareness_enabled || sensitive_by_cache {
+    // Don't leak context when the external app matches sensitive patterns.
+    if sensitive_by_cache {
         return Ok(crate::context::ContextPreviewsForOverlay {
             app_label: None,
             clipboard_preview: None,
@@ -4309,7 +4513,14 @@ fn reset_overlay_state(app: &tauri::AppHandle) {
     }
 }
 
-fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
+/// Compute and apply the overlay position for a given physical size.
+/// Extracted so both `update_overlay_position` (current size) and
+/// `update_overlay_position_for_size` (upcoming size) share the same anchor logic.
+fn apply_overlay_position(
+    app: &tauri::AppHandle,
+    physical_width: i32,
+    physical_height: i32,
+) -> anyhow::Result<()> {
     let overlay = app
         .get_webview_window(OVERLAY_LABEL)
         .ok_or_else(|| anyhow::anyhow!("Overlay window not found"))?;
@@ -4317,7 +4528,6 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
 
     let state = app.state::<AppState>();
     let (position, offset_x, offset_y, expand_direction) = {
-        // Use try_lock to avoid blocking the async runtime
         if let Ok(cfg) = state.config.try_lock() {
             let all = cfg.get_all();
             (
@@ -4327,7 +4537,6 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
                 all.overlay_expand_direction.clone(),
             )
         } else {
-            // Fallback if we can't lock immediately
             (
                 crate::config::OverlayPosition::default(),
                 0,
@@ -4337,10 +4546,6 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
         }
     };
 
-    let tier = state.overlay_size_tier.load(Ordering::Relaxed);
-    let (logical_width, logical_height) = overlay_logical_size_for_tier(tier);
-
-    // Get absolute cursor position using the OS API, then find the matching monitor
     let cursor_screen_pos: Option<(i32, i32)> = {
         #[cfg(windows)]
         {
@@ -4380,10 +4585,7 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
         let physical_offset_y = (offset_y as f64 * scale_factor).round() as i32;
         let full_width = (OVERLAY_FULL_WIDTH as f64 * scale_factor).round() as i32;
         let full_height = (OVERLAY_FULL_HEIGHT as f64 * scale_factor).round() as i32;
-        let physical_width = (logical_width * scale_factor).round() as i32;
-        let physical_height = (logical_height * scale_factor).round() as i32;
 
-        // Compute top-left of the *full* (300x120) window so we can anchor the pill when resizing.
         let mut x_full = wa.position.x;
         let mut y_full = wa.position.y;
         use crate::config::OverlayPosition::*;
@@ -4428,7 +4630,6 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
         x_full += physical_offset_x;
         y_full += physical_offset_y;
 
-        // Content anchor: point on screen that stays fixed when window resizes (depends on expand_direction).
         use crate::config::ExpandDirection;
         let (anchor_cx, anchor_cy) = match expand_direction {
             ExpandDirection::Up => (x_full + full_width / 2, y_full + full_height),
@@ -4441,25 +4642,55 @@ fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
             ExpandDirection::Down => anchor_cy,
             ExpandDirection::Center => anchor_cy - physical_height / 2,
         };
-
         let new_pos = tauri::PhysicalPosition { x, y };
-        let mut should_update = true;
 
-        if let Ok(current_pos) = overlay.outer_position() {
-            // Allow a small 1px variance due to rounding
-            if (current_pos.x - new_pos.x).abs() <= 1 && (current_pos.y - new_pos.y).abs() <= 1 {
-                should_update = false;
+        // WHY: Only reposition when the anchor point changes (monitor switch or settings change).
+        // Between anchor changes, tight_fit handles positioning with deltas. Repositioning every
+        // 200ms based on tier size would fight with tight_fit's delta-based placement.
+        let state = app.state::<AppState>();
+        let anchor_changed = {
+            let mut last = state.overlay_last_anchor.lock().unwrap_or_else(|e| e.into_inner());
+            if last.0 != anchor_cx || last.1 != anchor_cy {
+                *last = (anchor_cx, anchor_cy);
+                true
+            } else {
+                false
             }
-        }
+        };
 
-        if should_update {
+        if anchor_changed {
             let _ = overlay.set_position(tauri::Position::Physical(new_pos));
         }
-        // Re-assert always on top every time (e.g. after resize) so overlay stays above taskbar
         let _ = overlay.set_always_on_top(true);
     }
     refresh_overlay_pill_hit_rect(app, &expand_direction);
     Ok(())
+}
+
+fn update_overlay_position(app: &tauri::AppHandle) -> anyhow::Result<()> {
+    let overlay = app
+        .get_webview_window(OVERLAY_LABEL)
+        .ok_or_else(|| anyhow::anyhow!("Overlay window not found"))?;
+
+    let state = app.state::<AppState>();
+    let tier = state.overlay_size_tier.load(Ordering::Relaxed);
+    let overlay_scale = overlay.scale_factor().unwrap_or(1.0);
+    // WHY: Use the ACTUAL inner size for positioning. The window is usually tight-fitted to a
+    // smaller size than the tier canvas. Using the actual size ensures the position formula
+    // (anchor_cx - width/2) places the window where the pill actually is, not where the
+    // invisible canvas would be. The anchor-change guard in apply_overlay_position prevents
+    // this from fighting with tight_fit — set_position only runs on monitor/settings change.
+    let (physical_width, physical_height) = match overlay.inner_size() {
+        Ok(s) => (s.width as i32, s.height as i32),
+        Err(_) => {
+            let (lw, lh) = overlay_logical_size_for_tier(tier);
+            (
+                (lw * overlay_scale).round() as i32,
+                (lh * overlay_scale).round() as i32,
+            )
+        }
+    };
+    apply_overlay_position(app, physical_width, physical_height)
 }
 
 /// Show the overlay window at the configured position without stealing focus.
@@ -4570,8 +4801,7 @@ async fn start_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<At
                 .as_ref()
                 .map(|(p, t)| sensitive_app_forces_local_for_process(&cfg, p, t))
                 .unwrap_or(false);
-            cfg.context_awareness_enabled
-                && mode.context.enabled
+            mode.context.enabled
                 && mode.context.read_selection
                 && !blocked_sensitive
         };
@@ -5976,7 +6206,6 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             // Phase 3: gate context capture and context-only LLM on Pro/Trial when subscription ships.
                             let mut merged_ctx = crate::context::CapturedContext::default();
                             if !session_sensitive_for_llm
-                                && config.context_awareness_enabled
                                 && active_mode.context.enabled
                                 && (active_mode.context.read_app
                                     || active_mode.context.read_clipboard
@@ -5996,12 +6225,11 @@ async fn stop_dictation(state: tauri::State<'_, AppState>, is_recording: Arc<Ato
                             }
 
                             let context_will_run = !session_sensitive_for_llm
-                                && config.context_awareness_enabled
                                 && active_mode.context.enabled
                                 && crate::context::context_has_llm_payload(&merged_ctx);
 
                             let needs_llm = !active_mode.ai_instructions.trim().is_empty()
-                                || (config.polish_enabled && active_mode.polish)
+                                || active_mode.polish
                                 || context_will_run;
                             if needs_llm {
                                 if let Some(resolved) =

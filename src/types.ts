@@ -106,14 +106,6 @@ export interface AutoActivateSwitchedPayload {
   is_restore: boolean
 }
 
-export interface PolishConfig {
-  fix_grammar: boolean
-  remove_filler: boolean
-  fix_punctuation: boolean
-  smart_formatting: boolean
-  self_correction: boolean
-}
-
 export interface DictationMode {
   id: string
   name: string
@@ -190,10 +182,6 @@ export interface AppConfig {
   /** Dictation modes (config v2+); always populated after migration. */
   modes: DictationMode[]
   active_mode_id: string
-  polish_enabled: boolean
-  polish_config: PolishConfig
-  /** Phase 4 master switch for context gathering. */
-  context_awareness_enabled: boolean
   mode_cycle_hotkey: string | null
   /** Hold-to-talk: transform highlighted text via spoken instruction (Phase 5). Unset = disabled. */
   voice_edit_hotkey: string | null

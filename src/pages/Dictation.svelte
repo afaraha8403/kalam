@@ -19,7 +19,6 @@
     CatalogProvider,
     DictationMode,
     ModeModelRef,
-    PolishConfig,
   } from '../types'
 
   type AppListEntry = {
@@ -146,13 +145,6 @@
     closeIconPicker()
   }
 
-  const POLISH_FLAG_ROWS: { key: keyof PolishConfig; label: string }[] = [
-    { key: 'fix_grammar', label: 'Grammar' },
-    { key: 'remove_filler', label: 'Filler' },
-    { key: 'fix_punctuation', label: 'Punctuation' },
-    { key: 'smart_formatting', label: 'Formatting' },
-    { key: 'self_correction', label: 'Self-correct' },
-  ]
 
   let unlisteners: (() => void)[] = []
   let recipeLibraryOpen = false
@@ -319,22 +311,6 @@
     }
   }
 
-  async function setPolishEnabled(on: boolean) {
-    if (!config) return
-    await saveFull({ ...config, polish_enabled: on })
-  }
-
-  async function setPolishFlagRow(row: (typeof POLISH_FLAG_ROWS)[number], ev: Event) {
-    if (!config) return
-    const on = inputChecked(ev)
-    const polish_config: PolishConfig = { ...config.polish_config, [row.key]: on }
-    await saveFull({ ...config, polish_config })
-  }
-
-  async function setContextAwarenessEnabled(on: boolean) {
-    if (!config) return
-    await saveFull({ ...config, context_awareness_enabled: on })
-  }
 
   async function activateMode(modeId: string) {
     if (!isTauriRuntime()) return
@@ -676,46 +652,6 @@
       </div>
     {/if}
 
-    <!-- ═══ Global processing bar ═══ -->
-    <div class="processing-bar">
-      <div class="proc-group">
-        <label class="proc-toggle">
-          <input
-            type="checkbox"
-            class="toggle-switch"
-            checked={config.polish_enabled ?? false}
-            on:change={(e) => setPolishEnabled(inputChecked(e))}
-            disabled={saving || !isTauriRuntime()}
-          />
-          <span class="proc-label">Polish</span>
-        </label>
-        {#if config.polish_enabled && config.polish_config}
-          <div class="polish-chips" transition:fade={{ duration: 120 }}>
-            {#each POLISH_FLAG_ROWS as row}
-              <label class="polish-chip" class:on={config.polish_config[row.key]}>
-                <input
-                  type="checkbox"
-                  checked={config.polish_config[row.key]}
-                  on:change={(e) => void setPolishFlagRow(row, e)}
-                  disabled={saving || !isTauriRuntime()}
-                />
-                {row.label}
-              </label>
-            {/each}
-          </div>
-        {/if}
-      </div>
-      <label class="proc-toggle">
-        <input
-          type="checkbox"
-          class="toggle-switch"
-          checked={config.context_awareness_enabled ?? false}
-          on:change={(e) => setContextAwarenessEnabled(inputChecked(e))}
-          disabled={saving || !isTauriRuntime()}
-        />
-        <span class="proc-label">Context</span>
-      </label>
-    </div>
 
     <!-- ═══ Secondary actions ═══ -->
     <div class="secondary-actions">
@@ -1291,7 +1227,6 @@
     .mode-edit { transition: none; }
     .toggle-switch,
     .toggle-switch::after { transition: none; }
-    .polish-chip { transition: none; }
   }
 
   .mode-name {
@@ -1352,44 +1287,6 @@
     height: 16px;
   }
 
-  /* ══════════════════════════════════════════════════
-     Processing Bar — global Polish + Context toggles
-     ══════════════════════════════════════════════════ */
-  .processing-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 10px 20px;
-    padding: 10px 14px;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-light);
-    margin-bottom: var(--space-lg);
-  }
-
-  .proc-group {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 12px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .proc-toggle {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-
-  .proc-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-secondary, var(--text));
-  }
-
   /* ── Toggle switch ── */
   .toggle-switch {
     appearance: none;
@@ -1435,44 +1332,6 @@
   .toggle-switch:disabled {
     opacity: 0.35;
     cursor: not-allowed;
-  }
-
-  .polish-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-
-  .polish-chip {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 8px;
-    border-radius: var(--radius-full);
-    border: 1px solid var(--border-light);
-    background: transparent;
-    font-size: 10px;
-    font-weight: 500;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: background 0.12s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.12s cubic-bezier(0.16, 1, 0.3, 1), color 0.12s cubic-bezier(0.16, 1, 0.3, 1);
-    user-select: none;
-  }
-
-  .polish-chip input { display: none; }
-
-  .polish-chip.on {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
-    color: var(--text);
-  }
-
-  .polish-chip:hover {
-    background: var(--bg-hover);
-  }
-
-  .polish-chip:focus-within {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
   }
 
   /* ── Secondary actions ── */

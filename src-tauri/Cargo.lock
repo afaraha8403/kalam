@@ -3021,6 +3021,7 @@ dependencies = [
  "lazy_static",
  "libappindicator",
  "log",
+ "objc",
  "once_cell",
  "parking_lot",
  "plist",
