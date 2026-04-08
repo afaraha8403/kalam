@@ -4178,8 +4178,10 @@ fn resize_overlay_inner(app: tauri::AppHandle, tier: u8, force_canvas: bool) -> 
     let tier = tier.min(2);
     let prev_tier = state.overlay_size_tier.swap(tier, Ordering::Relaxed);
     if prev_tier != tier {
+        // WHY: 350ms covers CSS transitions (~300ms) + tight-fit settling. Previously 200ms,
+        // which expired before transitions finished, causing cursor-event flicker mid-animation.
         if let Ok(mut g) = state.overlay_hit_test_grace_until.lock() {
-            *g = Some(Instant::now() + Duration::from_millis(200));
+            *g = Some(Instant::now() + Duration::from_millis(350));
         }
     }
 

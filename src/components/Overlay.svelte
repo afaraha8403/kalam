@@ -70,6 +70,7 @@
     | { kind: 'SensitiveAppPeek' }
 
   let state: OverlayEvent = { kind: 'Hidden' }
+  let firstAppearance = true
   let waveformStyle: WaveformStyle = 'Aurora'
   let expandDirection: ExpandDirection = 'Up'
   let hotkeyStr = ''
@@ -86,6 +87,14 @@
 
   $: hotkeyDisplayStr =
     hotkeyStr.trim() !== '' ? formatHotkeyForDisplay(hotkeyStr, overlayPlatform) : ''
+
+  let currentTime = ''
+  function updateClock() {
+    const now = new Date()
+    currentTime = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+  updateClock()
+  const clockInterval = setInterval(updateClock, 30_000)
 
   function isValidPayload(p: unknown): p is OverlayEvent {
     if (!p || typeof p !== 'object') return false
@@ -154,6 +163,10 @@
   $: dormantDotBackground =
     state.kind === 'Dormant' ? (state.accent_color?.trim() || activeModeAccent) : ''
 
+  $: if (firstAppearance && state.kind !== 'Hidden') {
+    setTimeout(() => { firstAppearance = false }, 700)
+  }
+
   async function goToDormantIdle() {
     // Save current tier before going dormant (for hover restore)
     if (overlayLayoutTier !== 'Dormant') {
@@ -193,8 +206,8 @@
 
   /** Friendly processing label that escalates with time. */
   $: processingLabel = (() => {
-    if (processingAttempt > 1) return `Retrying… (attempt ${processingAttempt})`
-    if (processingPastHalfExpected) return 'Still processing…'
+    if (processingAttempt > 1) return `Trying again… (${processingAttempt})`
+    if (processingPastHalfExpected) return 'Still working…'
     return processingMessage ?? 'Transcribing…'
   })()
 
@@ -241,11 +254,19 @@
   let contextMenuOpen = false
   let contextMenuX = 0
   let contextMenuY = 0
+  let _prevMenuOpen = false
 
   /** Rust: resize HWND for menu clearance + hit-test; DOM: undo overflow clipping on html/body/#app. */
   $: {
     const open = modeMenuOpen || contextMenuOpen
     invoke('set_overlay_menu_open', { open }).catch(() => {})
+    // WHY: When a menu closes, Rust shrinks the HWND from canvas back to tight-fit. That resize
+    // fires a synthetic mouseleave while the cursor is still over the pill. Arm the retract guard
+    // so the bogus leave is suppressed and the pill stays expanded until the pointer truly exits.
+    if (_prevMenuOpen && !open) {
+      armIdleRetractGuardAfterChromeResize()
+    }
+    _prevMenuOpen = open
     if (typeof document !== 'undefined') {
       document.documentElement.classList.toggle('kalam-ov-menu', open)
       document.body.classList.toggle('kalam-ov-menu', open)
@@ -289,6 +310,8 @@
     if (typeof document === 'undefined' || boundPointerMoveForRetract != null) return
     boundPointerMoveForRetract = (e: PointerEvent) => {
       if (!suppressIdleRetractUntilOutside) return
+      // WHY: While a menu is open the pointer legitimately leaves the pill rect to reach dropdown items.
+      if (modeMenuOpen || contextMenuOpen) return
       const el = pillRootEl
       if (!el) return
       const r = el.getBoundingClientRect()
@@ -302,6 +325,8 @@
 
   async function retractDormantChromeToDotIfIdle() {
     if (state.kind !== 'Dormant' || overlayLayoutTier === 'Dormant') return
+    // WHY: Never collapse while a dropdown/context menu is open — the user is actively interacting.
+    if (modeMenuOpen || contextMenuOpen) return
     // Drop cached previews so we never show a previous app's context after retract.
     contextPreviews = null
     lastTier = overlayLayoutTier
@@ -315,6 +340,11 @@
     // If dormant, restore to last tier (Mini or Full)
     if (state.kind === 'Dormant' && overlayLayoutTier === 'Dormant') {
       const tier = lastTier
+      // WHY: Arm the retract guard BEFORE the resize IPC. The resize repositions the HWND which
+      // fires a synthetic mouseleave while the cursor is still visually over the pill. Without
+      // the guard, onBlipMouseLeave sets isHovered=false and retractDormantChromeToDotIfIdle
+      // collapses the pill right after it expanded — requiring multiple hover attempts.
+      armIdleRetractGuardAfterChromeResize()
       await invoke('resize_overlay_to', { size: tier }).catch(() => {})
       overlayLayoutTier = tier
       // Full panel reads context from a prior invoke; re-fetch so it matches current foreground.
@@ -338,6 +368,9 @@
     }
     // WHY: Resize/reposition fires synthetic mouseleave while the cursor is still “on” "on" the pill. If we set isHovered=false immediately, CSS starts collapsing (300ms transition). If the guard is active, return early WITHOUT changing isHovered, so CSS stays expanded. This prevents the "mushed" mid-transition appearance when collapse interrupts expand.
     if (suppressIdleRetractUntilOutside) return
+    // WHY: Pointer may leave the .pill box while hovering over an absolutely-positioned dropdown
+    // (rendered above/below the pill). Don't retract — the user is still interacting.
+    if (modeMenuOpen || contextMenuOpen) return
     isHovered = false
     await retractDormantChromeToDotIfIdle()
   }
@@ -500,10 +533,10 @@
   async function copyLastTranscription() {
     try {
       const copied = (await invoke('copy_last_transcription')) as boolean
-      copyFeedback = copied ? 'Copied' : 'Nothing to copy'
+      copyFeedback = copied ? 'Copied' : 'No transcription yet'
     } catch (e) {
       console.error('copy_last_transcription failed:', e)
-      copyFeedback = 'Copy failed'
+      copyFeedback = 'Couldn\u2019t copy'
     }
     if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
     copyFeedbackTimer = setTimeout(() => { copyFeedback = ''; copyFeedbackTimer = null }, 1200)
@@ -542,6 +575,22 @@
   function closeContextMenus() {
     contextMenuOpen = false
     modeMenuOpen = false
+  }
+
+  /**
+   * Toggle the mode dropdown. When opening, pre-expand the HWND to canvas size so the dropdown
+   * isn't clipped by the WebView boundary, then set the flag to render the dropdown.
+   */
+  async function toggleModeMenu() {
+    if (modeMenuOpen) {
+      modeMenuOpen = false
+      return
+    }
+    // WHY: Expand HWND to canvas BEFORE rendering the dropdown so it has room immediately.
+    // The reactive $: block also calls set_overlay_menu_open, but the dropdown would render
+    // in the same tick before the IPC completes — causing a clipped frame.
+    await invoke('set_overlay_menu_open', { open: true }).catch(() => {})
+    modeMenuOpen = true
   }
 
   /** Map backend error strings to plain-language messages. */
@@ -822,6 +871,7 @@
     let unlisten: (() => void) | null = null
     let unlistenSettings: (() => void) | null = null
     let unlistenAutoActivate: (() => void) | null = null
+    let unlistenCursorLeft: (() => void) | null = null
     let pendingSuccessTimer: ReturnType<typeof setTimeout> | null = null
     let retryHoldUntil: number | null = null
     let lastSeenProcessingAttempt = 1
@@ -860,6 +910,19 @@
     listen<AutoActivateSwitchedPayload>('auto-activate-switched', (e) => {
       if (e.payload) showAutoActivateToast(e.payload)
     }).then((fn) => { unlistenAutoActivate = fn })
+
+    // WHY: Rust hit-test loop emits cursor-left-pill when the pointer exits the pill rect and the
+    // WebView becomes click-through. DOM mouseleave never fires in that case, so without this
+    // listener the pill stays visually expanded even though it can no longer receive mouse events.
+    getCurrentWebviewWindow().listen('cursor-left-pill', () => {
+      if (modeMenuOpen || contextMenuOpen) return
+      // WHY: During resize transitions the retract guard is armed to absorb bogus mouseleave.
+      // Rust's position_suppressed window usually prevents this event from firing during
+      // transitions, but respect the JS-side guard as a belt-and-suspenders safeguard.
+      if (suppressIdleRetractUntilOutside) return
+      isHovered = false
+      void retractDormantChromeToDotIfIdle()
+    }).then((fn) => { unlistenCursorLeft = fn })
 
     const onDocPointerDown = (ev: MouseEvent) => {
       const t = ev.target as Node
@@ -962,12 +1025,14 @@
       unlisten?.()
       unlistenSettings?.()
       unlistenAutoActivate?.()
+      unlistenCursorLeft?.()
       document.removeEventListener('pointerdown', onDocPointerDown, true)
       document.removeEventListener('keydown', onKeyDown, true)
       if (statusTimeout) clearTimeout(statusTimeout)
       if (pendingSuccessTimer) clearTimeout(pendingSuccessTimer)
       if (autoActivateToastTimer) clearTimeout(autoActivateToastTimer)
       if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
+      clearInterval(clockInterval)
       disarmIdleRetractGuard()
       keepAliveWorker?.terminate()
       invoke('set_overlay_menu_open', { open: false }).catch(() => {})
@@ -998,6 +1063,7 @@
   <div
     bind:this={pillRootEl}
     class="pill"
+    class:hello={firstAppearance}
     class:dormant-pill={state.kind === 'Dormant'}
     class:menu-open={modeMenuOpen || contextMenuOpen}
     class:tier-dormant={overlayLayoutTier === 'Dormant'}
@@ -1041,7 +1107,7 @@
           {/if}
           <div class="full-footer" data-tauri-drag-region="false" data-overlay-menu-root>
             <div class="mode-wrap">
-              <button type="button" class="action-chip" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => (modeMenuOpen = !modeMenuOpen)}
+              <button type="button" class="action-chip" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => toggleModeMenu()}
                 >{idleModeLabel} <span class="chevron" aria-hidden="true">{modeMenuOpen ? '▴' : '▾'}</span></button
               >
               {#if modeMenuOpen}
@@ -1090,7 +1156,7 @@
                   aria-haspopup="menu"
                   title="Switch mode"
                   data-tauri-drag-region="false"
-                  on:click|stopPropagation={() => (modeMenuOpen = !modeMenuOpen)}
+                  on:click|stopPropagation={() => toggleModeMenu()}
                 >
                   <span
                     class="dormant-mode-swatch"
@@ -1113,6 +1179,9 @@
               {/if}
               <span class="dormant-hotkey">{hotkeyDisplayStr}</span>
             </div>
+            {#if currentTime}
+              <span class="dormant-clock" aria-hidden="true">{currentTime}</span>
+            {/if}
             <div class="dormant-icons" data-tauri-drag-region="false" data-overlay-menu-root>
               <button type="button" class="icon-btn" title={copyLastTitle} on:click|stopPropagation={() => copyLastTranscription()}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg>
@@ -1163,7 +1232,7 @@
     <!-- ═══════════════ SHORT PRESS ═══════════════ -->
     {:else if state.kind === 'ShortPress'}
       <div class="content hint" data-tauri-drag-region>
-        <span class="label">Hold the key longer to start dictating</span>
+        <span class="label">Hold longer to dictate</span>
       </div>
 
     <!-- ═══════════════ STATUS ═══════════════ -->
@@ -1223,7 +1292,7 @@
           </div>
           <div class="full-footer" data-tauri-drag-region="false" data-overlay-menu-root>
             <div class="mode-wrap">
-              <button type="button" class="action-chip" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => (modeMenuOpen = !modeMenuOpen)}>{idleModeLabel} <span class="chevron" aria-hidden="true">{modeMenuOpen ? '▴' : '▾'}</span></button>
+              <button type="button" class="action-chip" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => toggleModeMenu()}>{idleModeLabel} <span class="chevron" aria-hidden="true">{modeMenuOpen ? '▴' : '▾'}</span></button>
               {#if modeMenuOpen}
                 <div class="mode-dropdown" role="menu">
                   {#each modesList as m (m.id)}
@@ -1320,7 +1389,7 @@
           </div>
           <div class="full-footer" data-tauri-drag-region="false" data-overlay-menu-root>
             <div class="mode-wrap">
-              <button type="button" class="action-chip" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => (modeMenuOpen = !modeMenuOpen)}>{idleModeLabel} <span class="chevron" aria-hidden="true">{modeMenuOpen ? '▴' : '▾'}</span></button>
+              <button type="button" class="action-chip" aria-expanded={modeMenuOpen} on:click|stopPropagation={() => toggleModeMenu()}>{idleModeLabel} <span class="chevron" aria-hidden="true">{modeMenuOpen ? '▴' : '▾'}</span></button>
               {#if modeMenuOpen}
                 <div class="mode-dropdown" role="menu">
                   {#each modesList as m (m.id)}
@@ -1416,9 +1485,11 @@
     --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
     /* Primary UI motion: smooth deceleration without feeling sluggish */
     --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
-    --ease-spring: cubic-bezier(0.34, 1.15, 0.64, 1);
-    --ease-spring-bouncy: cubic-bezier(0.34, 1.56, 0.64, 1);
-    --ease-squish: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    --ease-spring: cubic-bezier(0.34, 1.08, 0.64, 1);
+    /* Decisive deceleration for dropdowns and entrances — no overshoot */
+    --ease-spring-bouncy: cubic-bezier(0.16, 1, 0.3, 1);
+    /* Quick press feedback — snappy settle, no rubber */
+    --ease-squish: cubic-bezier(0.25, 1, 0.5, 1);
     --ov-dur-shell: 380ms; /* Slightly longer for the spring to settle */
     --ov-dur-reveal: 300ms;
     --ov-dur-micro: 140ms;
@@ -1508,14 +1579,12 @@
     background: var(--ov-surface);
     border: 1px solid var(--ov-border-subtle);
     box-sizing: border-box;
-    /* Tier / shape changes: one curve + matched durations so the shell reads as one motion.
-       (No faster sub-duration on radius/padding — that read as axis timing skew next to max-width.) */
     transition:
-      max-width var(--ov-dur-shell) var(--ease-spring),
-      min-height var(--ov-dur-shell) var(--ease-spring),
-      height var(--ov-dur-shell) var(--ease-spring),
-      border-radius var(--ov-dur-shell) var(--ease-spring),
-      padding var(--ov-dur-shell) var(--ease-spring),
+      max-width var(--ov-dur-shell) var(--ease-out-expo),
+      min-height var(--ov-dur-shell) var(--ease-out-expo),
+      height var(--ov-dur-shell) var(--ease-out-expo),
+      border-radius var(--ov-dur-shell) var(--ease-out-expo),
+      padding var(--ov-dur-shell) var(--ease-out-expo),
       opacity 200ms var(--ease-smooth),
       box-shadow 260ms var(--ease-smooth),
       border-color 260ms var(--ease-smooth);
@@ -1543,24 +1612,26 @@
     min-height: 28px;
     height: 28px;
     border-radius: 14px;
-    opacity: 0.7;
+    opacity: 0.85;
     flex-direction: column;
     padding: 0;
     cursor: default;
     overflow: hidden;
-    /* Slightly longer opacity easing so idle → hover reads soft, not stepped */
     transition:
-      max-width var(--ov-dur-shell) var(--ease-spring),
-      min-height var(--ov-dur-shell) var(--ease-spring),
-      height var(--ov-dur-shell) var(--ease-spring),
-      border-radius var(--ov-dur-shell) var(--ease-spring),
-      padding var(--ov-dur-shell) var(--ease-spring),
-      opacity 220ms var(--ease-smooth),
-      box-shadow 260ms var(--ease-smooth),
+      max-width var(--ov-dur-shell) var(--ease-out-expo),
+      min-height var(--ov-dur-shell) var(--ease-out-expo),
+      height var(--ov-dur-shell) var(--ease-out-expo),
+      border-radius var(--ov-dur-shell) var(--ease-out-expo),
+      padding var(--ov-dur-shell) var(--ease-out-expo),
+      opacity 260ms var(--ease-smooth),
+      box-shadow 300ms var(--ease-smooth),
       border-color 260ms var(--ease-smooth);
   }
 
-  .pill.tier-dormant.always-visible { opacity: 0.9; }
+  .pill.tier-dormant.always-visible { opacity: 0.95; }
+  /* Magnetic pre-hover: .ov-root receives mouseenter from the hit-test padding zone (~12px)
+     before the cursor reaches .pill. Subtle opacity lift signals "I see you approaching." */
+  .ov-root:hover .pill.tier-dormant { opacity: 0.95; }
   .pill.tier-dormant:hover { opacity: 1; }
 
   /* `.tier-dormant` sets overflow:hidden after `.menu-open` — re-allow dropdowns to escape the pill */
@@ -1600,20 +1671,19 @@
 
   /* ── State accents ── */
   .pill.recording {
-    border-color: color-mix(in oklch, var(--ov-accent) 35%, transparent);
-    /* Smaller blur so glow fits the reduced overlay window margin */
-    box-shadow: 0 0 6px color-mix(in oklch, var(--ov-accent) 15%, transparent);
-    animation: recording-glow 2.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    border-color: color-mix(in oklch, var(--ov-accent) 50%, transparent);
+    box-shadow: 0 0 10px color-mix(in oklch, var(--ov-accent) 20%, transparent);
+    animation: recording-glow 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
     --glow-color: var(--ov-accent);
   }
   .pill.recording.is-command {
-    border-color: color-mix(in oklch, var(--ov-command) 40%, transparent);
-    box-shadow: 0 0 6px color-mix(in oklch, var(--ov-command) 15%, transparent);
+    border-color: color-mix(in oklch, var(--ov-command) 55%, transparent);
+    box-shadow: 0 0 10px color-mix(in oklch, var(--ov-command) 20%, transparent);
     --glow-color: var(--ov-command);
   }
   .pill.recording.is-voice-edit {
-    border-color: color-mix(in oklch, var(--ov-voice-edit) 40%, transparent);
-    box-shadow: 0 0 6px color-mix(in oklch, var(--ov-voice-edit) 15%, transparent);
+    border-color: color-mix(in oklch, var(--ov-voice-edit) 55%, transparent);
+    box-shadow: 0 0 10px color-mix(in oklch, var(--ov-voice-edit) 20%, transparent);
     --glow-color: var(--ov-voice-edit);
   }
   .pill.processing {
@@ -1623,11 +1693,11 @@
     border-color: color-mix(in oklch, var(--ov-sensitive) 35%, transparent);
   }
   .pill.success {
-    border-color: color-mix(in oklch, var(--ov-success) 40%, transparent);
+    border-color: color-mix(in oklch, var(--ov-success) 55%, transparent);
     /* Brief tactile “done” cue without fighting layout (transform-origin keeps scale centered) */
     transform-origin: center center;
-    animation: success-pulse 440ms var(--ease-smooth);
-    box-shadow: 0 0 8px color-mix(in oklch, var(--ov-success) 20%, transparent);
+    animation: success-pulse 500ms var(--ease-out-expo);
+    box-shadow: 0 0 14px color-mix(in oklch, var(--ov-success) 25%, transparent);
   }
   .pill.sensitive-app {
     border-color: color-mix(in oklch, var(--ov-sensitive) 40%, transparent);
@@ -1682,8 +1752,7 @@
     pointer-events: auto;
   }
 
-  /* Animated reveal: left cluster + right icon cluster share one width transition.
-     Short opacity delay stays in lockstep with .pill / .dormant-bar shell motion. */
+  /* Orchestrated reveal: shell opens first (expo), then content fades + slides in with a stagger. */
   .dormant-expand-inner {
     display: flex;
     align-items: center;
@@ -1694,8 +1763,8 @@
     max-width: 0;
     overflow: hidden;
     transition:
-      opacity 220ms var(--ease-smooth) 45ms,
-      max-width var(--ov-dur-reveal) var(--ease-smooth);
+      opacity 200ms var(--ease-smooth) 80ms,
+      max-width var(--ov-dur-reveal) var(--ease-out-expo);
   }
 
   .dormant-expand-inner.menu-open {
@@ -1713,6 +1782,13 @@
     gap: 8px;
     flex: 1;
     min-width: 0;
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: opacity 180ms var(--ease-smooth) 100ms, transform 220ms var(--ease-out-expo) 100ms;
+  }
+  .dormant-bar.expanded .dormant-left {
+    opacity: 1;
+    transform: translateX(0);
   }
 
   .dormant-mode-wrap {
@@ -1748,31 +1824,37 @@
   }
 
   .dormant-mode-swatch {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     flex-shrink: 0;
-    box-shadow: 0 0 0 1px color-mix(in oklch, var(--ov-text) 12%, transparent);
-    transition: transform 180ms var(--ease-smooth), box-shadow 180ms var(--ease-smooth);
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--ov-text) 10%, transparent);
+    transition: transform 200ms var(--ease-smooth), box-shadow 240ms var(--ease-smooth);
   }
 
-  /* Dormant idle mark (collapsed state) — invite hover with subtle pulse */
   .dormant-idle-mark {
     cursor: pointer;
-    animation: dormant-beacon 3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-    transition: transform 220ms var(--ease-smooth), box-shadow 260ms var(--ease-smooth);
+    animation: dormant-beacon 4.5s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    transition: transform 240ms var(--ease-out-expo), box-shadow 280ms var(--ease-smooth);
+  }
+  /* Magnetic zone: swatch perks up slightly before full hover */
+  .ov-root:hover .pill.tier-dormant .dormant-idle-mark {
+    animation: none;
+    transform: scale(1.12);
+    box-shadow: 0 0 4px color-mix(in oklch, var(--ov-accent) 18%, transparent);
   }
   .pill.tier-dormant:hover .dormant-idle-mark {
     animation: none;
-    transform: scale(1.3);
+    transform: scale(1.25);
     box-shadow:
-      0 0 0 2px color-mix(in oklch, var(--ov-text) 8%, transparent),
-      0 0 6px color-mix(in oklch, var(--ov-accent) 25%, transparent);
+      0 0 0 2px color-mix(in oklch, var(--ov-text) 6%, transparent),
+      0 0 8px color-mix(in oklch, var(--ov-accent) 30%, transparent);
   }
 
   .dormant-mode {
     font-size: 13px;
-    font-weight: 550;
+    font-weight: 600;
+    letter-spacing: 0.01em;
     color: var(--ov-text);
     white-space: nowrap;
     overflow: hidden;
@@ -1788,11 +1870,17 @@
   }
 
   .dormant-hotkey {
-    font-size: 11px;
-    font-weight: 450;
+    font-size: 10px;
+    font-weight: 500;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     color: var(--ov-text-muted);
     white-space: nowrap;
     flex-shrink: 0;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: color-mix(in oklch, var(--ov-text) 5%, transparent);
+    border: 1px solid color-mix(in oklch, var(--ov-text) 8%, transparent);
+    letter-spacing: 0.02em;
   }
 
   .dormant-icons {
@@ -1800,6 +1888,24 @@
     align-items: center;
     gap: 2px;
     flex-shrink: 0;
+    opacity: 0;
+    transform: translateX(4px);
+    transition: opacity 180ms var(--ease-smooth) 160ms, transform 220ms var(--ease-out-expo) 160ms;
+  }
+  .dormant-bar.expanded .dormant-icons {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .dormant-clock {
+    font-size: 10px;
+    font-weight: 450;
+    color: var(--ov-text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
   }
 
   .mode-dropdown.mode-dropdown-dormant {
@@ -1842,7 +1948,7 @@
     transform: scale(1.08);
   }
   .icon-btn:active {
-    transform: scale(0.85);
+    transform: scale(0.93) translateY(1px);
     transition: transform 100ms var(--ease-squish);
   }
   .icon-btn:focus-visible {
@@ -1894,7 +2000,7 @@
     transform: translateY(-1px);
   }
   .action-chip:active {
-    transform: scale(0.92);
+    transform: scale(0.95) translateY(1px);
     transition: transform 100ms var(--ease-squish);
   }
   .action-chip:focus-visible {
@@ -2152,7 +2258,7 @@
   .pill-stop-btn:hover {
     background: color-mix(in oklch, var(--ov-error) 22%, transparent);
   }
-  .pill-stop-btn:active { transform: scale(0.9); transition: transform 100ms var(--ease-squish); }
+  .pill-stop-btn:active { transform: scale(0.95) translateY(1px); transition: transform 100ms var(--ease-squish); }
 
   .pill-cancel-btn {
     padding: 4px 10px;
@@ -2175,7 +2281,7 @@
     border-color: color-mix(in oklch, var(--ov-error) 30%, transparent);
     background: color-mix(in oklch, var(--ov-error) 6%, transparent);
   }
-  .pill-cancel-btn:active { transform: scale(0.9); transition: transform 100ms var(--ease-squish); }
+  .pill-cancel-btn:active { transform: scale(0.95) translateY(1px); transition: transform 100ms var(--ease-squish); }
   .pill-cancel-btn.mini-cancel {
     padding: 3px 8px;
     font-size: 10px;
@@ -2195,7 +2301,7 @@
   .pill-retry-btn:hover {
     background: color-mix(in oklch, var(--ov-error) 20%, transparent);
   }
-  .pill-retry-btn:active { transform: scale(0.9); transition: transform 100ms var(--ease-squish); }
+  .pill-retry-btn:active { transform: scale(0.95) translateY(1px); transition: transform 100ms var(--ease-squish); }
 
   .pill-dismiss-btn {
     padding: 5px 12px;
@@ -2215,7 +2321,7 @@
     color: var(--ov-text);
     background: color-mix(in oklch, var(--ov-text) 6%, transparent);
   }
-  .pill-dismiss-btn:active { transform: scale(0.9); transition: transform 100ms var(--ease-squish); }
+  .pill-dismiss-btn:active { transform: scale(0.95) translateY(1px); transition: transform 100ms var(--ease-squish); }
 
   /* Processing center area */
   .proc-center {
@@ -2308,7 +2414,7 @@
     border-radius: 50%;
     background: var(--rec-accent);
     box-shadow: 0 0 5px color-mix(in oklch, var(--rec-accent) 50%, transparent);
-    animation: rec-pulse 1.4s ease-in-out infinite;
+    animation: rec-pulse 1.2s ease-in-out infinite;
     flex-shrink: 0;
   }
 
@@ -2352,7 +2458,7 @@
     transform: scale(1.08);
   }
   .mini-rec-btn:active {
-    transform: scale(0.85);
+    transform: scale(0.93) translateY(1px);
     transition: transform 100ms var(--ease-squish);
   }
   .mini-rec-cancel:hover {
@@ -2424,7 +2530,8 @@
     width: 28px;
     height: 28px;
     border-radius: 50%;
-    background: color-mix(in oklch, var(--ov-success) 15%, transparent);
+    background: color-mix(in oklch, var(--ov-success) 20%, transparent);
+    box-shadow: 0 0 10px color-mix(in oklch, var(--ov-success) 18%, transparent);
     color: var(--ov-success);
     display: flex;
     align-items: center;
@@ -2511,10 +2618,12 @@
   .spinner {
     width: 16px;
     height: 16px;
-    border: none;
-    background: linear-gradient(135deg, var(--ov-accent), color-mix(in oklch, var(--ov-accent) 40%, transparent));
-    animation: liquid-spin 1.5s linear infinite, liquid-morph 2s ease-in-out infinite alternate;
-    box-shadow: 0 0 8px color-mix(in oklch, var(--ov-accent) 40%, transparent);
+    border: 2px solid color-mix(in oklch, var(--ov-accent) 20%, transparent);
+    border-top-color: var(--ov-accent);
+    border-radius: 50%;
+    background: none;
+    box-shadow: none;
+    animation: spin 0.8s var(--ease-smooth) infinite;
     flex-shrink: 0;
   }
 
@@ -2617,6 +2726,15 @@
   .viz-sensitive .viz-neon .beam { background: var(--ov-sensitive); box-shadow: 0 0 calc(5px + var(--neon-g, 0) * 12px) var(--ov-sensitive); }
 
   /* ── Keyframes ── */
+  /* Hello entrance — confident arrival when the pill first appears after app launch */
+  .pill.hello {
+    animation: pill-hello 600ms var(--ease-out-expo) both;
+  }
+  @keyframes pill-hello {
+    0% { opacity: 0; transform: scale(0.6) translateY(8px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
   @keyframes fade-in {
     from { opacity: 0; }
     to { opacity: 1; }
@@ -2634,8 +2752,8 @@
 
   @keyframes success-pulse {
     0% { transform: scale(1); }
-    35% { transform: scale(1.03); }
-    70% { transform: scale(0.995); }
+    30% { transform: scale(1.04); }
+    60% { transform: scale(0.997); }
     100% { transform: scale(1); }
   }
 
@@ -2649,22 +2767,22 @@
     to { opacity: 1; transform: translateY(0); }
   }
 
-  /* Dormant swatch subtle beacon — draws attention without being distracting */
+  /* Dormant swatch — slow, deep breath with a soft accent glow ring */
   @keyframes dormant-beacon {
-    0%, 100% { opacity: 0.7; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.25); box-shadow: 0 0 8px color-mix(in oklch, var(--ov-text) 15%, transparent); }
+    0%, 100% { opacity: 0.75; transform: scale(1); box-shadow: 0 0 0 1px color-mix(in oklch, var(--ov-text) 10%, transparent); }
+    50% { opacity: 1; transform: scale(1.3); box-shadow: 0 0 6px 1px color-mix(in oklch, var(--ov-accent) 22%, transparent), 0 0 0 1px color-mix(in oklch, var(--ov-text) 6%, transparent); }
   }
 
-  /* Recording pill border glow — subtle breathing */
+  /* Recording pill border glow — alive, breathing */
   @keyframes recording-glow {
-    0%, 100% { box-shadow: 0 0 5px color-mix(in oklch, var(--glow-color) 12%, transparent); }
-    50% { box-shadow: 0 0 8px color-mix(in oklch, var(--glow-color) 22%, transparent); }
+    0%, 100% { box-shadow: 0 0 8px color-mix(in oklch, var(--glow-color) 18%, transparent); }
+    50% { box-shadow: 0 0 14px color-mix(in oklch, var(--glow-color) 30%, transparent); }
   }
 
-  /* Recording dot — alive, breathing pulse */
+  /* Recording dot — faster pulse to feel urgent/alive */
   @keyframes rec-pulse {
     0%, 100% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.25); opacity: 0.7; }
+    50% { transform: scale(1.3); opacity: 0.65; }
   }
 
   /* Content entrance — fade + slight upward drift */
@@ -2697,14 +2815,8 @@
     to { opacity: 1; transform: translateX(0); }
   }
 
-  @keyframes liquid-spin {
+  @keyframes spin {
     to { transform: rotate(360deg); }
-  }
-
-  @keyframes liquid-morph {
-    0% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
-    50% { border-radius: 30% 60% 70% 40% / 50% 60% 30% 60%; }
-    100% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
   }
 
   /* Error entrance — subtle horizontal shake */
@@ -2733,6 +2845,9 @@
     .dormant-expand-inner { transition: none; }
     .dormant-bar { transition: none; }
     .dormant-idle-mark { animation: none; }
+    .dormant-left { transition: none; }
+    .dormant-icons { transition: none; }
+    .pill.hello { animation: none; }
     .mini-rec-dot { animation: none; }
     .mini-rec-btn { transition: none; }
     .icon-btn { transition: none; }
