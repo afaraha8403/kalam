@@ -4200,8 +4200,9 @@ fn resize_overlay_inner(app: tauri::AppHandle, tier: u8, force_canvas: bool) -> 
             (pill_w + 8.0, pill_h + 8.0)
         };
 
-        // WHY: Only reposition when the tier actually changes. Same-tier calls (e.g. tier 0→0
-        // during init) should not move the window — tight_fit already placed it correctly.
+        // WHY: Reposition when tier changes, or same-tier size changes (menu open → full canvas,
+        // menu close → tight). OS `set_size` keeps top-left fixed; without deltas the pill would
+        // slide for ExpandDirection::Up (anchor is bottom edge).
         if prev_tier != tier {
             let Ok(outer_pos) = overlay.outer_position() else {
                 return Ok(());
@@ -4229,37 +4230,34 @@ fn resize_overlay_inner(app: tauri::AppHandle, tier: u8, force_canvas: bool) -> 
                 (f64::from(outer_pos.y) + delta_y_log * scale).round() as i32,
             );
             let _ = overlay.set_position(tauri::Position::Physical(new_pos));
-        } else if force_canvas {
-            // WHY: Same-tier call with force_canvas (menu opening) — need to expand the window
-            // to the full canvas without repositioning (tight_fit already placed it correctly,
-            // and the canvas expansion grows from top-left which is fine for menus).
-            // For ExpandDirection::Up, we need to move the window up to keep the bottom edge
-            // fixed when expanding from tight-fit to canvas.
+        } else {
             let scale = overlay.scale_factor().unwrap_or(1.0);
             let inner = overlay.inner_size().map_err(|e| e.to_string())?;
             let old_w_log = inner.width as f64 / scale;
             let old_h_log = inner.height as f64 / scale;
-            let delta_x_log = (old_w_log - canvas_w) / 2.0;
-            use crate::config::ExpandDirection;
-            let expand_direction = state
-                .config
-                .try_lock()
-                .map(|c| c.get_all().overlay_expand_direction.clone())
-                .unwrap_or_default();
-            let delta_y_log = match expand_direction {
-                ExpandDirection::Up => old_h_log - canvas_h,
-                ExpandDirection::Down => 0.0,
-                ExpandDirection::Center => (old_h_log - canvas_h) / 2.0,
-            };
-            if delta_x_log.abs() > 0.5 || delta_y_log.abs() > 0.5 {
-                let Ok(outer_pos) = overlay.outer_position() else {
-                    return Ok(());
+            if (old_w_log - target_w).abs() > 0.5 || (old_h_log - target_h).abs() > 0.5 {
+                let delta_x_log = (old_w_log - target_w) / 2.0;
+                use crate::config::ExpandDirection;
+                let expand_direction = state
+                    .config
+                    .try_lock()
+                    .map(|c| c.get_all().overlay_expand_direction.clone())
+                    .unwrap_or_default();
+                let delta_y_log = match expand_direction {
+                    ExpandDirection::Up => old_h_log - target_h,
+                    ExpandDirection::Down => 0.0,
+                    ExpandDirection::Center => (old_h_log - target_h) / 2.0,
                 };
-                let new_pos = tauri::PhysicalPosition::new(
-                    (f64::from(outer_pos.x) + delta_x_log * scale).round() as i32,
-                    (f64::from(outer_pos.y) + delta_y_log * scale).round() as i32,
-                );
-                let _ = overlay.set_position(tauri::Position::Physical(new_pos));
+                if delta_x_log.abs() > 0.5 || delta_y_log.abs() > 0.5 {
+                    let Ok(outer_pos) = overlay.outer_position() else {
+                        return Ok(());
+                    };
+                    let new_pos = tauri::PhysicalPosition::new(
+                        (f64::from(outer_pos.x) + delta_x_log * scale).round() as i32,
+                        (f64::from(outer_pos.y) + delta_y_log * scale).round() as i32,
+                    );
+                    let _ = overlay.set_position(tauri::Position::Physical(new_pos));
+                }
             }
         }
 
@@ -4360,10 +4358,22 @@ fn resize_overlay_tight_fit(app: tauri::AppHandle, width: f64, height: f64) -> R
 }
 
 #[tauri::command]
-fn set_overlay_menu_open(state: tauri::State<'_, AppState>, open: bool) -> Result<(), String> {
-    // No `set_size` here — resizing on every menu toggle repaints WebView2 and flickers. Compact tiers use the same
-    // logical height as full (see OVERLAY_*_HEIGHT) so the HWND is already tall enough for the dropdown.
-    state.overlay_menu_open.store(open, Ordering::Relaxed);
+fn set_overlay_menu_open(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    open: bool,
+) -> Result<(), String> {
+    // WHY: The overlay HWND is usually tight to the pill (`resize_overlay_inner` with `force_canvas: false`).
+    // Dropdowns/context menus paint in DOM space but the WebView clips to the window — CSS overflow:visible
+    // cannot fix that. Expand to the tier canvas while a menu is open, then shrink back when it closes.
+    let was_open = state.overlay_menu_open.swap(open, Ordering::Relaxed);
+    if open && !was_open {
+        let tier = state.overlay_size_tier.load(Ordering::Relaxed);
+        resize_overlay_inner(app, tier, true)?;
+    } else if !open && was_open {
+        let tier = state.overlay_size_tier.load(Ordering::Relaxed);
+        resize_overlay_inner(app, tier, false)?;
+    }
     Ok(())
 }
 

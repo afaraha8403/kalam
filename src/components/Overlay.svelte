@@ -1416,7 +1416,10 @@
     --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
     /* Primary UI motion: smooth deceleration without feeling sluggish */
     --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
-    --ov-dur-shell: 300ms;
+    --ease-spring: cubic-bezier(0.34, 1.15, 0.64, 1);
+    --ease-spring-bouncy: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --ease-squish: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    --ov-dur-shell: 380ms; /* Slightly longer for the spring to settle */
     --ov-dur-reveal: 300ms;
     --ov-dur-micro: 140ms;
     --ov-dur-dropdown: 170ms;
@@ -1508,11 +1511,11 @@
     /* Tier / shape changes: one curve + matched durations so the shell reads as one motion.
        (No faster sub-duration on radius/padding — that read as axis timing skew next to max-width.) */
     transition:
-      max-width var(--ov-dur-shell) var(--ease-smooth),
-      min-height var(--ov-dur-shell) var(--ease-smooth),
-      height var(--ov-dur-shell) var(--ease-smooth),
-      border-radius var(--ov-dur-shell) var(--ease-smooth),
-      padding var(--ov-dur-shell) var(--ease-smooth),
+      max-width var(--ov-dur-shell) var(--ease-spring),
+      min-height var(--ov-dur-shell) var(--ease-spring),
+      height var(--ov-dur-shell) var(--ease-spring),
+      border-radius var(--ov-dur-shell) var(--ease-spring),
+      padding var(--ov-dur-shell) var(--ease-spring),
       opacity 200ms var(--ease-smooth),
       box-shadow 260ms var(--ease-smooth),
       border-color 260ms var(--ease-smooth);
@@ -1547,11 +1550,11 @@
     overflow: hidden;
     /* Slightly longer opacity easing so idle → hover reads soft, not stepped */
     transition:
-      max-width var(--ov-dur-shell) var(--ease-smooth),
-      min-height var(--ov-dur-shell) var(--ease-smooth),
-      height var(--ov-dur-shell) var(--ease-smooth),
-      border-radius var(--ov-dur-shell) var(--ease-smooth),
-      padding var(--ov-dur-shell) var(--ease-smooth),
+      max-width var(--ov-dur-shell) var(--ease-spring),
+      min-height var(--ov-dur-shell) var(--ease-spring),
+      height var(--ov-dur-shell) var(--ease-spring),
+      border-radius var(--ov-dur-shell) var(--ease-spring),
+      padding var(--ov-dur-shell) var(--ease-spring),
       opacity 220ms var(--ease-smooth),
       box-shadow 260ms var(--ease-smooth),
       border-color 260ms var(--ease-smooth);
@@ -1839,7 +1842,8 @@
     transform: scale(1.08);
   }
   .icon-btn:active {
-    transform: scale(0.95);
+    transform: scale(0.85);
+    transition: transform 100ms var(--ease-squish);
   }
   .icon-btn:focus-visible {
     outline: 2px solid var(--ov-accent);
@@ -1890,7 +1894,8 @@
     transform: translateY(-1px);
   }
   .action-chip:active {
-    transform: translateY(0);
+    transform: scale(0.92);
+    transition: transform 100ms var(--ease-squish);
   }
   .action-chip:focus-visible {
     outline: 2px solid var(--ov-accent);
@@ -1916,13 +1921,16 @@
     min-width: 140px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--ov-surface-raised);
-    border: 1px solid var(--ov-border);
+    background: color-mix(in oklch, var(--ov-surface-raised) 85%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid color-mix(in oklch, var(--ov-border) 60%, transparent);
+    box-shadow: 0 8px 24px color-mix(in oklch, black 25%, transparent);
     z-index: 20;
     display: flex;
     flex-direction: column;
     gap: 1px;
-    animation: dropdown-enter var(--ov-dur-dropdown) var(--ease-smooth) both;
+    animation: dropdown-enter 400ms var(--ease-spring-bouncy) both;
     transform-origin: bottom left;
   }
 
@@ -1945,7 +1953,14 @@
     color: var(--ov-text);
     font-size: 12px;
     cursor: pointer;
+    animation: item-slide-in 300ms var(--ease-spring) both;
   }
+  .mode-dropdown button:nth-child(1) { animation-delay: 20ms; }
+  .mode-dropdown button:nth-child(2) { animation-delay: 40ms; }
+  .mode-dropdown button:nth-child(3) { animation-delay: 60ms; }
+  .mode-dropdown button:nth-child(4) { animation-delay: 80ms; }
+  .mode-dropdown button:nth-child(5) { animation-delay: 100ms; }
+  .mode-dropdown button:nth-child(6) { animation-delay: 120ms; }
   .mode-dropdown button:hover {
     background: color-mix(in oklch, var(--ov-text) 8%, var(--ov-surface));
   }
@@ -1961,12 +1976,15 @@
     min-width: 160px;
     padding: 4px;
     border-radius: 8px;
-    background: var(--ov-surface-raised);
-    border: 1px solid var(--ov-border);
+    background: color-mix(in oklch, var(--ov-surface-raised) 85%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid color-mix(in oklch, var(--ov-border) 60%, transparent);
+    box-shadow: 0 8px 24px color-mix(in oklch, black 25%, transparent);
     display: flex;
     flex-direction: column;
     gap: 1px;
-    animation: dropdown-enter var(--ov-dur-dropdown) var(--ease-smooth) both;
+    animation: dropdown-enter 400ms var(--ease-spring-bouncy) both;
     transform-origin: top left;
   }
   .ctx-menu button {
@@ -1978,7 +1996,12 @@
     font-size: 12px;
     cursor: pointer;
     border-radius: 5px;
+    animation: item-slide-in 300ms var(--ease-spring) both;
   }
+  .ctx-menu button:nth-child(1) { animation-delay: 20ms; }
+  .ctx-menu button:nth-child(2) { animation-delay: 40ms; }
+  .ctx-menu button:nth-child(3) { animation-delay: 60ms; }
+  .ctx-menu button:nth-child(4) { animation-delay: 80ms; }
   .ctx-menu button:hover {
     background: color-mix(in oklch, var(--ov-text) 8%, var(--ov-surface));
   }
@@ -2129,7 +2152,7 @@
   .pill-stop-btn:hover {
     background: color-mix(in oklch, var(--ov-error) 22%, transparent);
   }
-  .pill-stop-btn:active { transform: scale(0.96); }
+  .pill-stop-btn:active { transform: scale(0.9); transition: transform 100ms var(--ease-squish); }
 
   .pill-cancel-btn {
     padding: 4px 10px;
@@ -2152,7 +2175,7 @@
     border-color: color-mix(in oklch, var(--ov-error) 30%, transparent);
     background: color-mix(in oklch, var(--ov-error) 6%, transparent);
   }
-  .pill-cancel-btn:active { transform: scale(0.96); }
+  .pill-cancel-btn:active { transform: scale(0.9); transition: transform 100ms var(--ease-squish); }
   .pill-cancel-btn.mini-cancel {
     padding: 3px 8px;
     font-size: 10px;
@@ -2172,7 +2195,7 @@
   .pill-retry-btn:hover {
     background: color-mix(in oklch, var(--ov-error) 20%, transparent);
   }
-  .pill-retry-btn:active { transform: scale(0.96); }
+  .pill-retry-btn:active { transform: scale(0.9); transition: transform 100ms var(--ease-squish); }
 
   .pill-dismiss-btn {
     padding: 5px 12px;
@@ -2192,7 +2215,7 @@
     color: var(--ov-text);
     background: color-mix(in oklch, var(--ov-text) 6%, transparent);
   }
-  .pill-dismiss-btn:active { transform: scale(0.96); }
+  .pill-dismiss-btn:active { transform: scale(0.9); transition: transform 100ms var(--ease-squish); }
 
   /* Processing center area */
   .proc-center {
@@ -2329,7 +2352,8 @@
     transform: scale(1.08);
   }
   .mini-rec-btn:active {
-    transform: scale(0.94);
+    transform: scale(0.85);
+    transition: transform 100ms var(--ease-squish);
   }
   .mini-rec-cancel:hover {
     color: var(--ov-text-muted);
@@ -2485,12 +2509,12 @@
   }
 
   .spinner {
-    width: 15px;
-    height: 15px;
-    border: 2px solid color-mix(in oklch, var(--ov-accent) 20%, transparent);
-    border-top-color: var(--ov-accent);
-    border-radius: 50%;
-    animation: spin 750ms linear infinite;
+    width: 16px;
+    height: 16px;
+    border: none;
+    background: linear-gradient(135deg, var(--ov-accent), color-mix(in oklch, var(--ov-accent) 40%, transparent));
+    animation: liquid-spin 1.5s linear infinite, liquid-morph 2s ease-in-out infinite alternate;
+    box-shadow: 0 0 8px color-mix(in oklch, var(--ov-accent) 40%, transparent);
     flex-shrink: 0;
   }
 
@@ -2627,8 +2651,8 @@
 
   /* Dormant swatch subtle beacon — draws attention without being distracting */
   @keyframes dormant-beacon {
-    0%, 100% { opacity: 0.8; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.15); }
+    0%, 100% { opacity: 0.7; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.25); box-shadow: 0 0 8px color-mix(in oklch, var(--ov-text) 15%, transparent); }
   }
 
   /* Recording pill border glow — subtle breathing */
@@ -2645,8 +2669,8 @@
 
   /* Content entrance — fade + slight upward drift */
   @keyframes content-enter {
-    from { opacity: 0; transform: translateY(2px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   /* Success entrance — scale up from slightly small */
@@ -2657,15 +2681,30 @@
 
   /* Success icon — small overshoot reads crisp without a bouncy settle */
   @keyframes success-icon-pop {
-    0% { transform: scale(0); opacity: 0; }
-    70% { transform: scale(1.06); opacity: 1; }
-    100% { transform: scale(1); opacity: 1; }
+    0% { transform: scale(0.4) rotate(-15deg); opacity: 0; }
+    60% { transform: scale(1.2) rotate(5deg); opacity: 1; }
+    100% { transform: scale(1) rotate(0); opacity: 1; }
   }
 
   /* Dropdown entrance — scale up from origin */
   @keyframes dropdown-enter {
-    from { opacity: 0; transform: scale(0.98) translateY(2px); }
+    from { opacity: 0; transform: scale(0.85) translateY(10px); }
     to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  @keyframes item-slide-in {
+    from { opacity: 0; transform: translateX(-6px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes liquid-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes liquid-morph {
+    0% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
+    50% { border-radius: 30% 60% 70% 40% / 50% 60% 30% 60%; }
+    100% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
   }
 
   /* Error entrance — subtle horizontal shake */
